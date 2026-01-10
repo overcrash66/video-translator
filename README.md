@@ -81,7 +81,3 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 *   **"TorchCodec is required"**: This project uses `soundfile` backend to avoid this error. If you see it, ensure `soundfile` is installed.
 *   **CUDA Out of Memory**: The system uses chunking (10s segments) for separation. If you still OOM, try closing other GPU-heavy apps.
 *   **Video not playing in browser**: Gradio/Browser compatibility. Use VLC or Media Player for the downloaded file.
-
-## 📄 License
-
-[MIT License](LICENSE) (or appropriate license for your project).
