@@ -203,13 +203,10 @@ class AudioSynchronizer:
                     canvas = torch.cat([canvas, torch.zeros(1, padding + 1000)], dim=1)
                     total_samples = canvas.shape[1]
 
-                # Mix (add) or overwrite? Overwrite is safer for avoiding doubpling if overlap (rare in this logic)
-                # But let's add to be safe for overlaps.
-                # Ensure we only take first channel if input is stereo
-                if wav.shape[0] > 1:
-                    wav = wav[0:1, :]
-                    
-                canvas[:, start_sample:end_sample] += wav[:, :end_sample-start_sample]
+                # Mix (overwrite) to avoid double-speech on overlaps
+                # If segments overlap, the later one takes precedence (standard behavior)
+                # We simply assign the values instead of adding them.
+                canvas[:, start_sample:end_sample] = wav[:, :end_sample-start_sample]
             
             # Save
             # Convert back to [Time, Channels] for Soundfile
