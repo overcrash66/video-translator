@@ -3,6 +3,11 @@ import edge_tts
 import config
 import logging
 from pathlib import Path
+import torchaudio
+try:
+    torchaudio.set_audio_backend("soundfile")
+except:
+    pass
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
