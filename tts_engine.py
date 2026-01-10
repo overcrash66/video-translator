@@ -4,8 +4,28 @@ import config
 import logging
 from pathlib import Path
 import torchaudio
+import soundfile as sf
+import torch
+
+# MONKEYPATCH: Torchaudio 2.9+ broken backend API fix for Windows
+# Forces soundfile backend for load() to bypass TorchCodec requirements
+def _custom_load_patch(filepath, **kwargs):
+    # Fallback to soundfile directly
+    # FORCE float32 to match PyTorch model weights (fixes "expected Double found Float" error)
+    data, samplerate = sf.read(filepath, dtype='float32')
+    # Convert to standard (channels, frames) format
+    tensor = torch.from_numpy(data)
+    if tensor.ndim == 1:
+        tensor = tensor.unsqueeze(0) # (1, frames)
+    else:
+        tensor = tensor.transpose(0, 1) # (frames, channels)
+    return tensor, samplerate
+
+# Apply the patch forcibly
+torchaudio.load = _custom_load_patch
 try:
-    torchaudio.set_audio_backend("soundfile")
+    if hasattr(torchaudio, "set_audio_backend"):
+         torchaudio.set_audio_backend("soundfile")
 except:
     pass
 
