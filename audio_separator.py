@@ -29,7 +29,7 @@ class AudioSeparator:
     def load_model(self, model_selection):
         """
         Loads the selected model.
-        model_selection: "Torchaudio HDemucs (Recommended)" or "facebook/sam-audio-large"
+        model_selection: "Torchaudio HDemucs (Recommended)" or "facebook/sam-audio-base-tv"
         """
         # If we are already loaded with the SAME model, return
         if self.loaded and getattr(self, 'current_model_type', '') == model_selection:
@@ -46,7 +46,7 @@ class AudioSeparator:
 
         self.current_model_type = model_selection
         
-        if "sam-audio-large" in model_selection:
+        if "sam-audio-base-tv" in model_selection:
             self._load_sam_audio()
         else:
             self._load_demucs()
@@ -65,7 +65,7 @@ class AudioSeparator:
             self.loaded = False
 
     def _load_sam_audio(self):
-        model_name = config.SAM_AUDIO_MODEL # "facebook/sam-audio-large"
+        model_name = config.SAM_AUDIO_MODEL # "facebook/sam-audio-base-tv"
         logger.info(f"Loading HF Model: {model_name} on {self.device}...")
         
         if not config.HF_TOKEN:
@@ -113,7 +113,7 @@ class AudioSeparator:
             self._create_silent_like(audio_path, output_bg)
             return str(output_vocals), str(output_bg)
 
-        if "sam-audio-large" in model_selection:
+        if "sam-audio-base-tv" in model_selection:
             return self._separate_sam(audio_path, prompt, output_vocals, output_bg)
         else:
             return self._separate_demucs(audio_path, output_vocals, output_bg)

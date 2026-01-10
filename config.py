@@ -47,7 +47,7 @@ DEVICE = get_device()
 
 # Model Configurations
 WHISPER_MODEL_SIZE = "large-v3"
-SAM_AUDIO_MODEL = "facebook/sam-audio-large"
+SAM_AUDIO_MODEL = "facebook/sam-audio-base-tv"
 
 def get_language_code(name):
     lang_map = {
