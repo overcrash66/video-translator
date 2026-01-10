@@ -30,16 +30,18 @@ class TTSEngine:
             "hi": "hi-IN-SwaraNeural"
         
         }
+        self.xtts_model = None
         
-        # Piper voice mapping (Language -> Voice Model Name)
+        # Mapping for Piper (language code -> model name)
+        # We use a default 'high' quality voice for each language if available
         self.piper_map = {
-             "en": "en_US-lessac-high",
-             "zh": "zh_CN-huayan-medium",
-             "es": "es_ES-sharvard-medium",
-             "fr": "fr_FR-siwis-medium",
-             "de": "de_DE-thorsten-high",
-             "it": "it_IT-riccardo-x_low", # Limited options in public index? will check availability
-             "pt": "pt_BR-faber-medium",
+            "en": "en_US-lessac-high",
+            "es": "es_ES-sharvard-medium",
+            "fr": "fr_FR-siwis-medium",
+            "de": "de_DE-thorsten-medium",
+            "it": "it_IT-riccardo-x_low", # Limited options in public index, this is just a placeholder logic
+            # For robustness, we will default to english if specific lang model not found, or use a generic one.
+            # Real implementation would query the piper face or json index.
         }
 
 
@@ -47,10 +49,23 @@ class TTSEngine:
         # Edge-TTS is API based (or rather, no local model load needed in same sense)
         pass
 
+    def _load_xtts(self):
+        if self.xtts_model:
+            return
+        
+        logger.info("Loading XTTS-v2 model...")
+        try:
+            from TTS.api import TTS
+            self.xtts_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
+            logger.info("XTTS-v2 model loaded.")
+        except Exception as e:
+            logger.error(f"Failed to load XTTS model: {e}")
+            raise
+
     def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge"):
         """
-        Generates audio using Edge-TTS or Piper.
-        model: "edge" or "piper"
+        Generates audio using Edge-TTS, Piper, or XTTS.
+        model: "edge", "piper", or "xtts"
         """
         if not output_path:
             output_path = config.TEMP_DIR / "tts_output.wav"
@@ -59,8 +74,10 @@ class TTSEngine:
             
         if model == "piper":
              return self._generate_piper(text, language, output_path)
+        elif model == "xtts":
+             return self._generate_xtts(text, language, speaker_wav_path, output_path)
 
-        # Default Edge-TTS logic...
+        # Default Edge-TTS logic
         
         # Select voice
         voice = self.voice_map.get(language, "en-US-AriaNeural")

@@ -6,10 +6,11 @@ transformers
 accelerate
 soundfile
 ffmpeg-python
-openai-whisper
+faster-whisper
 edge-tts
 deep-translator
 python-dotenv
 numpy>=2.1
 scipy
+coqui-tts
 

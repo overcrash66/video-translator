@@ -29,7 +29,7 @@ tts_engine = TTSEngine()
 synchronizer = AudioSynchronizer()
 processor = VideoProcessor()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -166,7 +166,8 @@ def process_video(video_path, source_language, target_language, audio_model, tts
                 segments, 
                 target_code, 
                 model=trans_model_key,
-                source_lang=source_code
+                source_lang=source_code,
+                optimize=optimize_translation
             )
         except Exception as e:
              raise gr.Error(f"Translation failed: {e}")
@@ -192,7 +193,7 @@ def process_video(video_path, source_language, target_language, audio_model, tts
                  continue
                  
             # Determine extension based on model
-            ext = ".wav" if tts_model == "piper" else ".mp3"
+            ext = ".wav" if tts_model in ["piper", "xtts"] else ".mp3"
             seg_out = seg_dir / f"seg_{i}_tts{ext}"
             # Use selected TTS model
             generated_path = tts_engine.generate_audio(text, vocals_path, language=target_code, output_path=seg_out, model=tts_model)
@@ -286,6 +287,12 @@ def create_ui():
                     value="Google Translate (Online, Fast)"
                 )
                 
+                optimize_translation = gr.Checkbox(
+                    label="Optimize Context (Experimental)", 
+                    value=False,
+                    info="Uses local AI to review and refine translations based on surrounding context. Slower but more accurate."
+                )
+                
                 audio_model = gr.Dropdown(
                     choices=["Torchaudio HDemucs (Recommended)"],
                     label="Audio Separator Model",
@@ -299,8 +306,8 @@ def create_ui():
                 )
                 
                 tts_model = gr.Dropdown(
-                    choices=["edge", "piper"],
-                    label="TTS Model (Edge=Recommended, Piper=Local)",
+                    choices=["edge", "piper", "xtts"],
+                    label="TTS Model (Edge=Online, Piper=Local, XTTS=Cloning)",
                     value="edge"
                 )
 
@@ -312,7 +319,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, transcription_model],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation],
             outputs=[video_output, logs_output]
         )
         

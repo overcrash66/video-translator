@@ -101,6 +101,59 @@ class HYMTTranslator:
             logger.error(f"HY-MT translation error: {e}")
             return text # Fallback
 
+    def refine_with_context(self, current_text, prev_text, next_text, source_text, source_lang, target_lang):
+        """
+        Refines the translation using context.
+        """
+        self.load_model()
+        
+        # Prompt Engineering for Improvement
+        # We explicitly ask the model to review and improve.
+        
+        prompt = (
+            f"Review and improve the translation from {source_lang} to {target_lang}.\n"
+            f"Context (Previous): {prev_text}\n"
+            f"Context (Next): {next_text}\n"
+            f"Source Text: {source_text}\n"
+            f"Current Translation: {current_text}\n\n"
+            f"If the current translation is accurate and fits the context, repeat it exactly.\n"
+            f"If it needs improvement (grammar, tone, context), provide ONLY the improved text.\n"
+            f"Improved Translation:"
+        )
+
+        messages = [{"role": "user", "content": prompt}]
+        
+        try:
+             # Similar generation logic as translate
+             if self.tokenizer.chat_template:
+                text_input = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+             else:
+                text_input = f"<|user|>\n{prompt}\n<|assistant|>\n"
+
+             inputs = self.tokenizer(text_input, return_tensors="pt", return_token_type_ids=False).to(self.model.device)
+             
+             with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs, 
+                    max_new_tokens=256, 
+                    temperature=0.2, # Lower temp for strict review
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.eos_token_id
+                )
+             
+             new_tokens = outputs[0][inputs.input_ids.shape[1]:]
+             response = self.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+             
+             # Basic sanity check: Don't accept if it hallucinated a huge text or empty
+             if not response or len(response) > len(current_text) * 3:
+                 return current_text
+                 
+             return response
+             
+        except Exception as e:
+             logger.warning(f"Refinement failed: {e}")
+             return current_text
+
 
 class Translator:
     def __init__(self):
@@ -150,9 +203,12 @@ class Translator:
             logger.error(f"Translation failed ({model}): {e}")
             return text
 
-    def translate_segments(self, segments, target_lang, model="google", source_lang="auto"):
+            return text
+    
+    def translate_segments(self, segments, target_lang, model="google", source_lang="auto", optimize=False):
         """
         Translates a list of segments.
+        optimize: If True, performs a second pass with local LLM to refine context.
         """
         # Prepare HYMT if needed (batched loading, but sequential generation for now)
         if model == "hymt" and not self.hymt:
@@ -168,6 +224,46 @@ class Translator:
                 seg["text"], target_lang, model, source_lang
             )
             translated_segments.append(new_seg)
+            
+        # Optimization Pass
+        if optimize and translated_segments:
+            logger.info("Starting Contextual Optimization Pass...")
+            if not self.hymt:
+                self.hymt = HYMTTranslator()
+            
+            # Ensure model is loaded
+            self.hymt.load_model()
+            
+            count = 0
+            total = len(translated_segments)
+            
+            for i in range(total):
+                seg = translated_segments[i]
+                curr_text = seg["translated_text"]
+                source_text = seg["text"]
+                
+                # Get Context
+                prev_seg = translated_segments[i-1] if i > 0 else None
+                next_seg = translated_segments[i+1] if i < total - 1 else None
+                
+                prev_text = prev_seg["translated_text"] if prev_seg else "[START]"
+                next_text = next_seg["translated_text"] if next_seg else "[END]"
+                
+                # Check for meaningful content to optimize (skip very short)
+                if len(curr_text.split()) < 2:
+                    continue
+                    
+                refined = self.hymt.refine_with_context(
+                    curr_text, prev_text, next_text, source_text, source_lang, target_lang
+                )
+                
+                if refined != curr_text:
+                    logger.info(f"Refined seg {i}: '{curr_text}' -> '{refined}'")
+                    translated_segments[i]["translated_text"] = refined
+                    count += 1
+            
+            logger.info(f"Optimization complete. Refined {count}/{total} segments.")
+
             
         # Unload HYMT to save vram
         if model == "hymt" and self.hymt:

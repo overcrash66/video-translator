@@ -12,6 +12,7 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 *   **Neural TTS**: 
     *   **Edge-TTS** (Online): High-quality, natural-sounding speech generation.
     *   **Piper TTS** (Local): Robust offline neural TTS using the official Piper binary (automatically downloaded).
+    *   **XTTS-v2** (Local): High-fidelity voice cloning using Coqui TTS. Requires ~2GB VRAM.
 *   **Smart Synchronization**: Automatically stretches or squeezes generated speech to match the original timing.
 *   **GPU Optimized**: Custom memory management includes aggressive model offloading and audio chunking to prevent CUDA Out-of-Memory errors.
 *   **Friendly UI**: Easy-to-use **Gradio** web interface.
@@ -31,7 +32,10 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     ```
 
 2.  **Install Dependencies**:
+    It is recommended to use a virtual environment (Python 3.10 recommended for XTTS):
     ```bash
+    py -3.10 -m venv venv
+    .\venv\Scripts\activate
     pip install -r requirements.txt
     ```
 
@@ -46,7 +50,7 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 
 1.  **Run the Application**:
     ```bash
-    python app.py
+    .\venv\Scripts\python app.py
     ```
 
 2.  **Open Interface**:
@@ -63,9 +67,11 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     *   **Select Translation Model**: 
         *   `Google Translate`: Default, fast.
         *   `Tencent HY-MT1.5`: Local LLM, better context (downloads ~3.5GB on first run).
+    *   **Optimize Context** (Optional): Check this box to enable a second pass where a local AI reviews each segment against its neighbors to improve flow and context.
     *   **Select TTS Model**: 
         *   `edge`: Online, highest quality (requires internet).
-        *   `piper`: Local, fast, private (first run downloads ~50MB binary).
+        *   `piper`: Local, fast, private.
+        *   `xtts`: Local voice cloning (uses input video's vocals as reference).
     *   **Click Submit**: The progress bar will track the stages (Separating -> Transcribing -> Translating -> Synthesizing -> Mixing).
 
 4.  **Output**:
@@ -93,9 +99,13 @@ flowchart TD
     Transcribe --> Segments[Text Segments]
     
     Segments --> Translate{"Translate<br/>(Google / HY-MT)"}
-    Translate --> TransText[Translated Text]
     
-    TransText --> TTS{"Neural TTS<br/>(Edge-TTS / Piper)"}
+    Translate --> Optimize{"Optimize Context?<br/>(Optional via Local LLM)"}
+    Optimize -- Yes --> Refine[Refine with Context]
+    Refine --> TransText[Final Text]
+    Optimize -- No --> TransText
+    
+    TransText --> TTS{"Neural TTS<br/>(Edge-TTS / Piper / XTTS)"}
     TTS --> TTSAudio[Generated Speech Clips]
     
     TTSAudio --> Sync{"Synchronize<br/>(Time-Stretch)"}
