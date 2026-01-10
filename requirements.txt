@@ -1,14 +1,15 @@
 gradio
-torch --index-url https://download.pytorch.org/whl/cu124
-torchaudio --index-url https://download.pytorch.org/whl/cu124
-torchvision --index-url https://download.pytorch.org/whl/cu124
+torch --index-url https://download.pytorch.org/whl/cu128
+torchaudio --index-url https://download.pytorch.org/whl/cu128
+torchvision --index-url https://download.pytorch.org/whl/cu128
 transformers
 accelerate
 soundfile
 ffmpeg-python
 openai-whisper
-coqui-tts
+edge-tts
 deep-translator
 python-dotenv
-numpy
+numpy>=2.1
 scipy
+

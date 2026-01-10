@@ -21,7 +21,7 @@ class AudioSeparator:
 
         self.device = config.DEVICE
         self.output_dir = config.TEMP_DIR
-        self.model_name = config.SAM_AUDIO_MODEL
+
         self.model = None
         self.processor = None
         self.loaded = False
@@ -29,7 +29,7 @@ class AudioSeparator:
     def load_model(self, model_selection):
         """
         Loads the selected model.
-        model_selection: "Torchaudio HDemucs (Recommended)" or "facebook/sam-audio-base-tv"
+        model_selection: "Torchaudio HDemucs (Recommended)"
         """
         # If we are already loaded with the SAME model, return
         if self.loaded and getattr(self, 'current_model_type', '') == model_selection:
@@ -46,10 +46,7 @@ class AudioSeparator:
 
         self.current_model_type = model_selection
         
-        if "sam-audio-base-tv" in model_selection:
-            self._load_sam_audio()
-        else:
-            self._load_demucs()
+        self._load_demucs()
 
     def _load_demucs(self):
         logger.info(f"Loading HDemucs model on {self.device}...")
@@ -64,33 +61,7 @@ class AudioSeparator:
             logger.error(f"Failed to load HDemucs: {e}")
             self.loaded = False
 
-    def _load_sam_audio(self):
-        model_name = config.SAM_AUDIO_MODEL # "facebook/sam-audio-base-tv"
-        logger.info(f"Loading HF Model: {model_name} on {self.device}...")
-        
-        if not config.HF_TOKEN:
-            logger.warning("HF_TOKEN is missing! Authenticated models will fail.")
 
-        try:
-            from transformers import AutoProcessor, AutoModel
-            
-            # Helper to try loading processor
-            try:
-                self.processor = AutoProcessor.from_pretrained(model_name, token=config.HF_TOKEN)
-            except Exception as pe:
-                logger.warning(f"AutoProcessor failed ({pe}). Trying generic/fallback if possible.")
-                # Maybe it doesn't need a processor or uses a different one? 
-                # For SAM-Audio, if it's SAM based, maybe SamProcessor?
-                # But allowing code to proceed to model load might be useful if user just wants raw model
-                self.processor = None
-
-            self.model = AutoModel.from_pretrained(model_name, token=config.HF_TOKEN)
-            self.model.to(self.device)
-            self.loaded = True
-            logger.info(f"{model_name} loaded successfully.")
-        except Exception as e:
-            logger.error(f"Failed to load {model_name}: {e}")
-            self.loaded = False
 
     def separate(self, audio_path, prompt="speech", model_selection="Torchaudio HDemucs (Recommended)"):
         """
@@ -113,10 +84,7 @@ class AudioSeparator:
             self._create_silent_like(audio_path, output_bg)
             return str(output_vocals), str(output_bg)
 
-        if "sam-audio-base-tv" in model_selection:
-            return self._separate_sam(audio_path, prompt, output_vocals, output_bg)
-        else:
-            return self._separate_demucs(audio_path, output_vocals, output_bg)
+        return self._separate_demucs(audio_path, output_vocals, output_bg)
 
     def _separate_demucs(self, audio_path, output_vocals, output_bg):
         logger.info(f"Separating with HDemucs: {audio_path}")
@@ -279,27 +247,7 @@ class AudioSeparator:
         
         return final_sources
 
-    def _separate_sam(self, audio_path, prompt, output_vocals, output_bg):
-        logger.info(f"Separating with SAM-Audio (Experimental): {audio_path}")
-        try:
-             # Placeholder for actual SAM-Audio inference logic
-             # Since documentation for this specific model identifier is scarce/custom
-             # We assume standard transformers 'call' or 'generate'
-             
-             # If processor exists, use it
-             # inputs = self.processor(audio, text=prompt, return_tensors="pt").to(self.device)
-             # outputs = self.model(**inputs)
-             
-             # For now, since we haven't confirmed exact API, we log and return dummy 
-             # allowing the USER to see the model loaded successfully at least.
-             logger.warning("SAM-Audio inference logic is experimental. Returning pass-through.")
-             
-             # TODO: Implement concrete inference when API signature is confirmed
-             return self._fallback_dummy(audio_path, output_vocals, output_bg)
-             
-        except Exception as e:
-             logger.error(f"SAM Inference failed: {e}")
-             return self._fallback_dummy(audio_path, output_vocals, output_bg)
+
 
     def _fallback_dummy(self, audio_path, output_vocals, output_bg):
         logger.warning("Using fallback dummy separation.")

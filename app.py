@@ -251,7 +251,7 @@ def create_ui():
                 )
                 
                 audio_model = gr.Dropdown(
-                    choices=["Torchaudio HDemucs (Recommended)", "facebook/sam-audio-base-tv"],
+                    choices=["Torchaudio HDemucs (Recommended)"],
                     label="Audio Separator Model",
                     value="Torchaudio HDemucs (Recommended)"
                 )
