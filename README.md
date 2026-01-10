@@ -5,10 +5,14 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 ## 🚀 Key Features
 
 *   **Vocal Separation**: Uses **HDemucs** (Meta's Hybrid Demucs) to cleanly separate speech from background music/sfx. Optimized with chunking to handle long videos on limited GPU memory.
-*   **Precision Transcription**: Powered by **OpenAI Whisper** for state-of-the-art speech-to-text with accurate timestamps.
-*   **Multi-Language Translation**: Uses **Google Translate** (via `deep-translator`) to robustly translate content between 16+ languages (English, Spanish, French, German, Japanese, Chinese, etc.).
-*   **Neural TTS**: Integrated **Edge-TTS** (Microsoft Edge Online) for high-quality, natural-sounding speech generation without heavy local model weights.
-*   **Smart Synchronization**: Automatically stretches or squeezes generated speech to match the original timing, with safeguards against extreme distortion.
+*   **Precision Transcription**: Powered by **Faster-Whisper** (CTranslate2). Selectable models (Large v3, Medium, Base) for balancing speed vs accuracy.
+*   **Multi-Language Translation**: 
+    *   **Google Translate** (Online): Fast, reliable standard translation.
+    *   **Tencent HY-MT1.5** (Local): Large language model (1.8B) for better context and consistency in translations.
+*   **Neural TTS**: 
+    *   **Edge-TTS** (Online): High-quality, natural-sounding speech generation.
+    *   **Piper TTS** (Local): Robust offline neural TTS using the official Piper binary (automatically downloaded).
+*   **Smart Synchronization**: Automatically stretches or squeezes generated speech to match the original timing.
 *   **GPU Optimized**: Custom memory management includes aggressive model offloading and audio chunking to prevent CUDA Out-of-Memory errors.
 *   **Friendly UI**: Easy-to-use **Gradio** web interface.
 
@@ -35,7 +39,7 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     If not already installed via requirements, ensure you have:
     ```bash
     pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118  # Adjust for your CUDA version
-    pip install openai-whisper deep-translator edge-tts gradio soundfile ffmpeg-python
+    pip install openai-whisper deep-translator edge-tts gradio soundfile ffmpeg-python faster-whisper onnxruntime transformers accelerate
     ```
 
 ## 🖥️ Usage
@@ -50,8 +54,18 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 
 3.  **Translate a Video**:
     *   **Upload Video**: Select an MP4/MKV/MOV file.
+    *   **Select Source Language**: (Optional) Specify the original language to improve transcription accuracy.
+    *   **Select Speech-to-Text Model**: 
+        *   `Large v3`: Best accuracy (Recommended).
+        *   `Medium/Base`: Faster, less accurate.
     *   **Select Target Language**: Choose from the dropdown (e.g., Spanish, Japanese).
-    *   **Select Audio Model**: Keep default "Torchaudio HDemucs".
+    *   **Select Target Language**: Choose from the dropdown (e.g., Spanish, Japanese).
+    *   **Select Translation Model**: 
+        *   `Google Translate`: Default, fast.
+        *   `Tencent HY-MT1.5`: Local LLM, better context (downloads ~3.5GB on first run).
+    *   **Select TTS Model**: 
+        *   `edge`: Online, highest quality (requires internet).
+        *   `piper`: Local, fast, private (first run downloads ~50MB binary).
     *   **Click Submit**: The progress bar will track the stages (Separating -> Transcribing -> Translating -> Synthesizing -> Mixing).
 
 4.  **Output**:

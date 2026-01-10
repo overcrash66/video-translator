@@ -29,7 +29,7 @@ tts_engine = TTSEngine()
 synchronizer = AudioSynchronizer()
 processor = VideoProcessor()
 
-def process_video(video_path, source_language, target_language, audio_model, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -132,7 +132,17 @@ def process_video(video_path, source_language, target_language, audio_model, pro
         progress(0.3, desc="Transcribing...")
         try:
             source_code = config.get_language_code(source_language)
-            segments = transcriber.transcribe(vocals_path, language=source_code)
+            # Map friendly model name to internal size
+            # "Faster-Whisper Large v3" -> "large-v3"
+            # "Faster-Whisper Medium" -> "medium"
+            if "Large" in transcription_model:
+                model_size = "large-v3"
+            elif "Medium" in transcription_model:
+                model_size = "medium"
+            else:
+                model_size = "base"
+
+            segments = transcriber.transcribe(vocals_path, language=source_code, model_size=model_size)
         except Exception as e:
             raise gr.Error(f"Transcription failed: {e}")
 
@@ -149,7 +159,15 @@ def process_video(video_path, source_language, target_language, audio_model, pro
         # Map friendly name to code
         target_code = config.get_language_code(target_language)
         try:
-            translated_segments = translator.translate_segments(segments, target_code)
+            # Map choice to internal key
+            trans_model_key = "hymt" if "HY-MT" in translation_model else "google"
+            
+            translated_segments = translator.translate_segments(
+                segments, 
+                target_code, 
+                model=trans_model_key,
+                source_lang=source_code
+            )
         except Exception as e:
              raise gr.Error(f"Translation failed: {e}")
 
@@ -173,8 +191,12 @@ def process_video(video_path, source_language, target_language, audio_model, pro
             if not text:
                  continue
                  
-            seg_out = seg_dir / f"seg_{i}_tts.mp3" # edge-tts mp3
-            generated_path = tts_engine.generate_audio(text, vocals_path, language=target_code, output_path=seg_out)
+            # Determine extension based on model
+            ext = ".wav" if tts_model == "piper" else ".mp3"
+            seg_out = seg_dir / f"seg_{i}_tts{ext}"
+            # Use selected TTS model
+            generated_path = tts_engine.generate_audio(text, vocals_path, language=target_code, output_path=seg_out, model=tts_model)
+            
             
             # Validation: Individual TTS
             if not generated_path or not Path(generated_path).exists():
@@ -258,10 +280,28 @@ def create_ui():
                     value="Spanish"
                 )
                 
+                translation_model = gr.Dropdown(
+                    choices=["Google Translate (Online, Fast)", "Tencent HY-MT1.5 (Local, Better Context)"],
+                    label="Translation Model",
+                    value="Google Translate (Online, Fast)"
+                )
+                
                 audio_model = gr.Dropdown(
                     choices=["Torchaudio HDemucs (Recommended)"],
                     label="Audio Separator Model",
                     value="Torchaudio HDemucs (Recommended)"
+                )
+                
+                transcription_model = gr.Dropdown(
+                    choices=["Faster-Whisper Large v3 (Best)", "Faster-Whisper Medium (Faster)", "Faster-Whisper Base (Fastest)"],
+                    label="Speech-to-Text Model",
+                    value="Faster-Whisper Large v3 (Best)"
+                )
+                
+                tts_model = gr.Dropdown(
+                    choices=["edge", "piper"],
+                    label="TTS Model (Edge=Recommended, Piper=Local)",
+                    value="edge"
                 )
 
                 process_btn = gr.Button("Process Video", variant="primary")
@@ -272,7 +312,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, transcription_model],
             outputs=[video_output, logs_output]
         )
         

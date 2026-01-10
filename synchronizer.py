@@ -175,6 +175,10 @@ class AudioSynchronizer:
                 # Load segment with soundfile
                 wav_np, sr = sf.read(str(path))
                 
+                if wav_np.size == 0:
+                    logger.warning(f"Skipping empty audio segment: {path}")
+                    continue
+                
                 # Convert to [Channels, Time]
                 if wav_np.ndim == 1:
                     wav_np = wav_np[np.newaxis, :]

@@ -1,4 +1,4 @@
-import whisper
+from faster_whisper import WhisperModel
 import torch
 import config
 import logging
@@ -12,18 +12,27 @@ class Transcriber:
         self.device = config.DEVICE
         self.model = None
 
-    def load_model(self):
-        if self.model:
+    def load_model(self, size=None):
+        target_size = size or self.model_size
+        
+        # Check if we need to reload
+        if self.model and self.model_size == target_size:
             return
-        logger.info(f"Loading Whisper model: {self.model_size} on {self.device}...")
+
+        if self.model:
+           self.unload_model()
+           
+        self.model_size = target_size
+        logger.info(f"Loading Faster-Whisper model: {self.model_size} on {self.device}...")
         try:
-            # Note: "large-v3" might require a newer version of openai-whisper.
-            self.model = whisper.load_model(self.model_size, device=self.device)
-            logger.info("Whisper model loaded.")
+            # compute_type="float16" for GPU, "int8" for CPU usually standard
+            compute_type = "float16" if self.device == "cuda" else "int8"
+            self.model = WhisperModel(self.model_size, device=self.device, compute_type=compute_type)
+            logger.info("Faster-Whisper model loaded.")
         except Exception as e:
-            logger.error(f"Failed to load Whisper model: {e}")
+            logger.error(f"Failed to load Faster-Whisper model: {e}")
             logger.info("Attempting to load 'base' model as fallback.")
-            self.model = whisper.load_model("base", device=self.device)
+            self.model = WhisperModel("base", device=self.device, compute_type="int8")
 
     def unload_model(self):
         if self.model:
@@ -34,37 +43,48 @@ class Transcriber:
                 torch.cuda.empty_cache()
             logger.info("Whisper model unloaded.")
 
-    def transcribe(self, audio_path, language=None):
+    def transcribe(self, audio_path, language=None, model_size=None):
         """
         Transcribes the audio file and returns segments with timestamps.
         Returns: list of dicts {start, end, text}
         """
-        self.load_model()
+        self.load_model(model_size)
         if not self.model:
             raise RuntimeError("Whisper model not loaded.")
 
         logger.info(f"Transcribing {audio_path} with language='{language}'...")
         
-        options = {
-            "verbose": False,
-            "word_timestamps": True,
-            "condition_on_previous_text": False, # Prevent halluncination loops
-            "initial_prompt": "This is a dialogue. Transcribe it accurately.", # Provide context
-            "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0) # Allow fallback sampling
-        }
+        # Mapping parameters for faster-whisper
+        # beam_size=5 is standard
+        # language=None means auto-detect
         
-        if language and language != "auto":
-            options["language"] = language
+        lang_arg = language if (language and language != "auto") else None
+        
+        segments_generator, info = self.model.transcribe(
+            str(audio_path), 
+            language=lang_arg,
+            beam_size=5,
+            word_timestamps=True,
+            condition_on_previous_text=False,
+            initial_prompt="This is a dialogue. Transcribe it accurately.",
+            temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        )
+        
+        logger.info(f"Detected language '{info.language}' with probability {info.language_probability}")
 
-        result = self.model.transcribe(str(audio_path), **options)
+        # Unroll generator
+        # Faster-whisper segments differ slightly in structure
+        # Segment(start, end, text, words=...)
+        
+        result_segments = list(segments_generator)
         
         segments = []
-        for seg in result.get("segments", []):
+        for seg in result_segments:
             segments.append({
-                "start": seg["start"],
-                "end": seg["end"],
-                "text": seg["text"].strip(),
-                "words": seg.get("words", []) # Capture words if available
+                "start": seg.start,
+                "end": seg.end,
+                "text": seg.text.strip(),
+                "words": seg.words if hasattr(seg, 'words') else [] 
             })
             
         logger.info(f"Raw segments: {len(segments)}. Running cleanup...")
