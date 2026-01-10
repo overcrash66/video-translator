@@ -97,6 +97,30 @@ class TTSEngine:
             logger.error(f"Edge-TTS Generation failed: {e}")
             return self._generate_dummy_audio(text, output_path)
 
+    def _generate_xtts(self, text, language, speaker_wav, output_path):
+        try:
+            self._load_xtts()
+            logger.info(f"Generating XTTS audio for: '{text[:20]}...'")
+            
+            # XTTS language codes might differ slightly, but usually ISO 2-letter
+            # TTS api handles file saving
+            if not self.xtts_model:
+                 raise RuntimeError("XTTS model failed to load.")
+
+            self.xtts_model.tts_to_file(
+                text=text, 
+                speaker_wav=str(speaker_wav), 
+                language=language, 
+                file_path=str(output_path)
+            )
+            
+            logger.info(f"Saved XTTS output to {output_path}")
+            return output_path
+        except Exception as e:
+            logger.error(f"XTTS generation failed: {e}")
+            # Fallback
+            return self.generate_audio(text, speaker_wav, language, output_path, model="edge")
+
     def _generate_piper(self, text, language, output_path):
         """
         Generates audio using Piper TTS binary (subprocess).
