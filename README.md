@@ -84,21 +84,21 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 ```mermaid
 flowchart TD
     Video[Input Video] --> Extract[Extract Audio via FFmpeg]
-    Extract --> Separator{Audio Separator<br/>(HDemucs)}
+    Extract --> Separator{"Audio Separator<br/>(HDemucs)"}
     
     Separator -->|Vocals| Vocals[Vocal Track]
     Separator -->|Accompaniment| Background[Background Track]
     
-    Vocals --> Transcribe{Transcribe<br/>(Faster-Whisper)}
+    Vocals --> Transcribe{"Transcribe<br/>(Faster-Whisper)"}
     Transcribe --> Segments[Text Segments]
     
-    Segments --> Translate{Translate<br/>(Google / HY-MT)}
+    Segments --> Translate{"Translate<br/>(Google / HY-MT)"}
     Translate --> TransText[Translated Text]
     
-    TransText --> TTS{Neural TTS<br/>(Edge-TTS / Piper)}
+    TransText --> TTS{"Neural TTS<br/>(Edge-TTS / Piper)"}
     TTS --> TTSAudio[Generated Speech Clips]
     
-    TTSAudio --> Sync{Synchronize<br/>(Time-Stretch)}
+    TTSAudio --> Sync{"Synchronize<br/>(Time-Stretch)"}
     
     Sync --> MergedVocals[Merged Vocals]
     
@@ -107,7 +107,7 @@ flowchart TD
     
     Mix --> FinalAudio[Final Audio Track]
     
-    FinalAudio --> Mux{Merge with Video<br/>(FFmpeg)}
+    FinalAudio --> Mux{"Merge with Video<br/>(FFmpeg)"}
     Video --> Mux
     
     Mux --> Output[Translated Output Video]
