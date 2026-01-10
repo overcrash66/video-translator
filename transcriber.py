@@ -34,7 +34,7 @@ class Transcriber:
                 torch.cuda.empty_cache()
             logger.info("Whisper model unloaded.")
 
-    def transcribe(self, audio_path):
+    def transcribe(self, audio_path, language=None):
         """
         Transcribes the audio file and returns segments with timestamps.
         Returns: list of dicts {start, end, text}
@@ -43,10 +43,20 @@ class Transcriber:
         if not self.model:
             raise RuntimeError("Whisper model not loaded.")
 
-        logger.info(f"Transcribing {audio_path}...")
-        # verbose=False to reduce noise, word_timestamps=True if supported by this lib version generally helps
-        # But base whisper lib .transcribe returns segments.
-        result = self.model.transcribe(str(audio_path), verbose=False, word_timestamps=True)
+        logger.info(f"Transcribing {audio_path} with language='{language}'...")
+        
+        options = {
+            "verbose": False,
+            "word_timestamps": True,
+            "condition_on_previous_text": False, # Prevent halluncination loops
+            "initial_prompt": "This is a dialogue. Transcribe it accurately.", # Provide context
+            "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0) # Allow fallback sampling
+        }
+        
+        if language and language != "auto":
+            options["language"] = language
+
+        result = self.model.transcribe(str(audio_path), **options)
         
         segments = []
         for seg in result.get("segments", []):
@@ -70,19 +80,35 @@ class Transcriber:
             return []
 
         cleaned = []
+        
+        # Track phrase counts to detect loops (3+ repeats)
+        phrase_counts = {}
+        
         for i, seg in enumerate(segments):
-            text = seg["text"]
+            text = seg["text"].strip()
             
             # 1. Filter empty or very short noise (< 0.5s if empty text)
             if not text:
                 continue
+                
+            # Loop detection: Count normalized text occurrences
+            # Check for substantial text (not just "Ah", "Oh")
+            if len(text) > 3:
+                norm_text = text.lower()
+                phrase_counts[norm_text] = phrase_counts.get(norm_text, 0) + 1
+                
+                # If this specific phrase has appeared many times, likely a hallucination loop
+                # especially in TV shows (lyrics, banners, etc)
+                if phrase_counts[norm_text] > 4:
+                     logger.warning(f"Dropping likely hallucination loop segment: '{text}' (Count: {phrase_counts[norm_text]})")
+                     continue
             
             # 2. Match with previous
             if cleaned:
                 prev = cleaned[-1]
                 
                 # Check for exact duplicate text (hallucination loop)
-                is_duplicate_text = text.lower().strip() == prev["text"].lower().strip()
+                is_duplicate_text = text.lower() == prev["text"].lower().strip()
                 
                 # Calculate gap
                 gap = seg["start"] - prev["end"]

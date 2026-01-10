@@ -29,7 +29,7 @@ tts_engine = TTSEngine()
 synchronizer = AudioSynchronizer()
 processor = VideoProcessor()
 
-def process_video(video_path, target_language, audio_model, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -131,7 +131,8 @@ def process_video(video_path, target_language, audio_model, progress=gr.Progress
         # 4. Transcription
         progress(0.3, desc="Transcribing...")
         try:
-            segments = transcriber.transcribe(vocals_path)
+            source_code = config.get_language_code(source_language)
+            segments = transcriber.transcribe(vocals_path, language=source_code)
         except Exception as e:
             raise gr.Error(f"Transcription failed: {e}")
 
@@ -243,7 +244,14 @@ def create_ui():
             with gr.Column():
                 # extraction of the video takes place in the backend, but using gr.File prevents
                 # the browser/gradio from trying to preview/stream the video which causes file locking errors on Windows
-                video_input = gr.File(label="Input Video", file_types=[".mp4", ".avi", ".mov", ".mkv"]) 
+                video_input = gr.File(label="Input Video", file_types=[".mp4", ".avi", ".mov", ".mkv"])
+                
+                source_language = gr.Dropdown(
+                    choices=["Auto Detect", "English", "Spanish", "French", "German", "Italian", "Portuguese", "Polish", "Turkish", "Russian", "Dutch", "Czech", "Arabic", "Chinese", "Japanese", "Korean", "Hindi"],
+                    label="Source Language (Optional - forcing helps with noise)",
+                    value="Auto Detect"
+                )
+                 
                 target_language = gr.Dropdown(
                     choices=["English", "Spanish", "French", "German", "Italian", "Portuguese", "Polish", "Turkish", "Russian", "Dutch", "Czech", "Arabic", "Chinese (Simplified)", "Japanese", "Korean", "Hindi"],
                     label="Target Language",
@@ -264,7 +272,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, target_language, audio_model],
+            inputs=[video_input, source_language, target_language, audio_model],
             outputs=[video_output, logs_output]
         )
         
