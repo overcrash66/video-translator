@@ -236,8 +236,15 @@ def process_video(video_path, source_language, target_language, audio_model, tts
                  if best_speaker:
                       gender = speaker_map.get(best_speaker, "Female")
             
-            # Use selected TTS model
-            generated_path = tts_engine.generate_audio(text, vocals_path, language=target_code, output_path=seg_out, model=tts_model, gender=gender)
+            # Use selected TTS model (pass speaker_id for multi-voice support)
+            generated_path = tts_engine.generate_audio(
+                text, vocals_path, 
+                language=target_code, 
+                output_path=seg_out, 
+                model=tts_model, 
+                gender=gender,
+                speaker_id=best_speaker if enable_diarization else None
+            )
             
             
             # Validation: Individual TTS

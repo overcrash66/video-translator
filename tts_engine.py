@@ -35,24 +35,73 @@ logger = logging.getLogger(__name__)
 class TTSEngine:
     def __init__(self):
         self.device = config.DEVICE
-        # Mapping from language code to Edge-TTS Voice (Gender-aware)
+        # Mapping from language code to Edge-TTS Voices (Gender-aware, multiple voices per gender)
+        # Each gender has a LIST of voices to support multiple speakers
         self.voice_map = {
-            "en": {"Female": "en-US-AriaNeural", "Male": "en-US-GuyNeural"},
-            "es": {"Female": "es-ES-ElviraNeural", "Male": "es-ES-AlvaroNeural"},
-            "fr": {"Female": "fr-FR-DeniseNeural", "Male": "fr-FR-HenriNeural"},
-            "de": {"Female": "de-DE-KatjaNeural", "Male": "de-DE-ConradNeural"},
-            "it": {"Female": "it-IT-ElsaNeural", "Male": "it-IT-DiegoNeural"},
-            "pt": {"Female": "pt-BR-FranciscaNeural", "Male": "pt-BR-AntonioNeural"},
-            "pl": {"Female": "pl-PL-ZofiaNeural", "Male": "pl-PL-MarekNeural"},
-            "tr": {"Female": "tr-TR-EmelNeural", "Male": "tr-TR-AhmetNeural"},
-            "ru": {"Female": "ru-RU-SvetlanaNeural", "Male": "ru-RU-DmitryNeural"},
-            "nl": {"Female": "nl-NL-ColetteNeural", "Male": "nl-NL-MaartenNeural"},
-            "cs": {"Female": "cs-CZ-VlastaNeural", "Male": "cs-CZ-AntoninNeural"},
-            "ar": {"Female": "ar-SA-ZariyahNeural", "Male": "ar-SA-HamedNeural"},
-            "zh-cn": {"Female": "zh-CN-XiaoxiaoNeural", "Male": "zh-CN-YunxiNeural"},
-            "ja": {"Female": "ja-JP-NanamiNeural", "Male": "ja-JP-KeitaNeural"},
-            "ko": {"Female": "ko-KR-SunHiNeural", "Male": "ko-KR-InJoonNeural"},
-            "hi": {"Female": "hi-IN-SwaraNeural", "Male": "hi-IN-MadhurNeural"}
+            "en": {
+                "Female": ["en-US-AriaNeural", "en-US-JennyNeural", "en-GB-SoniaNeural"],
+                "Male": ["en-US-GuyNeural", "en-US-ChristopherNeural", "en-GB-RyanNeural"]
+            },
+            "es": {
+                "Female": ["es-ES-ElviraNeural", "es-MX-DaliaNeural"],
+                "Male": ["es-ES-AlvaroNeural", "es-MX-JorgeNeural"]
+            },
+            "fr": {
+                "Female": ["fr-FR-DeniseNeural", "fr-CA-SylvieNeural"],
+                "Male": ["fr-FR-HenriNeural", "fr-CA-JeanNeural"]
+            },
+            "de": {
+                "Female": ["de-DE-KatjaNeural", "de-AT-IngridNeural"],
+                "Male": ["de-DE-ConradNeural", "de-AT-JonasNeural"]
+            },
+            "it": {
+                "Female": ["it-IT-ElsaNeural", "it-IT-IsabellaNeural"],
+                "Male": ["it-IT-DiegoNeural", "it-IT-GiuseppeNeural"]
+            },
+            "pt": {
+                "Female": ["pt-BR-FranciscaNeural", "pt-PT-RaquelNeural"],
+                "Male": ["pt-BR-AntonioNeural", "pt-PT-DuarteNeural"]
+            },
+            "pl": {
+                "Female": ["pl-PL-ZofiaNeural", "pl-PL-AgnieszkaNeural"],
+                "Male": ["pl-PL-MarekNeural"]
+            },
+            "tr": {
+                "Female": ["tr-TR-EmelNeural"],
+                "Male": ["tr-TR-AhmetNeural"]
+            },
+            "ru": {
+                "Female": ["ru-RU-SvetlanaNeural", "ru-RU-DariyaNeural"],
+                "Male": ["ru-RU-DmitryNeural"]
+            },
+            "nl": {
+                "Female": ["nl-NL-ColetteNeural", "nl-NL-FennaNeural"],
+                "Male": ["nl-NL-MaartenNeural"]
+            },
+            "cs": {
+                "Female": ["cs-CZ-VlastaNeural"],
+                "Male": ["cs-CZ-AntoninNeural"]
+            },
+            "ar": {
+                "Female": ["ar-SA-ZariyahNeural", "ar-EG-SalmaNeural"],
+                "Male": ["ar-SA-HamedNeural", "ar-EG-ShakirNeural"]
+            },
+            "zh-cn": {
+                "Female": ["zh-CN-XiaoxiaoNeural", "zh-CN-XiaoyiNeural", "zh-CN-XiaochenNeural"],
+                "Male": ["zh-CN-YunxiNeural", "zh-CN-YunjianNeural", "zh-CN-YunyeNeural"]
+            },
+            "ja": {
+                "Female": ["ja-JP-NanamiNeural", "ja-JP-AoiNeural"],
+                "Male": ["ja-JP-KeitaNeural", "ja-JP-DaichiNeural"]
+            },
+            "ko": {
+                "Female": ["ko-KR-SunHiNeural", "ko-KR-JiMinNeural"],
+                "Male": ["ko-KR-InJoonNeural", "ko-KR-BongJinNeural"]
+            },
+            "hi": {
+                "Female": ["hi-IN-SwaraNeural"],
+                "Male": ["hi-IN-MadhurNeural"]
+            }
         }
         self.xtts_model = None
         
@@ -86,11 +135,12 @@ class TTSEngine:
             logger.error(f"Failed to load XTTS model: {e}")
             raise
 
-    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female"):
+    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None):
         """
         Generates audio using Edge-TTS, Piper, or XTTS.
         model: "edge", "piper", or "xtts"
         gender: "Male" or "Female" (used for default/edge mapping)
+        speaker_id: Speaker identifier (e.g., "SPEAKER_00") used to select unique voice
         """
         if not output_path:
             output_path = config.TEMP_DIR / "tts_output.wav"
@@ -104,18 +154,27 @@ class TTSEngine:
 
         # Default Edge-TTS logic
         
-        # Select voice
-        opts = self.voice_map.get(language, self.voice_map["en"])
-        if isinstance(opts, dict):
-            voice = opts.get(gender, opts.get("Female"))
-        else:
-            voice = opts # fallback if old structure
+        # Get voice list for language and gender
+        opts = self.voice_map.get(language, self.voice_map.get("en", {}))
+        voice_list = opts.get(gender, opts.get("Female", ["en-US-AriaNeural"]))
         
-        # Fallback if specific lang not found/partial
-        if not voice:
-             voice = "en-US-AriaNeural"
+        # Handle legacy single-voice format (backward compatibility)
+        if isinstance(voice_list, str):
+            voice_list = [voice_list]
         
-        logger.info(f"Generating TTS for lang='{language}' using voice='{voice}'...")
+        # Select voice based on speaker_id
+        voice_index = 0
+        if speaker_id:
+            try:
+                # Extract speaker number from ID like "SPEAKER_00", "SPEAKER_01", etc.
+                speaker_num = int(speaker_id.split("_")[-1])
+                voice_index = speaker_num % len(voice_list)  # Cycle through available voices
+            except (ValueError, IndexError):
+                pass
+        
+        voice = voice_list[voice_index]
+        
+        logger.info(f"Generating TTS: lang='{language}', gender='{gender}', speaker='{speaker_id}' -> voice='{voice}'")
         
         try:
             # Async wrapper check

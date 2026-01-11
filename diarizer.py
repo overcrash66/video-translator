@@ -159,17 +159,23 @@ class Diarizer:
         return merged
     
     def _cluster_embeddings(self, embeddings, max_speakers=None):
-        """Cluster embeddings using spectral clustering."""
-        from sklearn.cluster import SpectralClustering
+        """Cluster embeddings using spectral clustering with improved speaker separation."""
+        from sklearn.cluster import SpectralClustering, AgglomerativeClustering
         from sklearn.metrics import silhouette_score
+        from sklearn.preprocessing import normalize
         
         if max_speakers is None:
             max_speakers = self.max_speakers
         
         n_samples = len(embeddings)
+        logger.info(f"Clustering {n_samples} embedding segments...")
         
         if n_samples < 2:
+            logger.warning("Only 1 segment, cannot cluster")
             return np.zeros(n_samples, dtype=int)
+        
+        # Normalize embeddings for better cosine similarity
+        embeddings_norm = normalize(embeddings)
         
         # Try different numbers of clusters
         best_score = -1
@@ -178,6 +184,7 @@ class Diarizer:
         
         max_clusters = min(max_speakers, n_samples)
         
+        # First try: Spectral Clustering
         for n_clusters in range(2, max_clusters + 1):
             try:
                 clustering = SpectralClustering(
@@ -186,23 +193,55 @@ class Diarizer:
                     n_neighbors=min(10, n_samples - 1),
                     random_state=42
                 )
-                labels = clustering.fit_predict(embeddings)
+                labels = clustering.fit_predict(embeddings_norm)
                 
-                # Silhouette score to evaluate clustering quality
                 if len(set(labels)) > 1:
-                    score = silhouette_score(embeddings, labels)
+                    score = silhouette_score(embeddings_norm, labels)
+                    logger.debug(f"Spectral n={n_clusters}: score={score:.3f}")
                     if score > best_score:
                         best_score = score
                         best_labels = labels
                         best_n = n_clusters
             except Exception as e:
-                logger.debug(f"Clustering with {n_clusters} failed: {e}")
+                logger.debug(f"Spectral with {n_clusters} failed: {e}")
                 continue
         
-        if best_labels is None:
-            return np.zeros(n_samples, dtype=int)
+        # Fallback: Agglomerative Clustering if spectral failed or produced poor results
+        if best_labels is None or best_score < 0.1:
+            logger.info("Trying Agglomerative clustering as fallback...")
+            for n_clusters in range(2, max_clusters + 1):
+                try:
+                    clustering = AgglomerativeClustering(
+                        n_clusters=n_clusters,
+                        metric='cosine',
+                        linkage='average'
+                    )
+                    labels = clustering.fit_predict(embeddings_norm)
+                    
+                    if len(set(labels)) > 1:
+                        score = silhouette_score(embeddings_norm, labels, metric='cosine')
+                        logger.debug(f"Agglomerative n={n_clusters}: score={score:.3f}")
+                        if score > best_score:
+                            best_score = score
+                            best_labels = labels
+                            best_n = n_clusters
+                except Exception as e:
+                    logger.debug(f"Agglomerative with {n_clusters} failed: {e}")
+                    continue
         
-        logger.info(f"Best clustering: {best_n} speakers (score: {best_score:.3f})")
+        # If still no good clustering, force 2 clusters
+        if best_labels is None:
+            logger.warning("All clustering attempts failed, forcing 2 clusters with k-means")
+            from sklearn.cluster import KMeans
+            try:
+                kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+                best_labels = kmeans.fit_predict(embeddings_norm)
+                best_n = 2
+                best_score = 0.0
+            except:
+                return np.zeros(n_samples, dtype=int)
+        
+        logger.info(f"✅ Detected {best_n} speakers (silhouette score: {best_score:.3f})")
         return best_labels
 
     def diarize(self, audio_path):
