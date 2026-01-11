@@ -212,7 +212,7 @@ class AudioSynchronizer:
                     resampler = torchaudio.transforms.Resample(sr, target_sr)
                     wav = resampler(wav)
                 
-                # Add to canvas with cross-fade blending
+                # Add to canvas with proper overlap handling
                 start_sample = int(start_sec * target_sr)
                 end_sample = start_sample + wav.shape[1]
                 
@@ -222,40 +222,43 @@ class AudioSynchronizer:
                     canvas = torch.cat([canvas, torch.zeros(1, padding)], dim=1)
                     total_samples = canvas.shape[1]
 
-                # Apply cross-fade blending for smoother transitions
-                # Use 50ms fade (1200 samples at 24kHz)
-                fade_samples = min(1200, wav.shape[1] // 4)  # Max 25% of segment
+                # Check if there's existing audio we would overwrite
+                # Only apply cross-fade blending when there's actual overlap
+                existing_region = canvas[:, start_sample:end_sample]
+                has_existing_audio = existing_region.abs().max() > 0.01
                 
-                if fade_samples > 10:
-                    # Create fade windows
-                    fade_in = torch.from_numpy(
-                        generate_crossfade_window(fade_samples, 'cosine')
-                    ).float().unsqueeze(0)
-                    fade_out = torch.from_numpy(
-                        generate_crossfade_window(fade_samples, 'cosine')[::-1].copy()
-                    ).float().unsqueeze(0)
+                if has_existing_audio:
+                    # There IS existing audio - apply proper crossfade blending
+                    # Use 50ms fade (1200 samples at 24kHz)
+                    fade_samples = min(1200, wav.shape[1] // 4)  # Max 25% of segment
                     
-                    # Apply fade-in to segment start
-                    wav[:, :fade_samples] *= fade_in
-                    # Apply fade-out to segment end
-                    wav[:, -fade_samples:] *= fade_out
-                    
-                    # Blend with existing canvas content (additive crossfade in overlap region)
-                    # Check if there's existing audio at start position
-                    existing_start = canvas[:, start_sample:start_sample + fade_samples]
-                    if existing_start.abs().max() > 0.01:
-                        # There's existing audio - blend in the overlap region
-                        logger.debug(f"Crossfading segment at {start_sec:.2f}s with existing audio")
-                        canvas[:, start_sample:start_sample + fade_samples] = (
-                            existing_start + wav[:, :fade_samples]
-                        )
-                        # Place the rest of the segment normally
+                    if fade_samples > 10:
+                        # Create fade-in window for the incoming segment
+                        fade_in = torch.from_numpy(
+                            generate_crossfade_window(fade_samples, 'cosine')
+                        ).float().unsqueeze(0)
+                        # Create fade-out window for existing audio
+                        fade_out = torch.from_numpy(
+                            generate_crossfade_window(fade_samples, 'cosine')[::-1].copy()
+                        ).float().unsqueeze(0)
+                        
+                        # Apply crossfade only in the overlap region at start
+                        existing_start = canvas[:, start_sample:start_sample + fade_samples].clone()
+                        
+                        # Blend: fade out existing + fade in new
+                        blended = existing_start * fade_out + wav[:, :fade_samples] * fade_in
+                        
+                        # Place blended region
+                        canvas[:, start_sample:start_sample + fade_samples] = blended
+                        # Place rest of segment at full volume
                         canvas[:, start_sample + fade_samples:end_sample] = wav[:, fade_samples:end_sample-start_sample]
+                        
+                        logger.debug(f"Crossfade applied at {start_sec:.2f}s (overlap with existing audio)")
                     else:
-                        # No existing audio - just place the segment
+                        # Segment too short for cross-fade, just overwrite
                         canvas[:, start_sample:end_sample] = wav[:, :end_sample-start_sample]
                 else:
-                    # Segment too short for cross-fade, just place it
+                    # No existing audio - place segment at FULL volume (no fading!)
                     canvas[:, start_sample:end_sample] = wav[:, :end_sample-start_sample]
             
             # Save
