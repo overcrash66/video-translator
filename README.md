@@ -14,6 +14,7 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     *   **Piper TTS** (Local): Robust offline neural TTS using the official Piper binary (automatically downloaded).
     *   **XTTS-v2** (Local): High-fidelity voice cloning using Coqui TTS. Requires ~2GB VRAM.
 *   **Smart Synchronization**: Automatically stretches or squeezes generated speech to match the original timing.
+*   **Speaker Diarization (New)**: Optionally detects multiple speakers and assigns gender-appropriate TTS voices (Male/Female) using `pyannote.audio` and pitch analysis.
 *   **GPU Optimized**: Custom memory management includes aggressive model offloading and audio chunking to prevent CUDA Out-of-Memory errors.
 *   **Friendly UI**: Easy-to-use **Gradio** web interface.
 
@@ -72,6 +73,7 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
         *   `edge`: Online, highest quality (requires internet).
         *   `piper`: Local, fast, private.
         *   `xtts`: Local voice cloning (uses input video's vocals as reference).
+    *   **Enable Speaker Diarization**: Check this to automatically detect speakers and use different voices (Male/Female) for each. Requires `HF_TOKEN`.
     *   **Click Submit**: The progress bar will track the stages (Separating -> Transcribing -> Translating -> Synthesizing -> Mixing).
 
 4.  **Output**:
@@ -82,8 +84,8 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 *   **Directory Structure**:
     *   `temp/`: Stores intermediate files (vocals, separated tracks). Cleared/Managed during runs.
     *   `output/`: Stores final processed videos.
-*   **Env Variables** (Optional):
-    *   `HF_TOKEN`: HuggingFace token if you switch to using gated models (not required for current default pipeline).
+*   **Env Variables** (Optional but Recommended):
+    *   `HF_TOKEN`: HuggingFace token. **Required** for Speaker Diarization (`pyannote/speaker-diarization-3.1`). You must also accept the model agreement on the [Hugging Face model page](https://huggingface.co/pyannote/speaker-diarization-3.1).
 
 ## 🧩 Pipeline Architecture
 
@@ -97,6 +99,9 @@ flowchart TD
     
     Vocals --> Transcribe{"Transcribe<br/>(Faster-Whisper)"}
     Transcribe --> Segments[Text Segments]
+
+    Vocals -.-> Diarize{"Diarize & Detect Gender<br/>(Pyannote/Librosa)"}
+    Diarize -.-> SpeakerMap[Speaker/Gender Map]
     
     Segments --> Translate{"Translate<br/>(Google / HY-MT)"}
     
@@ -106,6 +111,7 @@ flowchart TD
     Optimize -- No --> TransText
     
     TransText --> TTS{"Neural TTS<br/>(Edge-TTS / Piper / XTTS)"}
+    SpeakerMap -.-> TTS
     TTS --> TTSAudio[Generated Speech Clips]
     
     TTSAudio --> Sync{"Synchronize<br/>(Time-Stretch)"}
@@ -128,17 +134,19 @@ flowchart TD
     style Transcribe fill:#fff3e0,stroke:#ef6c00
     style Translate fill:#fff3e0,stroke:#ef6c00
     style TTS fill:#fff3e0,stroke:#ef6c00
+    style Diarize fill:#f3e5f5,stroke:#7b1fa2
 ```
 
 
 1.  **Extract**: FFmpeg extracts audio from input video.
 2.  **Separate**: HDemucs splits audio into `vocals` and `accompaniment`.
 3.  **Transcribe**: Whisper converts `vocals` to text segments with start/end times.
-4.  **Translate**: Segments are translated text-to-text.
-5.  **Synthesize (TTS)**: Edge-TTS generates speech for each translated segment.
-6.  **Synchronize**: generated clips are time-stretched to fit original segment duration.
-7.  **Mix**: New vocals are mixed with original `accompaniment`.
-8.  **Merge**: Final mix is replaced into the original video container.
+4.  **Diarize (Optional)**: Detects speakers and genders (Male/Female) to inform voice selection.
+5.  **Translate**: Segments are translated text-to-text.
+6.  **Synthesize (TTS)**: Edge-TTS generates speech for each translated segment, matching speaker gender if enabled.
+7.  **Synchronize**: generated clips are time-stretched to fit original segment duration.
+8.  **Mix**: New vocals are mixed with original `accompaniment`.
+9.  **Merge**: Final mix is replaced into the original video container.
 
 ## 🔧 Troubleshooting
 

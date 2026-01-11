@@ -10,6 +10,7 @@ from translator import Translator
 from tts_engine import TTSEngine
 from synchronizer import AudioSynchronizer
 from video_processor import VideoProcessor
+from diarizer import Diarizer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -28,8 +29,9 @@ translator = Translator()
 tts_engine = TTSEngine()
 synchronizer = AudioSynchronizer()
 processor = VideoProcessor()
+diarizer = Diarizer()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, enable_diarization, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -128,6 +130,20 @@ def process_video(video_path, source_language, target_language, audio_model, tts
         log_msg = log(f"Separation complete. \nVocals: {Path(vocals_path).name}\nBackground: {Path(bg_path).name}")
         yield None, log_msg
 
+        # 3.5 Diarization (Optional)
+        speaker_map = {} # {id: gender}
+        diarization_segments = []
+        if enable_diarization:
+             progress(0.25, desc="Diarizing Speakers...")
+             try:
+                 diarization_segments = diarizer.diarize(vocals_path)
+                 speaker_genders = diarizer.detect_genders(vocals_path, diarization_segments)
+                 log_msg = log(f"Diarization complete. Speakers: {speaker_genders}")
+                 speaker_map = speaker_genders
+                 yield None, log_msg
+             except Exception as e:
+                 log(f"Diarization failed: {e}. Proceeding with single speaker.")
+                 
         # 4. Transcription
         progress(0.3, desc="Transcribing...")
         try:
@@ -195,8 +211,33 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             # Determine extension based on model
             ext = ".wav" if tts_model in ["piper", "xtts"] else ".mp3"
             seg_out = seg_dir / f"seg_{i}_tts{ext}"
+            
+            # Determine Gender
+            gender = "Female" # Default
+            if enable_diarization and diarization_segments:
+                 # Find overlapping diarization segments
+                 # Simple intersection: max overlap
+                 seg_start = seg['start']
+                 seg_end = seg['end']
+                 
+                 best_speaker = None
+                 max_overlap = 0
+                 
+                 for d_seg in diarization_segments:
+                     # Intersect [seg_start, seg_end] with [d_seg_start, d_seg_end]
+                     overlap_start = max(seg_start, d_seg['start'])
+                     overlap_end = min(seg_end, d_seg['end'])
+                     overlap = max(0, overlap_end - overlap_start)
+                     
+                     if overlap > max_overlap:
+                         max_overlap = overlap
+                         best_speaker = d_seg['speaker']
+                 
+                 if best_speaker:
+                      gender = speaker_map.get(best_speaker, "Female")
+            
             # Use selected TTS model
-            generated_path = tts_engine.generate_audio(text, vocals_path, language=target_code, output_path=seg_out, model=tts_model)
+            generated_path = tts_engine.generate_audio(text, vocals_path, language=target_code, output_path=seg_out, model=tts_model, gender=gender)
             
             
             # Validation: Individual TTS
@@ -248,8 +289,13 @@ def process_video(video_path, source_language, target_language, audio_model, tts
         
         # 9. Final Mux
         output_video = config.OUTPUT_DIR / f"translated_{video_path.name}"
-        processor.replace_audio(str(video_path), str(final_mix), str(output_video))
+        result_path = processor.replace_audio(str(video_path), str(final_mix), str(output_video))
         
+        if not result_path or not Path(result_path).exists() or Path(result_path).stat().st_size < 1000:
+             # Try simple copy if mux failed? No, we need the new audio.
+             # Log the potential error
+             raise gr.Error("Final video generation failed (ffmpeg muxing error). Check logs.")
+
         log_msg = log(f"Processing Complete! Saved to {output_video}")
         yield str(output_video), log_msg
 
@@ -299,6 +345,12 @@ def create_ui():
                     value="Torchaudio HDemucs (Recommended)"
                 )
                 
+                enable_diarization = gr.Checkbox(
+                    label="Enable Speaker Diarization (Multi-speaker)",
+                    value=False,
+                    info="Detects speakers and genders to assign appropriate TTS voices. Requires HF_TOKEN."
+                )
+                
                 transcription_model = gr.Dropdown(
                     choices=["Faster-Whisper Large v3 (Best)", "Faster-Whisper Medium (Faster)", "Faster-Whisper Base (Fastest)"],
                     label="Speech-to-Text Model",
@@ -319,7 +371,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, enable_diarization],
             outputs=[video_output, logs_output]
         )
         

@@ -35,25 +35,24 @@ logger = logging.getLogger(__name__)
 class TTSEngine:
     def __init__(self):
         self.device = config.DEVICE
-        # Mapping from language code to Edge-TTS Voice
+        # Mapping from language code to Edge-TTS Voice (Gender-aware)
         self.voice_map = {
-            "en": "en-US-AriaNeural",
-            "es": "es-ES-ElviraNeural",
-            "fr": "fr-FR-DeniseNeural",
-            "de": "de-DE-KatjaNeural",
-            "it": "it-IT-ElsaNeural",
-            "pt": "pt-BR-FranciscaNeural",
-            "pl": "pl-PL-ZofiaNeural",
-            "tr": "tr-TR-EmelNeural",
-            "ru": "ru-RU-SvetlanaNeural",
-            "nl": "nl-NL-ColetteNeural",
-            "cs": "cs-CZ-VlastaNeural",
-            "ar": "ar-SA-ZariyahNeural",
-            "zh-cn": "zh-CN-XiaoxiaoNeural",
-            "ja": "ja-JP-NanamiNeural",
-            "ko": "ko-KR-SunHiNeural",
-            "hi": "hi-IN-SwaraNeural"
-        
+            "en": {"Female": "en-US-AriaNeural", "Male": "en-US-GuyNeural"},
+            "es": {"Female": "es-ES-ElviraNeural", "Male": "es-ES-AlvaroNeural"},
+            "fr": {"Female": "fr-FR-DeniseNeural", "Male": "fr-FR-HenriNeural"},
+            "de": {"Female": "de-DE-KatjaNeural", "Male": "de-DE-ConradNeural"},
+            "it": {"Female": "it-IT-ElsaNeural", "Male": "it-IT-DiegoNeural"},
+            "pt": {"Female": "pt-BR-FranciscaNeural", "Male": "pt-BR-AntonioNeural"},
+            "pl": {"Female": "pl-PL-ZofiaNeural", "Male": "pl-PL-MarekNeural"},
+            "tr": {"Female": "tr-TR-EmelNeural", "Male": "tr-TR-AhmetNeural"},
+            "ru": {"Female": "ru-RU-SvetlanaNeural", "Male": "ru-RU-DmitryNeural"},
+            "nl": {"Female": "nl-NL-ColetteNeural", "Male": "nl-NL-MaartenNeural"},
+            "cs": {"Female": "cs-CZ-VlastaNeural", "Male": "cs-CZ-AntoninNeural"},
+            "ar": {"Female": "ar-SA-ZariyahNeural", "Male": "ar-SA-HamedNeural"},
+            "zh-cn": {"Female": "zh-CN-XiaoxiaoNeural", "Male": "zh-CN-YunxiNeural"},
+            "ja": {"Female": "ja-JP-NanamiNeural", "Male": "ja-JP-KeitaNeural"},
+            "ko": {"Female": "ko-KR-SunHiNeural", "Male": "ko-KR-InJoonNeural"},
+            "hi": {"Female": "hi-IN-SwaraNeural", "Male": "hi-IN-MadhurNeural"}
         }
         self.xtts_model = None
         
@@ -87,10 +86,11 @@ class TTSEngine:
             logger.error(f"Failed to load XTTS model: {e}")
             raise
 
-    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge"):
+    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female"):
         """
         Generates audio using Edge-TTS, Piper, or XTTS.
         model: "edge", "piper", or "xtts"
+        gender: "Male" or "Female" (used for default/edge mapping)
         """
         if not output_path:
             output_path = config.TEMP_DIR / "tts_output.wav"
@@ -105,7 +105,15 @@ class TTSEngine:
         # Default Edge-TTS logic
         
         # Select voice
-        voice = self.voice_map.get(language, "en-US-AriaNeural")
+        opts = self.voice_map.get(language, self.voice_map["en"])
+        if isinstance(opts, dict):
+            voice = opts.get(gender, opts.get("Female"))
+        else:
+            voice = opts # fallback if old structure
+        
+        # Fallback if specific lang not found/partial
+        if not voice:
+             voice = "en-US-AriaNeural"
         
         logger.info(f"Generating TTS for lang='{language}' using voice='{voice}'...")
         

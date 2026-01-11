@@ -94,15 +94,27 @@ class VideoProcessor:
             video = ffmpeg.input(video_path)
             audio = ffmpeg.input(new_audio_path)
             
-            (
-                ffmpeg
-                .output(video.video, audio, output_video_path, vcodec='copy', acodec='aac', strict='experimental')
-                .overwrite_output()
-                .run(quiet=True)
-            )
+            # Attempt 1: Copy video stream (Fastest)
+            try:
+                (
+                    ffmpeg
+                    .output(video.video, audio, output_video_path, vcodec='copy', acodec='aac', strict='experimental')
+                    .overwrite_output()
+                    .run(quiet=True)
+                )
+            except ffmpeg.Error as e:
+                logger.warning(f"Replace audio (copy) failed: {e.stderr.decode() if e.stderr else str(e)}. Retrying with re-encode...")
+                # Attempt 2: Re-encode video (Compatible)
+                (
+                    ffmpeg
+                    .output(video.video, audio, output_video_path, vcodec='libx264', acodec='aac', strict='experimental', preset='fast')
+                    .overwrite_output()
+                    .run(quiet=True)
+                )
+
             return output_video_path
         except ffmpeg.Error as e:
-             logger.error(f"Replace audio failed: {e.stderr.decode() if e.stderr else str(e)}")
+             logger.error(f"Replace audio failed (both copy and re-encode): {e.stderr.decode() if e.stderr else str(e)}")
              return None
 
 if __name__ == "__main__":
