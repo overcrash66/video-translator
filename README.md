@@ -5,7 +5,10 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 ## 🚀 Key Features
 
 *   **Vocal Separation**: Uses **HDemucs** (Meta's Hybrid Demucs) to cleanly separate speech from background music/sfx. Optimized with chunking to handle long videos on limited GPU memory.
-*   **Precision Transcription**: Powered by **Faster-Whisper** (CTranslate2). Selectable models (Large v3, Medium, Base) for balancing speed vs accuracy.
+*   **Precision Transcription**: Powered by **Faster-Whisper** (CTranslate2). 
+    *   **Whisper Large v3 Turbo** (Recommended): 30-50% faster with comparable accuracy.
+    *   **Silero VAD Preprocessing**: Filters non-speech regions to reduce hallucinations.
+    *   **Word-level Confidence Filtering**: Removes low-confidence transcriptions.
 *   **Multi-Language Translation**: 
     *   **Google Translate** (Online): Fast, reliable standard translation.
     *   **Tencent HY-MT1.5** (Local): Large language model (1.8B) for better context and consistency in translations.
@@ -13,7 +16,9 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     *   **Edge-TTS** (Online): High-quality, natural-sounding speech generation.
     *   **Piper TTS** (Local): Robust offline neural TTS using the official Piper binary (automatically downloaded).
     *   **XTTS-v2** (Local): High-fidelity voice cloning using Coqui TTS. Requires ~2GB VRAM.
-*   **Smart Synchronization**: Automatically stretches or squeezes generated speech to match the original timing.
+*   **Smart Synchronization**: 
+    *   High-quality **PyRubberband** time-stretching with formant preservation.
+    *   **Cross-fade blending** for smooth transitions between audio segments.
 *   **Speaker Diarization**: Optionally detects multiple speakers using **SpeechBrain's ECAPA-TDNN** embeddings with spectral clustering, and assigns gender-appropriate TTS voices (Male/Female) based on pitch analysis.
 *   **GPU Optimized**: Custom memory management includes aggressive model offloading and audio chunking to prevent CUDA Out-of-Memory errors.
 *   **Friendly UI**: Easy-to-use **Gradio** web interface.
@@ -61,9 +66,9 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     *   **Upload Video**: Select an MP4/MKV/MOV file.
     *   **Select Source Language**: (Optional) Specify the original language to improve transcription accuracy.
     *   **Select Speech-to-Text Model**: 
-        *   `Large v3`: Best accuracy (Recommended).
-        *   `Medium/Base`: Faster, less accurate.
-    *   **Select Target Language**: Choose from the dropdown (e.g., Spanish, Japanese).
+        *   `Large v3 Turbo (Fast)`: Best speed/accuracy balance (Recommended).
+        *   `Large v3`: Best accuracy, slower.
+        *   `Medium/Base/Small`: Progressively faster, less accurate.
     *   **Select Target Language**: Choose from the dropdown (e.g., Spanish, Japanese).
     *   **Select Translation Model**: 
         *   `Google Translate`: Default, fast.
@@ -97,8 +102,10 @@ flowchart TD
     Separator -->|Vocals| Vocals[Vocal Track]
     Separator -->|Accompaniment| Background[Background Track]
     
-    Vocals --> Transcribe{"Transcribe<br/>(Faster-Whisper)"}
-    Transcribe --> Segments[Text Segments]
+    Vocals --> VAD{"VAD Preprocessing<br/>(Silero VAD)"}
+    VAD --> Transcribe{"Transcribe<br/>(Faster-Whisper Turbo)"}
+    Transcribe --> ConfFilter[Word Confidence Filter]
+    ConfFilter --> Segments[Text Segments]
 
     Vocals -.-> Diarize{"Diarize & Detect Gender<br/>(SpeechBrain/Librosa)"}
     Diarize -.-> SpeakerMap[Speaker/Gender Map]
@@ -114,9 +121,10 @@ flowchart TD
     SpeakerMap -.-> TTS
     TTS --> TTSAudio[Generated Speech Clips]
     
-    TTSAudio --> Sync{"Synchronize<br/>(Time-Stretch)"}
+    TTSAudio --> Sync{"Synchronize<br/>(PyRubberband)"}
     
-    Sync --> MergedVocals[Merged Vocals]
+    Sync --> CrossFade[Cross-fade Blending]
+    CrossFade --> MergedVocals[Merged Vocals]
     
     MergedVocals --> Mix{Mix Audio}
     Background --> Mix
@@ -131,22 +139,28 @@ flowchart TD
     style Video fill:#e1f5fe,stroke:#01579b
     style Output fill:#e8f5e9,stroke:#2e7d32
     style Separator fill:#fff3e0,stroke:#ef6c00
+    style VAD fill:#e3f2fd,stroke:#1976d2
     style Transcribe fill:#fff3e0,stroke:#ef6c00
     style Translate fill:#fff3e0,stroke:#ef6c00
     style TTS fill:#fff3e0,stroke:#ef6c00
+    style Sync fill:#fff3e0,stroke:#ef6c00
+    style CrossFade fill:#e3f2fd,stroke:#1976d2
     style Diarize fill:#f3e5f5,stroke:#7b1fa2
 ```
 
 
 1.  **Extract**: FFmpeg extracts audio from input video.
 2.  **Separate**: HDemucs splits audio into `vocals` and `accompaniment`.
-3.  **Transcribe**: Whisper converts `vocals` to text segments with start/end times.
-4.  **Diarize (Optional)**: SpeechBrain ECAPA-TDNN extracts speaker embeddings, spectral clustering groups them, and librosa pitch analysis detects genders.
-5.  **Translate**: Segments are translated text-to-text.
-6.  **Synthesize (TTS)**: Edge-TTS generates speech for each translated segment, matching speaker gender if enabled.
-7.  **Synchronize**: generated clips are time-stretched to fit original segment duration.
-8.  **Mix**: New vocals are mixed with original `accompaniment`.
-9.  **Merge**: Final mix is replaced into the original video container.
+3.  **VAD Preprocessing**: Silero VAD detects speech regions, filtering non-speech to reduce hallucinations.
+4.  **Transcribe**: Faster-Whisper (Turbo) converts `vocals` to text segments with timestamps.
+5.  **Confidence Filter**: Low-confidence words are removed for cleaner transcriptions.
+6.  **Diarize (Optional)**: SpeechBrain ECAPA-TDNN extracts speaker embeddings, spectral clustering groups them, and librosa pitch analysis detects genders.
+7.  **Translate**: Segments are translated text-to-text.
+8.  **Synthesize (TTS)**: Edge-TTS generates speech for each translated segment, matching speaker gender if enabled.
+9.  **Synchronize**: Generated clips are time-stretched with high-quality PyRubberband settings (formant preservation).
+10. **Cross-fade**: Smooth transitions are applied between adjacent audio segments.
+11. **Mix**: New vocals are mixed with original `accompaniment`.
+12. **Merge**: Final mix is replaced into the original video container.
 
 ## 🔧 Troubleshooting
 

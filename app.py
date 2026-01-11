@@ -148,17 +148,9 @@ def process_video(video_path, source_language, target_language, audio_model, tts
         progress(0.3, desc="Transcribing...")
         try:
             source_code = config.get_language_code(source_language)
-            # Map friendly model name to internal size
-            # "Faster-Whisper Large v3" -> "large-v3"
-            # "Faster-Whisper Medium" -> "medium"
-            if "Large" in transcription_model:
-                model_size = "large-v3"
-            elif "Medium" in transcription_model:
-                model_size = "medium"
-            else:
-                model_size = "base"
-
-            segments = transcriber.transcribe(vocals_path, language=source_code, model_size=model_size)
+            # Pass the UI-friendly model name directly - the transcriber has MODEL_SIZE_MAP
+            # that handles mapping: "Large v3 Turbo (Fast)" -> "large-v3-turbo", etc.
+            segments = transcriber.transcribe(vocals_path, language=source_code, model_size=transcription_model)
         except Exception as e:
             raise gr.Error(f"Transcription failed: {e}")
 
@@ -371,9 +363,15 @@ def create_ui():
                 )
                 
                 transcription_model = gr.Dropdown(
-                    choices=["Faster-Whisper Large v3 (Best)", "Faster-Whisper Medium (Faster)", "Faster-Whisper Base (Fastest)"],
+                    choices=[
+                        "Large v3 Turbo (Fast)",  # New recommended option
+                        "Large v3",               # Best accuracy
+                        "Medium", 
+                        "Base",
+                        "Small"
+                    ],
                     label="Speech-to-Text Model",
-                    value="Faster-Whisper Large v3 (Best)"
+                    value="Large v3 Turbo (Fast)"
                 )
                 
                 tts_model = gr.Dropdown(

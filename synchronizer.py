@@ -14,6 +14,34 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def generate_crossfade_window(length: int, fade_type: str = 'linear') -> np.ndarray:
+    """
+    Generate a crossfade window for smooth audio transitions.
+    
+    Args:
+        length: Number of samples for the fade
+        fade_type: Type of fade curve ('linear', 'cosine', 'exponential')
+        
+    Returns:
+        Fade-in curve as numpy array (multiply by audio for fade effect)
+    """
+    if length <= 0:
+        return np.array([])
+    
+    if fade_type == 'cosine':
+        # Smoother S-curve using cosine interpolation
+        t = np.linspace(0, np.pi, length)
+        return (1 - np.cos(t)) / 2
+    elif fade_type == 'exponential':
+        # Faster rise at the start, slower at the end
+        t = np.linspace(0, 1, length)
+        return t ** 0.5
+    else:
+        # Linear fade
+        return np.linspace(0, 1, length)
+
+
 class AudioSynchronizer:
     def sync_segment(self, audio_path, target_duration, output_path=None):
         """
@@ -67,7 +95,7 @@ class AudioSynchronizer:
             sf.write(output_path, new_w, sr)
             return output_path
 
-        # 3. [Optimization] Use pyrubberband for natural stretching
+        # 3. [Optimization] Use pyrubberband for natural stretching with high quality
         if pyrb:
             try:
                 # Load with soundfile
@@ -76,7 +104,12 @@ class AudioSynchronizer:
                      if y.shape[1] > 1:
                         y = y[:, 0] # Force mono
 
-                y_stretched = pyrb.time_stretch(y, sr, speed_factor)
+                # Use high-quality stretching with formant preservation
+                # rbargs: -c6 = highest quality (crispness), formant preservation default
+                y_stretched = pyrb.time_stretch(
+                    y, sr, speed_factor,
+                    rbargs=['-c', '6']  # Crispness level 6 (highest quality)
+                )
                 
                 sf.write(output_path, y_stretched, sr)
                 return output_path
@@ -179,21 +212,51 @@ class AudioSynchronizer:
                     resampler = torchaudio.transforms.Resample(sr, target_sr)
                     wav = resampler(wav)
                 
-                # Add to canvas
+                # Add to canvas with cross-fade blending
                 start_sample = int(start_sec * target_sr)
                 end_sample = start_sample + wav.shape[1]
                 
                 if end_sample > total_samples:
-                    # expand canvas? or crop?
-                    # pad
+                    # expand canvas
                     padding = end_sample - total_samples + 1000
                     canvas = torch.cat([canvas, torch.zeros(1, padding)], dim=1)
                     total_samples = canvas.shape[1]
 
-                # Mix (overwrite) to avoid double-speech on overlaps
-                # If segments overlap, the later one takes precedence (standard behavior)
-                # We simply assign the values instead of adding them.
-                canvas[:, start_sample:end_sample] = wav[:, :end_sample-start_sample]
+                # Apply cross-fade blending for smoother transitions
+                # Use 50ms fade (1200 samples at 24kHz)
+                fade_samples = min(1200, wav.shape[1] // 4)  # Max 25% of segment
+                
+                if fade_samples > 10:
+                    # Create fade windows
+                    fade_in = torch.from_numpy(
+                        generate_crossfade_window(fade_samples, 'cosine')
+                    ).float().unsqueeze(0)
+                    fade_out = torch.from_numpy(
+                        generate_crossfade_window(fade_samples, 'cosine')[::-1].copy()
+                    ).float().unsqueeze(0)
+                    
+                    # Apply fade-in to segment start
+                    wav[:, :fade_samples] *= fade_in
+                    # Apply fade-out to segment end
+                    wav[:, -fade_samples:] *= fade_out
+                    
+                    # Blend with existing canvas content (additive crossfade in overlap region)
+                    # Check if there's existing audio at start position
+                    existing_start = canvas[:, start_sample:start_sample + fade_samples]
+                    if existing_start.abs().max() > 0.01:
+                        # There's existing audio - blend in the overlap region
+                        logger.debug(f"Crossfading segment at {start_sec:.2f}s with existing audio")
+                        canvas[:, start_sample:start_sample + fade_samples] = (
+                            existing_start + wav[:, :fade_samples]
+                        )
+                        # Place the rest of the segment normally
+                        canvas[:, start_sample + fade_samples:end_sample] = wav[:, fade_samples:end_sample-start_sample]
+                    else:
+                        # No existing audio - just place the segment
+                        canvas[:, start_sample:end_sample] = wav[:, :end_sample-start_sample]
+                else:
+                    # Segment too short for cross-fade, just place it
+                    canvas[:, start_sample:end_sample] = wav[:, :end_sample-start_sample]
             
             # Save
             # Convert back to [Time, Channels] for Soundfile
