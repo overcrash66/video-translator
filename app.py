@@ -247,9 +247,15 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             )
             
             
-            # Validation: Individual TTS
+            # Validation: Individual TTS - check both existence AND size
             if not generated_path or not Path(generated_path).exists():
-                log(f"Warning: TTS failed for segment {i}")
+                log(f"Warning: TTS failed for segment {i} (file not created)")
+                continue
+            
+            # Check file size (minimum 100 bytes for valid audio)
+            file_size = Path(generated_path).stat().st_size
+            if file_size < 100:
+                log(f"Warning: TTS produced empty/invalid file for segment {i} ({file_size} bytes)")
                 continue
                 
             tts_segments.append({

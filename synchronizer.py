@@ -140,8 +140,27 @@ class AudioSynchronizer:
                 path = seg['audio_path']
                 start_sec = seg['start']
                 
+                # Validate segment file before processing
+                try:
+                    seg_path = Path(path)
+                    if not seg_path.exists():
+                        logger.warning(f"Skipping non-existent audio segment: {path}")
+                        continue
+                    
+                    file_size = seg_path.stat().st_size
+                    if file_size < 100:  # Minimum 100 bytes for valid audio
+                        logger.warning(f"Skipping too-small audio segment ({file_size} bytes): {path}")
+                        continue
+                except Exception as e:
+                    logger.warning(f"Error validating segment {path}: {e}")
+                    continue
+                
                 # Load segment with soundfile
-                wav_np, sr = sf.read(str(path))
+                try:
+                    wav_np, sr = sf.read(str(path))
+                except Exception as e:
+                    logger.warning(f"Failed to read audio segment {path}: {e}")
+                    continue
                 
                 if wav_np.size == 0:
                     logger.warning(f"Skipping empty audio segment: {path}")

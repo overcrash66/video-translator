@@ -135,6 +135,49 @@ class TTSEngine:
             logger.error(f"Failed to load XTTS model: {e}")
             raise
 
+    def _sanitize_text(self, text):
+        """
+        Sanitizes text for TTS to avoid empty/problematic inputs.
+        Returns None if text is invalid/empty.
+        """
+        if not text:
+            return None
+        
+        # Strip whitespace
+        text = text.strip()
+        if not text:
+            return None
+        
+        # Check if text contains any alphanumeric characters
+        # (avoid punctuation-only strings that Edge-TTS can't handle)
+        import re
+        if not re.search(r'[a-zA-Z0-9\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]', text):
+            logger.warning(f"Skipping TTS for non-speakable text: '{text[:50]}'")
+            return None
+        
+        return text
+    
+    def _validate_audio_file(self, file_path, min_size=100):
+        """
+        Validates that an audio file exists and has minimum size.
+        Returns True if valid, False otherwise.
+        """
+        try:
+            path = Path(file_path)
+            if not path.exists():
+                logger.warning(f"Audio file does not exist: {file_path}")
+                return False
+            
+            size = path.stat().st_size
+            if size < min_size:
+                logger.warning(f"Audio file too small ({size} bytes): {file_path}")
+                return False
+            
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to validate audio file {file_path}: {e}")
+            return False
+
     def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None):
         """
         Generates audio using Edge-TTS, Piper, or XTTS.
@@ -146,11 +189,17 @@ class TTSEngine:
             output_path = config.TEMP_DIR / "tts_output.wav"
             
         output_path = str(output_path)
+        
+        # Sanitize text before processing
+        sanitized_text = self._sanitize_text(text)
+        if not sanitized_text:
+            logger.warning(f"Skipping TTS generation for empty/invalid text")
+            return self._generate_dummy_audio(text or "silence", output_path)
             
         if model == "piper":
-             return self._generate_piper(text, language, output_path)
+             return self._generate_piper(sanitized_text, language, output_path)
         elif model == "xtts":
-             return self._generate_xtts(text, language, speaker_wav_path, output_path)
+             return self._generate_xtts(sanitized_text, language, speaker_wav_path, output_path)
 
         # Default Edge-TTS logic
         
@@ -179,15 +228,20 @@ class TTSEngine:
         try:
             # Async wrapper check
             async def _gen():
-                communicate = edge_tts.Communicate(text, voice)
+                communicate = edge_tts.Communicate(sanitized_text, voice)
                 await communicate.save(output_path)
             
             asyncio.run(_gen())
             
+            # Validate the generated file
+            if not self._validate_audio_file(output_path):
+                logger.warning(f"Edge-TTS produced invalid/empty file, falling back to dummy audio")
+                return self._generate_dummy_audio(sanitized_text, output_path)
+            
             return output_path
         except Exception as e:
             logger.error(f"Edge-TTS Generation failed: {e}")
-            return self._generate_dummy_audio(text, output_path)
+            return self._generate_dummy_audio(sanitized_text, output_path)
 
     def _generate_xtts(self, text, language, speaker_wav, output_path):
         try:
@@ -341,18 +395,31 @@ class TTSEngine:
             raise RuntimeError(f"Failed to download Piper binary: {e}")
 
     def _generate_dummy_audio(self, text, output_path):
+        """
+        Generates a short silence/tone as fallback when TTS fails.
+        Writes as WAV format regardless of extension to ensure valid audio.
+        """
         import soundfile as sf
         import numpy as np
-        # Generate 1 sec of beeps
-        sr = 24000
-        # Smart length estimate? ~3 words per sec
-        word_count = len(text.split()) if text else 1
-        duration = max(1.0, word_count * 0.4) 
         
-        t = np.linspace(0, duration, int(sr * duration))
-        wav = np.sin(2 * 3.14159 * 440 * t) # Mono
+        sr = 24000
+        # Smart length estimate based on text: ~3 words per sec
+        word_count = len(text.split()) if text else 1
+        duration = max(0.5, min(word_count * 0.3, 5.0))  # Cap at 5 seconds
+        
+        # Generate silence with very subtle noise (avoids completely silent segments)
+        samples = int(sr * duration)
+        wav = np.random.randn(samples) * 0.001  # Very quiet noise
+        
         output_path = str(output_path) if output_path else str(config.TEMP_DIR / "dummy.wav")
-        # Soundfile write: file, data, samplerate
+        
+        # Ensure we write as WAV format for consistency
+        # If the path has .mp3 extension, change it to .wav for valid audio
+        path_obj = Path(output_path)
+        if path_obj.suffix.lower() == '.mp3':
+            output_path = str(path_obj.with_suffix('.wav'))
+            logger.info(f"Dummy audio: changed extension from .mp3 to .wav for valid format")
+        
         sf.write(output_path, wav, sr)
         return output_path
 
