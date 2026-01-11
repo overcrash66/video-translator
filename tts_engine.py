@@ -148,14 +148,25 @@ class TTSEngine:
         if not text:
             return None
         
-        # Check if text contains any alphanumeric characters
+        # Minimum length check (very short strings often fail)
+        if len(text) < 2:
+            logger.warning(f"Text too short for TTS: '{text}'")
+            return None
+        
+        # Check if text contains any speakable characters
         # (avoid punctuation-only strings that Edge-TTS can't handle)
         import re
-        if not re.search(r'[a-zA-Z0-9\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]', text):
+        # Match letters (any language), numbers, or CJK characters
+        if not re.search(r'[a-zA-Z0-9\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\u0400-\u04ff\u0600-\u06ff\uac00-\ud7af]', text):
             logger.warning(f"Skipping TTS for non-speakable text: '{text[:50]}'")
             return None
         
-        return text
+        # Remove or replace problematic characters that cause Edge-TTS issues
+        # (some invisible unicode characters, control chars, etc.)
+        text = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', text)  # Control characters
+        text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
+        
+        return text.strip() if text.strip() else None
     
     def _validate_audio_file(self, file_path, min_size=100):
         """
@@ -225,23 +236,46 @@ class TTSEngine:
         
         logger.info(f"Generating TTS: lang='{language}', gender='{gender}', speaker='{speaker_id}' -> voice='{voice}'")
         
-        try:
-            # Async wrapper check
-            async def _gen():
-                communicate = edge_tts.Communicate(sanitized_text, voice)
-                await communicate.save(output_path)
-            
-            asyncio.run(_gen())
-            
-            # Validate the generated file
-            if not self._validate_audio_file(output_path):
-                logger.warning(f"Edge-TTS produced invalid/empty file, falling back to dummy audio")
-                return self._generate_dummy_audio(sanitized_text, output_path)
-            
-            return output_path
-        except Exception as e:
-            logger.error(f"Edge-TTS Generation failed: {e}")
-            return self._generate_dummy_audio(sanitized_text, output_path)
+        # Retry logic with exponential backoff for transient Edge-TTS failures
+        max_retries = 3
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                # Async wrapper
+                async def _gen():
+                    communicate = edge_tts.Communicate(sanitized_text, voice)
+                    await communicate.save(output_path)
+                
+                asyncio.run(_gen())
+                
+                # Validate the generated file
+                if self._validate_audio_file(output_path):
+                    return output_path
+                else:
+                    raise RuntimeError("Edge-TTS produced invalid/empty file")
+                    
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Edge-TTS attempt {attempt + 1}/{max_retries} failed: {e}")
+                
+                if attempt < max_retries - 1:
+                    # Exponential backoff: 1s, 2s, 4s
+                    import time
+                    wait_time = 2 ** attempt
+                    logger.info(f"Retrying Edge-TTS in {wait_time}s...")
+                    time.sleep(wait_time)
+                    
+                    # Try alternate voice on retry
+                    if len(voice_list) > 1:
+                        voice_index = (voice_index + 1) % len(voice_list)
+                        voice = voice_list[voice_index]
+                        logger.info(f"Switching to alternate voice: {voice}")
+        
+        # All retries failed - generate dummy audio as fallback
+        logger.error(f"Edge-TTS failed after {max_retries} attempts: {last_error}")
+        logger.info(f"Generating placeholder audio for text: '{sanitized_text[:50]}...'")
+        return self._generate_dummy_audio(sanitized_text, output_path)
 
     def _generate_xtts(self, text, language, speaker_wav, output_path):
         try:
@@ -397,7 +431,8 @@ class TTSEngine:
     def _generate_dummy_audio(self, text, output_path):
         """
         Generates a short silence/tone as fallback when TTS fails.
-        Writes as WAV format regardless of extension to ensure valid audio.
+        IMPORTANT: Writes to the ORIGINAL path to maintain caller expectations.
+        Converts to WAV internally but saves to whatever path is requested.
         """
         import soundfile as sf
         import numpy as np
@@ -413,14 +448,24 @@ class TTSEngine:
         
         output_path = str(output_path) if output_path else str(config.TEMP_DIR / "dummy.wav")
         
-        # Ensure we write as WAV format for consistency
-        # If the path has .mp3 extension, change it to .wav for valid audio
+        # IMPORTANT: Keep the original path that the caller expects
+        # soundfile can write to .mp3 paths as WAV data (browser/ffmpeg will handle it)
+        # Or we can use a proper format based on extension
         path_obj = Path(output_path)
-        if path_obj.suffix.lower() == '.mp3':
-            output_path = str(path_obj.with_suffix('.wav'))
-            logger.info(f"Dummy audio: changed extension from .mp3 to .wav for valid format")
         
-        sf.write(output_path, wav, sr)
+        try:
+            # Try to write to the original path
+            # soundfile writes WAV format by default
+            sf.write(output_path, wav, sr)
+            logger.info(f"Generated placeholder audio: {output_path} ({duration:.1f}s)")
+        except Exception as e:
+            # If writing to original path fails, try with .wav extension
+            logger.warning(f"Failed to write to {output_path}: {e}")
+            wav_path = str(path_obj.with_suffix('.wav'))
+            sf.write(wav_path, wav, sr)
+            output_path = wav_path
+            logger.info(f"Generated placeholder audio (fallback): {output_path} ({duration:.1f}s)")
+        
         return output_path
 
 if __name__ == "__main__":
