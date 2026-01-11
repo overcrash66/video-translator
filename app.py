@@ -296,7 +296,13 @@ def process_video(video_path, source_language, target_language, audio_model, tts
              # Log the potential error
              raise gr.Error("Final video generation failed (ffmpeg muxing error). Check logs.")
 
+        progress(1.0, desc="Complete!")
         log_msg = log(f"Processing Complete! Saved to {output_video}")
+        
+        # Ensure Gradio can access the file
+        import time
+        time.sleep(0.5)  # Brief delay to ensure file is fully written
+        
         yield str(output_video), log_msg
 
     except Exception as e:
