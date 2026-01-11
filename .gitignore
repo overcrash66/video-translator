@@ -182,3 +182,5 @@ cython_debug/
 *.mp4
 /temp
 /temp_test
+/.context
+/.vscode
