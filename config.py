@@ -18,6 +18,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 # Configuration
 HF_TOKEN = os.getenv("HF_TOKEN")
+DIARIZATION_MODEL_PATH = os.getenv("DIARIZATION_MODEL_PATH") # Optional: Local path to model folder/yaml
 import torch
 # Device configuration
 def get_device():

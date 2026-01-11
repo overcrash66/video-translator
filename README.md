@@ -14,7 +14,7 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     *   **Piper TTS** (Local): Robust offline neural TTS using the official Piper binary (automatically downloaded).
     *   **XTTS-v2** (Local): High-fidelity voice cloning using Coqui TTS. Requires ~2GB VRAM.
 *   **Smart Synchronization**: Automatically stretches or squeezes generated speech to match the original timing.
-*   **Speaker Diarization (New)**: Optionally detects multiple speakers and assigns gender-appropriate TTS voices (Male/Female) using `pyannote.audio` and pitch analysis.
+*   **Speaker Diarization**: Optionally detects multiple speakers using **SpeechBrain's ECAPA-TDNN** embeddings with spectral clustering, and assigns gender-appropriate TTS voices (Male/Female) based on pitch analysis.
 *   **GPU Optimized**: Custom memory management includes aggressive model offloading and audio chunking to prevent CUDA Out-of-Memory errors.
 *   **Friendly UI**: Easy-to-use **Gradio** web interface.
 
@@ -73,7 +73,7 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
         *   `edge`: Online, highest quality (requires internet).
         *   `piper`: Local, fast, private.
         *   `xtts`: Local voice cloning (uses input video's vocals as reference).
-    *   **Enable Speaker Diarization**: Check this to automatically detect speakers and use different voices (Male/Female) for each. Requires `HF_TOKEN`.
+    *   **Enable Speaker Diarization**: Check this to automatically detect speakers and use different voices (Male/Female) for each.
     *   **Click Submit**: The progress bar will track the stages (Separating -> Transcribing -> Translating -> Synthesizing -> Mixing).
 
 4.  **Output**:
@@ -84,8 +84,8 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 *   **Directory Structure**:
     *   `temp/`: Stores intermediate files (vocals, separated tracks). Cleared/Managed during runs.
     *   `output/`: Stores final processed videos.
-*   **Env Variables** (Optional but Recommended):
-    *   `HF_TOKEN`: HuggingFace token. **Required** for Speaker Diarization (`pyannote/speaker-diarization-3.1`). You must also accept the model agreement on the [Hugging Face model page](https://huggingface.co/pyannote/speaker-diarization-3.1).
+*   **Env Variables** (Optional):
+    *   `HF_TOKEN`: HuggingFace token. Required for some models that need authentication.
 
 ## 🧩 Pipeline Architecture
 
@@ -100,7 +100,7 @@ flowchart TD
     Vocals --> Transcribe{"Transcribe<br/>(Faster-Whisper)"}
     Transcribe --> Segments[Text Segments]
 
-    Vocals -.-> Diarize{"Diarize & Detect Gender<br/>(Pyannote/Librosa)"}
+    Vocals -.-> Diarize{"Diarize & Detect Gender<br/>(SpeechBrain/Librosa)"}
     Diarize -.-> SpeakerMap[Speaker/Gender Map]
     
     Segments --> Translate{"Translate<br/>(Google / HY-MT)"}
@@ -141,7 +141,7 @@ flowchart TD
 1.  **Extract**: FFmpeg extracts audio from input video.
 2.  **Separate**: HDemucs splits audio into `vocals` and `accompaniment`.
 3.  **Transcribe**: Whisper converts `vocals` to text segments with start/end times.
-4.  **Diarize (Optional)**: Detects speakers and genders (Male/Female) to inform voice selection.
+4.  **Diarize (Optional)**: SpeechBrain ECAPA-TDNN extracts speaker embeddings, spectral clustering groups them, and librosa pitch analysis detects genders.
 5.  **Translate**: Segments are translated text-to-text.
 6.  **Synthesize (TTS)**: Edge-TTS generates speech for each translated segment, matching speaker gender if enabled.
 7.  **Synchronize**: generated clips are time-stretched to fit original segment duration.

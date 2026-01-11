@@ -1,7 +1,7 @@
 import logging
 import torch
 from deep_translator import GoogleTranslator
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,13 +20,20 @@ class HYMTTranslator:
         logger.info(f"Loading {self.model_id} on {self.device}...")
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, trust_remote_code=True)
+            # Load with 4-bit quantization for VRAM efficiency
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_use_double_quant=True
+            )
+            
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.model_id, 
                 device_map="auto", 
-                torch_dtype=torch.float16,
+                quantization_config=quantization_config,
                 trust_remote_code=True
             )
-            logger.info("HY-MT1.5 model loaded.")
+            logger.info("HY-MT1.5 model loaded (4-bit quantized).")
         except Exception as e:
             logger.error(f"Failed to load HY-MT model: {e}")
             raise
@@ -40,38 +47,24 @@ class HYMTTranslator:
             self.tokenizer = None
             logger.info("HY-MT1.5 model unloaded.")
 
-    def translate(self, text, source_lang_code, target_lang_code):
-        if not text.strip():
-            return ""
-        
+    def translate_batch(self, texts, source_lang_code, target_lang_code):
+        if not texts:
+            return []
+            
         self.load_model()
         
-        # HY-MT1.5 uses standard chat messages for translation prompt
-        # User: Translate to [Target]: [Source Text]
-        # Or specialized tokens if available. 
-        # Based on research, we rely on chat template or standard prompt.
-        
-        # Let's use a explicit prompt structure that works for general LLMs
-        # "Translate the following text from {src} to {tgt}:\n{text}"
-        
-        # However, HY-MT is fine-tuned. 
-        # Standard format likely: "[src_lang] text [tgt_lang]" e.g. "en hello es"
-        # Since I cannot verify exact custom format without docs, I will use a descriptive prompt
-        # which usually works for instruction tuned models.
-        
-        # Better: use apply_chat_template if available
-        messages = [
-            {"role": "user", "content": f"Translate the following text from {source_lang_code} to {target_lang_code}:\n{text}"}
-        ]
-        
-        try:
-            if self.tokenizer.chat_template:
-                text_input = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            else:
-                # Fallback manual formatting
-                text_input = f"<|user|>\nTranslate from {source_lang_code} to {target_lang_code}:\n{text}\n<|assistant|>\n"
+        # Prepare batch prompts
+        prompts = []
+        for text in texts:
+             messages = [{"role": "user", "content": f"Translate the following text from {source_lang_code} to {target_lang_code}:\n{text}"}]
+             if self.tokenizer.chat_template:
+                 prompts.append(self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True))
+             else:
+                 prompts.append(f"<|user|>\nTranslate from {source_lang_code} to {target_lang_code}:\n{text}\n<|assistant|>\n")
 
-            inputs = self.tokenizer(text_input, return_tensors="pt", return_token_type_ids=False).to(self.model.device)
+        try:
+            # Batch tokenization
+            inputs = self.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(self.model.device)
             
             with torch.no_grad():
                 outputs = self.model.generate(
@@ -82,24 +75,20 @@ class HYMTTranslator:
                     pad_token_id=self.tokenizer.eos_token_id
                 )
                 
-            # Decode
-            decoded = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            # Decode batch
+            # Slice input tokens from output
+            generated_tokens = outputs[:, inputs.input_ids.shape[1]:]
+            responses = self.tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
             
-            # Extract assistant response (post-processing)
-            # Check if input is echoed
-            # Usually transformers.decode includes input? No, generate output includes input tokens in 'outputs' usually.
-            
-            full_text = decoded
-            # Naive parse: remove input prompt if present
-            # Actually simplest is to decode only the new tokens:
-            new_tokens = outputs[0][inputs.input_ids.shape[1]:]
-            response = self.tokenizer.decode(new_tokens, skip_special_tokens=True)
-            
-            return response.strip()
+            return [r.strip() for r in responses]
             
         except Exception as e:
-            logger.error(f"HY-MT translation error: {e}")
-            return text # Fallback
+            logger.error(f"HY-MT batch translation error: {e}")
+            return texts # Fallback
+            
+    def translate(self, text, source_lang_code, target_lang_code):
+         # Wrapper for single
+         return self.translate_batch([text], source_lang_code, target_lang_code)[0]
 
     def refine_with_context(self, current_text, prev_text, next_text, source_text, source_lang, target_lang):
         """
@@ -218,12 +207,38 @@ class Translator:
         translated_segments = []
         logger.info(f"Translating {len(segments)} segments to {target_lang} using {model}...")
         
-        for seg in segments:
-            new_seg = seg.copy()
-            new_seg["translated_text"] = self.translate_text(
-                seg["text"], target_lang, model, source_lang
-            )
-            translated_segments.append(new_seg)
+        if model == "hymt":
+            # Batch process for HYMT
+            if not self.hymt:
+                self.hymt = HYMTTranslator()
+            
+            # We assume single source language for the batch
+            source_code = source_lang if source_lang != "auto" else "en"
+            _, target_code = self.get_google_translator(target_lang)
+            
+            texts = [s["text"] for s in segments]
+            
+            # Process in chunks of 8 to prevent OOM even with 4-bit
+            chunk_size = 8
+            translated_texts = []
+            
+            for i in range(0, len(texts), chunk_size):
+                chunk = texts[i:i+chunk_size]
+                translated_texts.extend(self.hymt.translate_batch(chunk, source_code, target_code))
+            
+            for i, seg in enumerate(segments):
+                new_seg = seg.copy()
+                new_seg["translated_text"] = translated_texts[i]
+                translated_segments.append(new_seg)
+
+        else:
+            # Google Translate (Sequential)
+            for seg in segments:
+                new_seg = seg.copy()
+                new_seg["translated_text"] = self.translate_text(
+                    seg["text"], target_lang, model, source_lang
+                )
+                translated_segments.append(new_seg)
             
         # Optimization Pass
         if optimize and translated_segments:

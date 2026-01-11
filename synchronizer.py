@@ -4,6 +4,12 @@ import os
 from pathlib import Path
 import torchaudio
 import config
+import soundfile as sf
+import numpy as np
+try:
+    import pyrubberband as pyrb
+except ImportError:
+    pyrb = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,31 +36,29 @@ class AudioSynchronizer:
 
         speed_factor = current_duration / target_duration
         
-        # Limit speed changes to avoid robotic artifacts or crashes
-        # e.g., between 0.5x and 2.0x is usually safe-ish.
-        # But if we must fit, we must fit. However, too fast = unintelligible.
-        # If speed_factor > 2.0 (needs to be 2x faster), it's very fast.
-        
         logger.info(f"Syncing {audio_path}: current={current_duration}s, target={target_duration}s, speed={speed_factor:.2f}")
 
-        # [Safety Check] Extreme stretching
+        # 1. Close enough check (0.95 - 1.05) - Just copy
+        if 0.95 < speed_factor < 1.05:
+            import shutil
+            shutil.copy(audio_path, output_path)
+            return output_path
+
+        # 2. [Safety Check] Extreme stretching (Fallback to Padding/Trimming)
         if speed_factor < 0.25 or speed_factor > 4.0:
             logger.warning(f"Speed factor {speed_factor:.2f} is extreme. Fallback to padding/trimming.")
-            import soundfile as sf
-            import numpy as np
             
             w, sr = sf.read(str(audio_path))
             target_samples = int(target_duration * sr)
             
             if w.ndim == 1:
                 w = w[:, np.newaxis]
-                
+            
             current_samples = w.shape[0]
             
             if current_samples < target_samples:
                 # Pad with silence
                 padding = target_samples - current_samples
-                # Pad at end
                 new_w = np.vstack([w, np.zeros((padding, w.shape[1]))])
             else:
                 # Trim
@@ -63,14 +67,23 @@ class AudioSynchronizer:
             sf.write(output_path, new_w, sr)
             return output_path
 
-        # atempo filter limitations: 0.5 to 2.0. Chain if needed.
-        # If speed_factor is 1.0 (approx), just copy.
-        if 0.95 < speed_factor < 1.05:
-            # close enough
-            import shutil
-            shutil.copy(audio_path, output_path)
-            return output_path
+        # 3. [Optimization] Use pyrubberband for natural stretching
+        if pyrb:
+            try:
+                # Load with soundfile
+                y, sr = sf.read(str(audio_path))
+                if y.ndim > 1:
+                     if y.shape[1] > 1:
+                        y = y[:, 0] # Force mono
 
+                y_stretched = pyrb.time_stretch(y, sr, speed_factor)
+                
+                sf.write(output_path, y_stretched, sr)
+                return output_path
+            except Exception as e:
+                logger.error(f"Pyrubberband failed: {e}. Falling back to FFmpeg.")
+
+        # 4. [Fallback] FFmpeg 'atempo' filter
         atempo_filters = []
         remaining_factor = speed_factor
         
@@ -84,34 +97,16 @@ class AudioSynchronizer:
         if remaining_factor != 1.0:
              atempo_filters.append(f"atempo={remaining_factor}")
         
-        filter_str = ",".join(atempo_filters)
-        
         try:
-            (
-                ffmpeg
-                .input(audio_path)
-                .filter('atempo', remaining_factor) # simplified for single pass, need complex logic for chaining in ffmpeg-python?
-                # Actually ffmpeg-python .filter calls can be chained.
-                # Let's rebuild the chain correctly
-            )
-            
             stream = ffmpeg.input(audio_path)
-            # Re-implement chaining loop on the stream object
-            # Reset
-            remaining_factor = speed_factor
-            while remaining_factor > 2.0:
-                stream = stream.filter('atempo', 2.0)
-                remaining_factor /= 2.0
-            while remaining_factor < 0.5:
-                stream = stream.filter('atempo', 0.5)
-                remaining_factor /= 0.5
-            stream = stream.filter('atempo', remaining_factor)
+            for f in atempo_filters:
+                 stream = stream.filter('atempo', f.split('=')[1])
             
             stream.output(output_path).run(overwrite_output=True, quiet=True)
             return output_path
         except ffmpeg.Error as e:
             logger.error(f"FFmpeg sync failed: {e.stderr.decode() if e.stderr else str(e)}")
-            return audio_path 
+            return audio_path
 
     def merge_segments(self, segments, total_duration, output_path):
         """
@@ -119,12 +114,6 @@ class AudioSynchronizer:
         segments: list of dict { 'audio_path': str, 'start': float, 'end': float }
         This is complex because we need to insert silence.
         """
-        # We can construct a filter_complex command
-        # or generate silence clips and concat them.
-        
-        # Simple approach: Create a full duration silent track, and overlay each segment.
-        # But 'amix' or 'overlay' logic can be heavy.
-        
         # Better: [silence_d1][clip1][silence_d2][clip2]...
         
         inputs = []
@@ -132,33 +121,12 @@ class AudioSynchronizer:
         
         sorted_segments = sorted(segments, key=lambda x: x['start'])
         
-        filter_chain = []
-        
-        # To avoid massive CLI arguments, maybe process in chunks or use a specific silence generator filter
-        # For prototype, we might find pydub easier, but we stick to ffmpeg.
-        
-        # Let's try to build a list of file inputs.
-        # But constructing silence needs `aevalsrc`.
-        
-        # implementation detail:
-        # Create an concat file list?
-        # No, gaps need explicit silence.
-        
-        # Refined approach:
-        # Generate the full timeline using PyTorch/Torchaudio if possible (since we have logic).
-        # But we want to use the processed files.
-        # Let's use torchaudio to load, pad, and mix. It's more precise than ffmpeg CLI for this specific logic 
-        # unless memory is an issue.
-        
         target_sr = 24000 # default for XTTS
         
         # Create empty canvas
         total_samples = int(total_duration * target_sr) + 24000 # buffer
         # careful with memory if video is 1 hour.
-        # If huge, ffmpeg is better.
-        
         # For < 5 min videos, tensor is fine.
-        # 5 min * 60 * 24000 * 4 bytes ~ 30MB. Safe.
         
         try:
             import torch
@@ -199,8 +167,8 @@ class AudioSynchronizer:
                 if end_sample > total_samples:
                     # expand canvas? or crop?
                     # pad
-                    padding = end_sample - total_samples
-                    canvas = torch.cat([canvas, torch.zeros(1, padding + 1000)], dim=1)
+                    padding = end_sample - total_samples + 1000
+                    canvas = torch.cat([canvas, torch.zeros(1, padding)], dim=1)
                     total_samples = canvas.shape[1]
 
                 # Mix (overwrite) to avoid double-speech on overlaps
