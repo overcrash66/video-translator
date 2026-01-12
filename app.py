@@ -31,7 +31,7 @@ synchronizer = AudioSynchronizer()
 processor = VideoProcessor()
 diarizer = Diarizer()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, enable_diarization, enable_time_stretch, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, enable_diarization, enable_time_stretch, enable_vad, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -150,7 +150,7 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             source_code = config.get_language_code(source_language)
             # Pass the UI-friendly model name directly - the transcriber has MODEL_SIZE_MAP
             # that handles mapping: "Large v3 Turbo (Fast)" -> "large-v3-turbo", etc.
-            segments = transcriber.transcribe(vocals_path, language=source_code, model_size=transcription_model)
+            segments = transcriber.transcribe(vocals_path, language=source_code, model_size=transcription_model, use_vad=enable_vad)
         except Exception as e:
             raise gr.Error(f"Transcription failed: {e}")
 
@@ -385,6 +385,12 @@ def create_ui():
                     value=False,
                     info="Uses Rubberband/Librosa to stretch TTS audio to match original timing. May cause audio artifacts."
                 )
+                
+                enable_vad = gr.Checkbox(
+                    label="Enable VAD Filtering (Advanced)",
+                    value=False,
+                    info="Uses Voice Activity Detection to filter non-speech audio. May cut words if too aggressive."
+                )
 
                 process_btn = gr.Button("Process Video", variant="primary")
             
@@ -394,7 +400,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, enable_diarization, enable_time_stretch],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, enable_diarization, enable_time_stretch, enable_vad],
             outputs=[video_output, logs_output]
         )
         

@@ -98,7 +98,7 @@ class SileroVAD:
                 sampling_rate=sr,
                 min_speech_duration_ms=min_speech_duration_ms,
                 min_silence_duration_ms=100,
-                speech_pad_ms=30,
+                speech_pad_ms=100,  # More padding to avoid cutting words at boundaries
             )
             
             # Convert to seconds
@@ -132,8 +132,8 @@ class Transcriber:
         self.device = config.DEVICE
         self.model = None
         self.vad = SileroVAD()
-        self.use_vad = True  # Enable VAD preprocessing by default
-        self.min_word_confidence = 0.3  # Filter only very low-confidence words (reduced from 0.5)
+        self.use_vad = False  # VAD disabled by default (user can enable via UI)
+        self.min_word_confidence = 0.0  # Disabled - keep all transcribed words
 
     def load_model(self, size=None):
         """Load Whisper model, handling model name mapping."""
@@ -212,8 +212,7 @@ class Transcriber:
             condition_on_previous_text=False,
             initial_prompt="This is a dialogue. Transcribe it accurately.",
             temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
-            vad_filter=True,  # Enable Whisper's built-in VAD as backup
-            vad_parameters=dict(min_silence_duration_ms=500)
+            vad_filter=False,  # Disabled - Silero VAD handles this when use_vad=True
         )
         
         logger.info(f"Detected language '{info.language}' with probability {info.language_probability}")
