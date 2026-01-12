@@ -199,6 +199,39 @@ class AudioSynchronizer:
                     logger.warning(f"Skipping empty audio segment: {path}")
                     continue
                 
+                # Calculate expected duration for this segment
+                expected_duration = seg.get('end', start_sec + 1.0) - start_sec
+                actual_duration = len(wav_np) / sr if wav_np.ndim == 1 else wav_np.shape[0] / sr
+                
+                # Time-stretch if there's significant duration mismatch
+                if expected_duration > 0 and actual_duration > 0:
+                    ratio = actual_duration / expected_duration
+                    
+                    # Only stretch if there's more than 10% difference
+                    if ratio < 0.9 or ratio > 1.1:
+                        logger.info(f"Time-stretching segment: actual={actual_duration:.2f}s -> target={expected_duration:.2f}s (ratio={ratio:.2f})")
+                        
+                        # Use pyrubberband for quality stretching
+                        if pyrb:
+                            try:
+                                # Ensure mono for pyrubberband
+                                if wav_np.ndim > 1:
+                                    wav_np = wav_np[:, 0]
+                                
+                                # Stretch factor: >1 = slow down, <1 = speed up
+                                wav_np = pyrb.time_stretch(wav_np, sr, ratio, rbargs=['-c', '6'])
+                            except Exception as e:
+                                logger.warning(f"Pyrubberband stretch failed: {e}. Using original audio.")
+                        else:
+                            # Fallback: simple resampling (lower quality but works)
+                            target_samples = int(expected_duration * sr)
+                            if len(wav_np) > target_samples:
+                                wav_np = wav_np[:target_samples]  # Trim
+                            elif len(wav_np) < target_samples:
+                                # Pad with silence
+                                padding = np.zeros(target_samples - len(wav_np))
+                                wav_np = np.concatenate([wav_np, padding])
+                
                 # Convert to [Channels, Time]
                 if wav_np.ndim == 1:
                     wav_np = wav_np[np.newaxis, :]

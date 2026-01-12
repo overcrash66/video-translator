@@ -133,7 +133,7 @@ class Transcriber:
         self.model = None
         self.vad = SileroVAD()
         self.use_vad = True  # Enable VAD preprocessing by default
-        self.min_word_confidence = 0.5  # Filter words with low confidence
+        self.min_word_confidence = 0.3  # Filter only very low-confidence words (reduced from 0.5)
 
     def load_model(self, size=None):
         """Load Whisper model, handling model name mapping."""
