@@ -11,6 +11,11 @@ try:
 except ImportError:
     pyrb = None
 
+try:
+    import librosa
+except ImportError:
+    librosa = None
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -211,8 +216,8 @@ class AudioSynchronizer:
                         
                         stretched = False
                         
-                        # Use pyrubberband for quality stretching
-                        if pyrb:
+                        # Use pyrubberband for quality stretching (requires rubberband-cli)
+                        if pyrb and not stretched:
                             try:
                                 # Ensure mono and float64 for pyrubberband
                                 if wav_np.ndim > 1:
@@ -220,31 +225,54 @@ class AudioSynchronizer:
                                 wav_np = wav_np.astype(np.float64)
                                 
                                 # Stretch factor: >1 = slow down (make longer), <1 = speed up (make shorter)
-                                # We need the inverse: ratio > 1 means audio is too long, so speed up
                                 wav_np = pyrb.time_stretch(wav_np, sr, ratio)
                                 stretched = True
+                                logger.info(f"Time-stretched with pyrubberband (ratio={ratio:.2f})")
                             except Exception as e:
                                 logger.warning(f"Pyrubberband stretch failed: {e}")
                         
-                        # Fallback: simple trim/pad if stretching failed or pyrb unavailable
+                        # Fallback 1: Use librosa (pure Python, no CLI required)
+                        if librosa and not stretched:
+                            try:
+                                # Ensure mono for librosa
+                                if wav_np.ndim > 1:
+                                    wav_np = wav_np[:, 0]
+                                wav_np = wav_np.astype(np.float32)
+                                
+                                # librosa.effects.time_stretch uses phase vocoder
+                                # rate > 1 = speed up, rate < 1 = slow down
+                                wav_np = librosa.effects.time_stretch(wav_np, rate=ratio)
+                                stretched = True
+                                logger.info(f"Time-stretched with librosa (ratio={ratio:.2f})")
+                            except Exception as e:
+                                logger.warning(f"Librosa stretch failed: {e}")
+                        
+                        # Fallback 2: Mild trim/pad - but DON'T destroy content
+                        # Only trim up to 30% to preserve most speech content
                         if not stretched:
                             target_samples = int(expected_duration * sr)
                             current_samples = len(wav_np) if wav_np.ndim == 1 else wav_np.shape[0]
                             
+                            # Calculate what percentage we'd lose
                             if current_samples > target_samples:
-                                # Trim (take beginning, fade out at end)
-                                wav_np = wav_np[:target_samples]
-                                # Apply fade-out to last 10% to avoid click
-                                fade_len = min(int(target_samples * 0.1), 2400)
-                                if fade_len > 0:
-                                    fade = np.linspace(1.0, 0.0, fade_len)
-                                    wav_np[-fade_len:] *= fade
-                                logger.info(f"Trimmed segment from {current_samples} to {target_samples} samples")
+                                loss_pct = (current_samples - target_samples) / current_samples
+                                
+                                if loss_pct <= 0.3:
+                                    # Mild trim is acceptable (up to 30% loss)
+                                    wav_np = wav_np[:target_samples]
+                                    fade_len = min(int(target_samples * 0.1), 2400)
+                                    if fade_len > 0:
+                                        fade = np.linspace(1.0, 0.0, fade_len)
+                                        wav_np[-fade_len:] *= fade
+                                    logger.info(f"Mild trim: {current_samples} -> {target_samples} samples ({loss_pct*100:.0f}% loss)")
+                                else:
+                                    # Would lose too much - just use original and let overlap handling work
+                                    logger.warning(f"Skipping trim (would lose {loss_pct*100:.0f}%). Using original audio.")
                             elif current_samples < target_samples:
-                                # Pad with silence
+                                # Pad with silence (this is fine, no content loss)
                                 padding = np.zeros(target_samples - current_samples)
                                 wav_np = np.concatenate([wav_np, padding])
-                                logger.info(f"Padded segment from {current_samples} to {target_samples} samples")
+                                logger.info(f"Padded segment: {current_samples} -> {target_samples} samples")
                 
                 # Convert to [Channels, Time]
                 if wav_np.ndim == 1:
