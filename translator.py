@@ -64,7 +64,7 @@ class HYMTTranslator:
 
         try:
             # Batch tokenization
-            inputs = self.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(self.model.device)
+            inputs = self.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True, return_token_type_ids=False).to(self.model.device)
             
             with torch.no_grad():
                 outputs = self.model.generate(
