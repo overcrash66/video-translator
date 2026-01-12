@@ -27,7 +27,15 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 
 *   **Python 3.10+**
 *   **FFmpeg**: Must be installed and accessible in your system's PATH.
-    *   *Windows*: `winget install ffmpeg` or download from [ffmpeg.org](https://ffmpeg.org/).
+    *   *Windows (Option 1)*: `winget install ffmpeg` then restart terminal.
+    *   *Windows (Option 2 - Manual)*: 
+        1. Download from [ffmpeg.org/download](https://ffmpeg.org/download.html) (Windows builds → gyan.dev)
+        2. Extract to `C:\ffmpeg`
+        3. Add `C:\ffmpeg\bin` to your system PATH
+        4. Restart terminal and verify with `ffmpeg -version`
+    *   *Linux*: `sudo apt install ffmpeg`
+    *   *macOS*: `brew install ffmpeg`
+    *   *Troubleshooting*: If you get `FileNotFoundError`, FFmpeg is not in PATH. Run `where ffmpeg` (Windows) or `which ffmpeg` (Linux/Mac) to check.
 *   **Rubberband** (Recommended): For high-quality audio time-stretching.
     *   *Windows*: Download from [Rubberband Releases](https://breakfastquay.com/rubberband/). Extract and add to PATH, or place `rubberband-program.exe` in project folder.
     *   *Linux*: `sudo apt install rubberband-cli`
