@@ -148,11 +148,12 @@ class AudioSynchronizer:
             logger.error(f"FFmpeg sync failed: {e.stderr.decode() if e.stderr else str(e)}")
             return audio_path
 
-    def merge_segments(self, segments, total_duration, output_path):
+    def merge_segments(self, segments, total_duration, output_path, enable_time_stretch=False):
         """
         Concatenates segments into a single track, respecting start times.
         segments: list of dict { 'audio_path': str, 'start': float, 'end': float }
-        This is complex because we need to insert silence.
+        enable_time_stretch: If True, stretch/compress audio to fit expected duration.
+                            If False (default), place audio at original duration.
         """
         # Better: [silence_d1][clip1][silence_d2][clip2]...
         
@@ -210,12 +211,30 @@ class AudioSynchronizer:
                 expected_duration = seg.get('end', start_sec + 1.0) - start_sec
                 actual_duration = len(wav_np) / sr if wav_np.ndim == 1 else wav_np.shape[0] / sr
                 
-                # Time-stretch if there's significant duration mismatch
-                if expected_duration > 0 and actual_duration > 0:
+                # Time-stretch only if enabled and there's significant duration mismatch
+                if enable_time_stretch and expected_duration > 0 and actual_duration > 0:
                     ratio = actual_duration / expected_duration
                     
                     # Only stretch if there's more than 10% difference
                     if ratio < 0.9 or ratio > 1.1:
+                        # LIMIT stretch ratio to prevent extreme distortion
+                        # Max 2x speedup (ratio=2.0) or 2x slowdown (ratio=0.5)
+                        # Beyond this, audio quality degrades significantly
+                        MAX_RATIO = 2.0
+                        MIN_RATIO = 0.5
+                        
+                        original_ratio = ratio
+                        clamped = False
+                        
+                        if ratio > MAX_RATIO:
+                            ratio = MAX_RATIO
+                            clamped = True
+                            logger.warning(f"Clamping extreme ratio {original_ratio:.2f} -> {ratio:.2f} (max 2x speedup)")
+                        elif ratio < MIN_RATIO:
+                            ratio = MIN_RATIO
+                            clamped = True
+                            logger.warning(f"Clamping extreme ratio {original_ratio:.2f} -> {ratio:.2f} (max 2x slowdown)")
+                        
                         logger.info(f"Time-stretching segment: actual={actual_duration:.2f}s -> target={expected_duration:.2f}s (ratio={ratio:.2f})")
                         
                         stretched = False

@@ -31,7 +31,7 @@ synchronizer = AudioSynchronizer()
 processor = VideoProcessor()
 diarizer = Diarizer()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, enable_diarization, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, enable_diarization, enable_time_stretch, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -280,7 +280,7 @@ def process_video(video_path, source_language, target_language, audio_model, tts
              else:
                  duration_sec = 10.0 # Should not happen given prev checks
              
-        if not synchronizer.merge_segments(tts_segments, total_duration=duration_sec, output_path=str(merged_speech)):
+        if not synchronizer.merge_segments(tts_segments, total_duration=duration_sec, output_path=str(merged_speech), enable_time_stretch=enable_time_stretch):
              raise gr.Error("Merging speech segments failed.")
         yield None, log_msg
 
@@ -379,6 +379,12 @@ def create_ui():
                     label="TTS Model (Edge=Online, Piper=Local, XTTS=Cloning)",
                     value="edge"
                 )
+                
+                enable_time_stretch = gr.Checkbox(
+                    label="Enable Time-Stretch (Experimental)",
+                    value=False,
+                    info="Uses Rubberband/Librosa to stretch TTS audio to match original timing. May cause audio artifacts."
+                )
 
                 process_btn = gr.Button("Process Video", variant="primary")
             
@@ -388,7 +394,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, enable_diarization],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, enable_diarization, enable_time_stretch],
             outputs=[video_output, logs_output]
         )
         
