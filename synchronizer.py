@@ -8,6 +8,10 @@ import soundfile as sf
 import numpy as np
 try:
     import pyrubberband as pyrb
+    # Configure pyrubberband to use 'rubberband-program' on Windows
+    import sys
+    if sys.platform == 'win32':
+        pyrb.pyrb.__RUBBERBAND_UTIL = 'rubberband-program'
 except ImportError:
     pyrb = None
 
