@@ -28,6 +28,11 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 *   **Python 3.10+**
 *   **FFmpeg**: Must be installed and accessible in your system's PATH.
     *   *Windows*: `winget install ffmpeg` or download from [ffmpeg.org](https://ffmpeg.org/).
+*   **Rubberband** (Recommended): For high-quality audio time-stretching.
+    *   *Windows*: Download from [Rubberband Releases](https://breakfastquay.com/rubberband/). Extract and add to PATH, or place `rubberband-program.exe` in project folder.
+    *   *Linux*: `sudo apt install rubberband-cli`
+    *   *macOS*: `brew install rubberband`
+    *   *Note*: If not installed, the system falls back to librosa (lower quality) or simple trim/pad.
 *   **NVIDIA GPU** (Recommended): For faster HDemucs and Whisper inference. CPU is supported but slower.
 
 ## 📦 Installation
