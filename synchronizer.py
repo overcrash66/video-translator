@@ -95,7 +95,7 @@ class AudioSynchronizer:
             sf.write(output_path, new_w, sr)
             return output_path
 
-        # 3. [Optimization] Use pyrubberband for natural stretching with high quality
+        # 3. [Optimization] Use pyrubberband for natural stretching
         if pyrb:
             try:
                 # Load with soundfile
@@ -103,13 +103,11 @@ class AudioSynchronizer:
                 if y.ndim > 1:
                      if y.shape[1] > 1:
                         y = y[:, 0] # Force mono
+                
+                # Ensure float64 for pyrubberband
+                y = y.astype(np.float64)
 
-                # Use high-quality stretching with formant preservation
-                # rbargs: -c6 = highest quality (crispness), formant preservation default
-                y_stretched = pyrb.time_stretch(
-                    y, sr, speed_factor,
-                    rbargs=['-c', '6']  # Crispness level 6 (highest quality)
-                )
+                y_stretched = pyrb.time_stretch(y, sr, speed_factor)
                 
                 sf.write(output_path, y_stretched, sr)
                 return output_path
@@ -211,26 +209,42 @@ class AudioSynchronizer:
                     if ratio < 0.9 or ratio > 1.1:
                         logger.info(f"Time-stretching segment: actual={actual_duration:.2f}s -> target={expected_duration:.2f}s (ratio={ratio:.2f})")
                         
+                        stretched = False
+                        
                         # Use pyrubberband for quality stretching
                         if pyrb:
                             try:
-                                # Ensure mono for pyrubberband
+                                # Ensure mono and float64 for pyrubberband
                                 if wav_np.ndim > 1:
                                     wav_np = wav_np[:, 0]
+                                wav_np = wav_np.astype(np.float64)
                                 
-                                # Stretch factor: >1 = slow down, <1 = speed up
-                                wav_np = pyrb.time_stretch(wav_np, sr, ratio, rbargs=['-c', '6'])
+                                # Stretch factor: >1 = slow down (make longer), <1 = speed up (make shorter)
+                                # We need the inverse: ratio > 1 means audio is too long, so speed up
+                                wav_np = pyrb.time_stretch(wav_np, sr, ratio)
+                                stretched = True
                             except Exception as e:
-                                logger.warning(f"Pyrubberband stretch failed: {e}. Using original audio.")
-                        else:
-                            # Fallback: simple resampling (lower quality but works)
+                                logger.warning(f"Pyrubberband stretch failed: {e}")
+                        
+                        # Fallback: simple trim/pad if stretching failed or pyrb unavailable
+                        if not stretched:
                             target_samples = int(expected_duration * sr)
-                            if len(wav_np) > target_samples:
-                                wav_np = wav_np[:target_samples]  # Trim
-                            elif len(wav_np) < target_samples:
+                            current_samples = len(wav_np) if wav_np.ndim == 1 else wav_np.shape[0]
+                            
+                            if current_samples > target_samples:
+                                # Trim (take beginning, fade out at end)
+                                wav_np = wav_np[:target_samples]
+                                # Apply fade-out to last 10% to avoid click
+                                fade_len = min(int(target_samples * 0.1), 2400)
+                                if fade_len > 0:
+                                    fade = np.linspace(1.0, 0.0, fade_len)
+                                    wav_np[-fade_len:] *= fade
+                                logger.info(f"Trimmed segment from {current_samples} to {target_samples} samples")
+                            elif current_samples < target_samples:
                                 # Pad with silence
-                                padding = np.zeros(target_samples - len(wav_np))
+                                padding = np.zeros(target_samples - current_samples)
                                 wav_np = np.concatenate([wav_np, padding])
+                                logger.info(f"Padded segment from {current_samples} to {target_samples} samples")
                 
                 # Convert to [Channels, Time]
                 if wav_np.ndim == 1:
