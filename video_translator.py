@@ -102,6 +102,7 @@ class VideoTranslator:
                       audio_model_name, 
                       tts_model_name, 
                       translation_model_name, 
+                      context_model_name,
                       transcription_model_name, 
                       optimize_translation, 
                       enable_diarization, 
@@ -162,12 +163,17 @@ class VideoTranslator:
         yield ("progress", 0.4, "Translating...")
         target_code = config.get_language_code(target_lang)
         
+        # Determine effective model
+        effective_model_name = translation_model_name
+        if optimize_translation and context_model_name:
+             effective_model_name = context_model_name
+
         trans_model_key = "google"
-        if "HY-MT" in translation_model_name:
+        if "HY-MT" in effective_model_name:
             trans_model_key = "hymt"
-        elif "Llama" in translation_model_name:
+        elif "Llama" in effective_model_name:
              trans_model_key = "llama"
-        elif "ALMA" in translation_model_name:
+        elif "ALMA" in effective_model_name:
              trans_model_key = "alma"
         
         translated_segments = self.translator.translate_segments(

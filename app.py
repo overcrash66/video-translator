@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Initialize central controller
 video_translator = VideoTranslator()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, enable_lipsync, enable_visual_translation, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, enable_lipsync, enable_visual_translation, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -74,6 +74,7 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             audio_model_name=audio_model,
             tts_model_name=tts_model,
             translation_model_name=translation_model,
+            context_model_name=context_model,
             transcription_model_name=transcription_model,
             optimize_translation=optimize_translation,
             enable_diarization=enable_diarization,
@@ -142,13 +143,32 @@ def create_ui():
                         "ALMA-R 7B (Local, Advanced)"
                     ],
                     label="Translation Model",
-                    value="Google Translate (Online, Fast)"
+                    value="Google Translate (Online, Fast)",
+                    visible=True
                 )
                 
                 optimize_translation = gr.Checkbox(
                     label="Optimize Context (Experimental)", 
                     value=False,
                     info="Uses local AI to review and refine translations based on surrounding context. Slower but more accurate."
+                )
+
+                context_model = gr.Dropdown(
+                    choices=[
+                        "Tencent HY-MT1.5 (Local, Better Context)",
+                        "Llama 3.1 8B (Local, Instruct)",
+                        "ALMA-R 7B (Local, Advanced)"
+                    ],
+                    label="Context Translation Model",
+                    value="Tencent HY-MT1.5 (Local, Better Context)",
+                    visible=False,
+                    info="Select the LLM to use for context-aware translation."
+                )
+
+                optimize_translation.change(
+                    fn=lambda x: gr.update(visible=x),
+                    inputs=[optimize_translation],
+                    outputs=[context_model]
                 )
                 
                 audio_model = gr.Dropdown(
@@ -220,7 +240,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, enable_lipsync, enable_visual_translation],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, enable_lipsync, enable_visual_translation],
             outputs=[video_output, logs_output]
         )
         

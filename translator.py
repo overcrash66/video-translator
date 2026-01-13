@@ -56,6 +56,9 @@ class LLMTranslator:
             # Ensure proper pad token
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
+            
+            # Critical for batched generation with LLaMA/decoder models
+            self.tokenizer.padding_side = 'left'
                 
             logger.info(f"{self.model_id} loaded successfully.")
             

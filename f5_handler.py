@@ -89,7 +89,7 @@ class F5TTSWrapper:
                     ref_text=ref_text,
                     gen_text=sentence,
                     file_wave=None,
-                    file_spect=None,
+                    file_spec=None,
                     seed=-1
                 )
                 
