@@ -136,6 +136,7 @@ class VideoTranslator:
         # 3. Diarization
         speaker_map = {}
         diarization_segments = []
+        speaker_profiles = {}
         if enable_diarization:
             self.load_model("diarization")
             yield ("progress", 0.25, "Diarizing...")
@@ -147,6 +148,12 @@ class VideoTranslator:
                 
             diarization_segments = self.diarizer.diarize(vocals_path, backend=diar_backend)
             speaker_map = self.diarizer.detect_genders(vocals_path, diarization_segments)
+            
+            # EXTRACT PROFILES FOR TTS CLONING
+            profiles_dir = config.TEMP_DIR / f"{video_path.stem}_profiles"
+            yield ("log", "Extracting speaker profiles...")
+            speaker_profiles = self.diarizer.extract_speaker_profiles(vocals_path, diarization_segments, profiles_dir)
+            
             yield ("log", f"Diarization complete. Speakers: {len(speaker_map)}")
             
         # 4. Transcription
@@ -204,6 +211,8 @@ class VideoTranslator:
              # Gender/Speaker logic
              gender = "Female"
              best_speaker = None
+             speaker_wav = vocals_path # Default to full audio if no profile
+             
              if enable_diarization and diarization_segments:
                  seg_start = seg['start']
                  seg_end = seg['end']
@@ -215,11 +224,15 @@ class VideoTranslator:
                      if overlap > max_overlap:
                          max_overlap = overlap
                          best_speaker = d_seg['speaker']
+                         
                  if best_speaker:
                      gender = speaker_map.get(best_speaker, "Female")
+                     # Use specific speaker profile if available
+                     if best_speaker in speaker_profiles:
+                         speaker_wav = speaker_profiles[best_speaker]
                      
              generated_path = self.tts_engine.generate_audio(
-                text, vocals_path, 
+                text, speaker_wav, 
                 language=target_code, 
                 output_path=seg_out, 
                 model=tts_model_name, 
