@@ -33,7 +33,7 @@ class VisualTranslator:
         try:
             # use_angle_cls=True need for robust detection
             # lang='en' is default support, typically we detect source lang
-            self.ocr_model = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
+            self.ocr_model = PaddleOCR(use_angle_cls=True, lang='en')
             self.model_loaded = True
             logger.info("PaddleOCR loaded.")
         except Exception as e:
