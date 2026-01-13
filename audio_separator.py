@@ -26,6 +26,17 @@ class AudioSeparator:
         self.processor = None
         self.loaded = False
 
+    def unload_model(self):
+        """Unloads the current model to free VRAM."""
+        if self.loaded:
+            logger.info("Unloading AudioSeparator model...")
+            self.model = None
+            self.processor = None
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
+            self.loaded = False
+            self.current_model_type = None
+
     def load_model(self, model_selection):
         """
         Loads the selected model.

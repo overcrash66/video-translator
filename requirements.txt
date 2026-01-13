@@ -18,4 +18,15 @@ speechbrain
 librosa
 bitsandbytes
 pyrubberband
+accelerate
+pysbd
+pydub
+nemo_toolkit[asr]
+f5-tts
+face-alignment
+moviepy
+
+opencv-python
+paddlepaddle
+paddleocr
 

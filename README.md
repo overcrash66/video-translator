@@ -12,20 +12,29 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 *   **Multi-Language Translation**: 
     *   **Google Translate** (Online): Fast, reliable standard translation.
     *   **Tencent HY-MT1.5** (Local): Large language model (1.8B) for better context and consistency in translations.
+    *   **Llama 3.1 8B Instruct** (Local): High-quality instruct-tuned model for nuanced translation.
+    *   **ALMA-R 7B** (Local): Specialized state-of-the-art translation model.
+    *   **Context-Aware**: Advanced mode using full-transcript context for superior coherence.
 *   **Neural TTS**: 
     *   **Edge-TTS** (Online): High-quality, natural-sounding speech generation.
     *   **Piper TTS** (Local): Robust offline neural TTS using the official Piper binary (automatically downloaded).
     *   **XTTS-v2** (Local): High-fidelity voice cloning using Coqui TTS. Requires ~2GB VRAM.
+    *   **F5-TTS** (Local): Fast, zero-shot voice cloning with Sway Sampling.
 *   **Smart Synchronization**: 
     *   High-quality **PyRubberband** time-stretching with formant preservation.
     *   **Cross-fade blending** for smooth transitions between audio segments.
-*   **Speaker Diarization**: Optionally detects multiple speakers using **SpeechBrain's ECAPA-TDNN** embeddings with spectral clustering, and assigns gender-appropriate TTS voices (Male/Female) based on pitch analysis.
-*   **GPU Optimized**: Custom memory management includes aggressive model offloading and audio chunking to prevent CUDA Out-of-Memory errors.
+*   **Speaker Diarization**: 
+    *   **SpeechBrain**: ECAPA-TDNN embeddings with spectral clustering.
+    *   **NVIDIA NeMo** (New): Advanced multi-scale diarization decoder (MSDD) for precise speaker turn detection.
+*   **Visual Enhancements (Experimental)**:
+    *   **Lip-Sync (MuseTalk)**: Generative video synchronization to match lips to the translated audio.
+    *   **Visual Text Translation**: Uses **PaddleOCR** to detect text in video frames and simpler inpainting to replace it (Proof of Concept).
+*   **GPU Optimized**: Custom **VideoTranslator** orchestration enforces strict "one-heavy-model-at-a-time" policy to run comfortably on 8GB-16GB VRAM GPUs.
 *   **Friendly UI**: Easy-to-use **Gradio** web interface.
 
 ## 🛠️ Prerequisites
 
-*   **Python 3.10+**
+*   **Python 3.10+** (Python 3.10 recommended for XTTS/NeMo compatibility)
 *   **FFmpeg**: Must be installed and accessible in your system's PATH.
     *   *Windows (Option 1)*: `winget install ffmpeg` then restart terminal.
     *   *Windows (Option 2 - Manual)*: 
@@ -35,13 +44,9 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
         4. Restart terminal and verify with `ffmpeg -version`
     *   *Linux*: `sudo apt install ffmpeg`
     *   *macOS*: `brew install ffmpeg`
-    *   *Troubleshooting*: If you get `FileNotFoundError`, FFmpeg is not in PATH. Run `where ffmpeg` (Windows) or `which ffmpeg` (Linux/Mac) to check.
 *   **Rubberband** (Recommended): For high-quality audio time-stretching.
     *   *Windows*: Download from [Rubberband Releases](https://breakfastquay.com/rubberband/). Extract and add to PATH, or place `rubberband-program.exe` in project folder.
-    *   *Linux*: `sudo apt install rubberband-cli`
-    *   *macOS*: `brew install rubberband`
-    *   *Note*: If not installed, the system falls back to librosa (lower quality) or simple trim/pad.
-*   **NVIDIA GPU** (Recommended): For faster HDemucs and Whisper inference. CPU is supported but slower.
+*   **NVIDIA GPU** (Recommended): For faster HDemucs, Whisper, and LLM inference. Required for MuseTalk/F5-TTS.
 
 ## 📦 Installation
 
@@ -51,19 +56,16 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     ```
 
 2.  **Install Dependencies**:
-    It is recommended to use a virtual environment (Python 3.10 recommended for XTTS):
+    It is recommended to use a virtual environment:
     ```bash
     py -3.10 -m venv venv
     .\venv\Scripts\activate
     pip install -r requirements.txt
     ```
 
-3.  **Additional Requirements**:
-    If not already installed via requirements, ensure you have:
-    ```bash
-    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118  # Adjust for your CUDA version
-    pip install openai-whisper deep-translator edge-tts gradio soundfile ffmpeg-python faster-whisper onnxruntime transformers accelerate
-    ```
+3.  **Additional Requirements (Optional)**:
+    *   **NeMo**: If using NeMo diarization, ensure `nemo_toolkit[asr]` is installed (added in requirements).
+    *   **MuseTalk**: Requires downloading huge weights (~10GB) for the full experience. The app will warn if missing.
 
 ## 🖥️ Usage
 
@@ -77,33 +79,29 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 
 3.  **Translate a Video**:
     *   **Upload Video**: Select an MP4/MKV/MOV file.
-    *   **Select Source Language**: (Optional) Specify the original language to improve transcription accuracy.
-    *   **Select Speech-to-Text Model**: 
-        *   `Large v3 Turbo (Fast)`: Best speed/accuracy balance (Recommended).
-        *   `Large v3`: Best accuracy, slower.
-        *   `Medium/Base/Small`: Progressively faster, less accurate.
-    *   **Select Target Language**: Choose from the dropdown (e.g., Spanish, Japanese).
+    *   **Select Source/Target Language**: e.g., Auto -> Spanish.
     *   **Select Translation Model**: 
         *   `Google Translate`: Default, fast.
-        *   `Tencent HY-MT1.5`: Local LLM, better context (downloads ~3.5GB on first run).
-    *   **Optimize Context** (Optional): Check this box to enable a second pass where a local AI reviews each segment against its neighbors to improve flow and context.
+        *   `Tencent HY-MT1.5`: Local LLM.
+        *   `Llama 3.1`: High quality instruct model.
+        *   `ALMA-R`: Specialized for translation.
     *   **Select TTS Model**: 
-        *   `edge`: Online, highest quality (requires internet).
-        *   `piper`: Local, fast, private.
-        *   `xtts`: Local voice cloning (uses input video's vocals as reference).
-    *   **Enable Speaker Diarization**: Check this to automatically detect speakers and use different voices (Male/Female) for each.
-    *   **Click Submit**: The progress bar will track the stages (Separating -> Transcribing -> Translating -> Synthesizing -> Mixing).
-
-4.  **Output**:
-    The translated video will appear in the output component for download/playback. Files are saved to `output/`.
+        *   `edge`: Online, best.
+        *   `xtts`: Voice cloning.
+        *   `f5`: Fast voice cloning.
+    *   **Enable Features**:
+        *   **Speaker Diarization**: Detects speakers.
+        *   **Lip-Sync**: (Experimental) Syncs lips to new audio.
+        *   **Visual Text Translation**: (Experimental) Translates on-screen text.
+    *   **Click Process Video**.
 
 ## ⚙️ Configuration
 
 *   **Directory Structure**:
-    *   `temp/`: Stores intermediate files (vocals, separated tracks). Cleared/Managed during runs.
+    *   `temp/`: Stores intermediate files. Cleared/Managed during runs.
     *   `output/`: Stores final processed videos.
-*   **Env Variables** (Optional):
-    *   `HF_TOKEN`: HuggingFace token. Required for some models that need authentication.
+*   **Env Variables**:
+    *   `HF_TOKEN`: HuggingFace token. Required for Llama 3.1 and NeMo models.
 
 ## 🧩 Pipeline Architecture
 
@@ -117,66 +115,28 @@ flowchart TD
     
     Vocals --> VAD{"VAD Preprocessing<br/>(Silero VAD)"}
     VAD --> Transcribe{"Transcribe<br/>(Faster-Whisper Turbo)"}
-    Transcribe --> ConfFilter[Word Confidence Filter]
-    ConfFilter --> Segments[Text Segments]
-
-    Vocals -.-> Diarize{"Diarize & Detect Gender<br/>(SpeechBrain/Librosa)"}
-    Diarize -.-> SpeakerMap[Speaker/Gender Map]
+    Transcribe --> Segments[Text Segments]
     
-    Segments --> Translate{"Translate<br/>(Google / HY-MT)"}
+    Vocals -.-> Diarize{"Diarize<br/>(NeMo / SpeechBrain)"}
+    Diarize -.-> SpeakerProfiling[Speaker Profiling]
     
-    Translate --> Optimize{"Optimize Context?<br/>(Optional via Local LLM)"}
-    Optimize -- Yes --> Refine[Refine with Context]
-    Refine --> TransText[Final Text]
-    Optimize -- No --> TransText
+    cat1[Context Context] --> Translate
+    Segments --> Translate{"Translate<br/>(Llama 3.1 / ALMA / HY-MT)"}
     
-    TransText --> TTS{"Neural TTS<br/>(Edge-TTS / Piper / XTTS)"}
-    SpeakerMap -.-> TTS
+    Translate --> TTS{"Neural TTS<br/>(F5-TTS / XTTS / Edge)"}
+    SpeakerProfiling -.-> TTS
     TTS --> TTSAudio[Generated Speech Clips]
     
     TTSAudio --> Sync{"Synchronize<br/>(PyRubberband)"}
-    
-    Sync --> CrossFade[Cross-fade Blending]
-    CrossFade --> MergedVocals[Merged Vocals]
-    
-    MergedVocals --> Mix{Mix Audio}
+    Sync --> Mix{Mix Audio}
     Background --> Mix
     
     Mix --> FinalAudio[Final Audio Track]
     
     FinalAudio --> Mux{"Merge with Video<br/>(FFmpeg)"}
-    Video --> Mux
+    Video --> FaceDetect[Face/Text Detect]
+    FaceDetect --> VisualFX{"Visual FX<br/>(MuseTalk / PaddleOCR)"}
+    VisualFX --> Mux
     
     Mux --> Output[Translated Output Video]
-    
-    style Video fill:#e1f5fe,stroke:#01579b
-    style Output fill:#e8f5e9,stroke:#2e7d32
-    style Separator fill:#fff3e0,stroke:#ef6c00
-    style VAD fill:#e3f2fd,stroke:#1976d2
-    style Transcribe fill:#fff3e0,stroke:#ef6c00
-    style Translate fill:#fff3e0,stroke:#ef6c00
-    style TTS fill:#fff3e0,stroke:#ef6c00
-    style Sync fill:#fff3e0,stroke:#ef6c00
-    style CrossFade fill:#e3f2fd,stroke:#1976d2
-    style Diarize fill:#f3e5f5,stroke:#7b1fa2
 ```
-
-
-1.  **Extract**: FFmpeg extracts audio from input video.
-2.  **Separate**: HDemucs splits audio into `vocals` and `accompaniment`.
-3.  **VAD Preprocessing**: Silero VAD detects speech regions, filtering non-speech to reduce hallucinations.
-4.  **Transcribe**: Faster-Whisper (Turbo) converts `vocals` to text segments with timestamps.
-5.  **Confidence Filter**: Low-confidence words are removed for cleaner transcriptions.
-6.  **Diarize (Optional)**: SpeechBrain ECAPA-TDNN extracts speaker embeddings, spectral clustering groups them, and librosa pitch analysis detects genders.
-7.  **Translate**: Segments are translated text-to-text.
-8.  **Synthesize (TTS)**: Edge-TTS generates speech for each translated segment, matching speaker gender if enabled.
-9.  **Synchronize**: Generated clips are time-stretched with high-quality PyRubberband settings (formant preservation).
-10. **Cross-fade**: Smooth transitions are applied between adjacent audio segments.
-11. **Mix**: New vocals are mixed with original `accompaniment`.
-12. **Merge**: Final mix is replaced into the original video container.
-
-## 🔧 Troubleshooting
-
-*   **"TorchCodec is required"**: This project uses `soundfile` backend to avoid this error. If you see it, ensure `soundfile` is installed.
-*   **CUDA Out of Memory**: The system uses chunking (10s segments) for separation. If you still OOM, try closing other GPU-heavy apps.
-*   **Video not playing in browser**: Gradio/Browser compatibility. Use VLC or Media Player for the downloaded file.

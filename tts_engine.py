@@ -6,6 +6,7 @@ from pathlib import Path
 import torchaudio
 import soundfile as sf
 import torch
+from f5_handler import F5TTSWrapper
 
 # MONKEYPATCH: Torchaudio 2.9+ broken backend API fix for Windows
 # Forces soundfile backend for load() to bypass TorchCodec requirements
@@ -103,7 +104,9 @@ class TTSEngine:
                 "Male": ["hi-IN-MadhurNeural"]
             }
         }
+
         self.xtts_model = None
+        self.f5_model = None
         
         # Mapping for Piper (language code -> model name)
         # We use a default 'high' quality voice for each language if available
@@ -116,6 +119,21 @@ class TTSEngine:
             # For robustness, we will default to english if specific lang model not found, or use a generic one.
             # Real implementation would query the piper face or json index.
         }
+
+    def unload_model(self):
+        """Unload XTTS and F5 models if loaded."""
+        if self.xtts_model:
+            logger.info("Unloading XTTS model...")
+            del self.xtts_model
+            self.xtts_model = None
+            
+        if self.f5_model:
+            self.f5_model.unload_model()
+            self.f5_model = None
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
 
 
     def load_model(self):
@@ -211,6 +229,9 @@ class TTSEngine:
              return self._generate_piper(sanitized_text, language, output_path)
         elif model == "xtts":
              return self._generate_xtts(sanitized_text, language, speaker_wav_path, output_path)
+        elif model == "f5":
+             return self._generate_f5(sanitized_text, speaker_wav_path, output_path)
+
 
         # Default Edge-TTS logic
         
@@ -300,6 +321,20 @@ class TTSEngine:
             logger.error(f"XTTS generation failed: {e}")
             # Fallback
             return self.generate_audio(text, speaker_wav, language, output_path, model="edge")
+
+    def _generate_f5(self, text, speaker_wav, output_path):
+        """Generates audio using F5-TTS."""
+        if not self.f5_model:
+            self.f5_model = F5TTSWrapper()
+            
+        try:
+             # F5 usually auto-detects cloning from wav, no lanauge code needed (it's often Multilingual or English focused base)
+             # Current F5 release is mainly English/Multilingual mixed.
+             return self.f5_model.generate_voice_clone(text, speaker_wav, ref_text="", output_path=output_path)
+        except Exception as e:
+             logger.error(f"F5 generation failed: {e}")
+             return self.generate_audio(text, speaker_wav, "en", output_path, model="edge")
+
 
     def _generate_piper(self, text, language, output_path):
         """
