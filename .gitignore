@@ -185,3 +185,4 @@ cython_debug/
 /.context
 /.vscode
 /MuseTalk
+/tests/data

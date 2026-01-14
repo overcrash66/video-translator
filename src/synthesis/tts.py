@@ -207,6 +207,39 @@ class TTSEngine:
             logger.warning(f"Failed to validate audio file {file_path}: {e}")
             return False
 
+    def _check_reference_audio(self, wav_path):
+        """
+        Checks if reference audio is suitable for cloning (has signal, reasonable duration).
+        Returns True if valid, False otherwise.
+        """
+        if not wav_path or not Path(wav_path).exists():
+            return False
+            
+        try:
+            import soundfile as sf
+            import numpy as np
+            
+            # Using sf.info first for fast duration check
+            info = sf.info(wav_path)
+            if info.duration < 1.0: # XTTS often fails with < 1s
+                logger.warning(f"Reference audio too short ({info.duration:.2f}s < 1.0s). Skipping clone.")
+                return False
+                
+            # Check for silence/signal
+            data, sr = sf.read(wav_path, dtype='float32')
+            if len(data.shape) > 1:
+                data = data.mean(axis=1) # mix to mono
+                
+            rms = np.sqrt(np.mean(data**2))
+            if rms < 0.01: # Silence threshold
+                logger.warning(f"Reference audio too silent (RMS={rms:.4f}). Skipping clone.")
+                return False
+                
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to analyze reference audio: {e}")
+            return False
+
     def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None, guidance_scale=None, emotion=None):
         """
         Generates audio using Edge-TTS, Piper, or XTTS.
@@ -229,12 +262,18 @@ class TTSEngine:
             
         if model == "piper":
              return self._generate_piper(sanitized_text, language, output_path)
-        elif model == "xtts":
-             return self._generate_xtts(sanitized_text, language, speaker_wav_path, output_path, guidance_scale=guidance_scale, emotion=emotion)
-        elif model == "f5":
-             return self._generate_f5(sanitized_text, speaker_wav_path, output_path)
-
-
+             
+        elif model == "xtts" or model == "f5":
+             # Strict validation for cloning models
+             if self._check_reference_audio(speaker_wav_path):
+                 if model == "xtts":
+                    return self._generate_xtts(sanitized_text, language, speaker_wav_path, output_path, guidance_scale=guidance_scale, emotion=emotion)
+                 else:
+                    return self._generate_f5(sanitized_text, speaker_wav_path, output_path)
+             else:
+                 logger.warning("Invalid reference audio for cloning. Falling back to Edge-TTS.")
+                 # Fallback to edge below
+                 
         # Default Edge-TTS logic
         
         # Get voice list for language and gender
