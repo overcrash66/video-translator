@@ -3,7 +3,7 @@ import logging
 import os
 from pathlib import Path
 import torchaudio
-import config
+from src.utils import config
 import soundfile as sf
 import numpy as np
 try:

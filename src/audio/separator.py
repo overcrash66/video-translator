@@ -3,7 +3,7 @@ import torch
 import torchaudio
 import numpy as np
 from pathlib import Path
-import config
+from src.utils import config
 import logging
 
 # Configure logging

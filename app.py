@@ -2,9 +2,9 @@ import gradio as gr
 import os
 import shutil
 from pathlib import Path
-import config
+from src.utils import config
 import logging
-from video_translator import VideoTranslator
+from src.core.video_translator import VideoTranslator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

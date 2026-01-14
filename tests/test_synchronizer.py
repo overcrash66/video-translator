@@ -12,7 +12,7 @@ class TestCrossfadeWindow:
     
     def test_linear_fade(self):
         """Test linear crossfade window."""
-        from synchronizer import generate_crossfade_window
+        from src.processing.synchronization import generate_crossfade_window
         
         window = generate_crossfade_window(100, 'linear')
         
@@ -23,7 +23,7 @@ class TestCrossfadeWindow:
     
     def test_cosine_fade(self):
         """Test cosine (S-curve) crossfade window."""
-        from synchronizer import generate_crossfade_window
+        from src.processing.synchronization import generate_crossfade_window
         
         window = generate_crossfade_window(100, 'cosine')
         
@@ -35,7 +35,7 @@ class TestCrossfadeWindow:
     
     def test_exponential_fade(self):
         """Test exponential crossfade window."""
-        from synchronizer import generate_crossfade_window
+        from src.processing.synchronization import generate_crossfade_window
         
         window = generate_crossfade_window(100, 'exponential')
         
@@ -47,14 +47,14 @@ class TestCrossfadeWindow:
     
     def test_zero_length_window(self):
         """Test that zero-length window returns empty array."""
-        from synchronizer import generate_crossfade_window
+        from src.processing.synchronization import generate_crossfade_window
         
         window = generate_crossfade_window(0, 'linear')
         assert len(window) == 0
     
     def test_negative_length_window(self):
         """Test that negative length returns empty array."""
-        from synchronizer import generate_crossfade_window
+        from src.processing.synchronization import generate_crossfade_window
         
         window = generate_crossfade_window(-10, 'linear')
         assert len(window) == 0
@@ -67,7 +67,7 @@ class TestAudioSynchronizer:
         """Test that segments with similar duration are just copied."""
         import tempfile
         import soundfile as sf
-        from synchronizer import AudioSynchronizer
+        from src.processing.synchronization import AudioSynchronizer
         
         sync = AudioSynchronizer()
         

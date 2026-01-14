@@ -4,8 +4,8 @@ import unittest
 import numpy as np
 import soundfile as sf
 from pathlib import Path
-from diarizer import Diarizer
-import config
+from src.audio.diarization import Diarizer
+from src.utils import config
 
 class TestSpeakerExtraction(unittest.TestCase):
     def setUp(self):

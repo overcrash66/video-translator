@@ -2,7 +2,7 @@ import logging
 import torch
 import gc
 from pathlib import Path
-import config
+from src.utils import config
 import os
 import sys
 

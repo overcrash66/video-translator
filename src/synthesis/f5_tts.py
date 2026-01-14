@@ -4,7 +4,7 @@ import torchaudio
 import os
 import gc
 from pathlib import Path
-import config
+from src.utils import config
 
 logger = logging.getLogger(__name__)
 

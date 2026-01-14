@@ -2,7 +2,7 @@ import logging
 import cv2
 import numpy as np
 from pathlib import Path
-import config
+from src.utils import config
 
 try:
     from paddleocr import PaddleOCR

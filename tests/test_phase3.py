@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 def test_llm_translator_init_llama():
-    from translator import LLMTranslator
+    from src.translation.text_translator import LLMTranslator
     # Test Llama initialization
     t = LLMTranslator("meta-llama/Meta-Llama-3.1-8B-Instruct")
     assert t.is_llama is True
@@ -10,13 +10,13 @@ def test_llm_translator_init_llama():
     assert t.is_hymt is False
 
 def test_llm_translator_init_alma():
-    from translator import LLMTranslator
+    from src.translation.text_translator import LLMTranslator
     t = LLMTranslator("haoranxu/ALMA-7B-R")
     assert t.is_llama is False
     assert t.is_alma is True
 
 def test_get_prompt_llama():
-    from translator import LLMTranslator
+    from src.translation.text_translator import LLMTranslator
     t = LLMTranslator("meta-llama/Meta-Llama-3.1-8B-Instruct")
     # Mock tokenizer
     t.tokenizer = MagicMock()
@@ -29,7 +29,7 @@ def test_get_prompt_llama():
     assert "Translate from en to es" in prompt
 
 def test_get_prompt_alma():
-    from translator import LLMTranslator
+    from src.translation.text_translator import LLMTranslator
     t = LLMTranslator("haoranxu/ALMA-7B-R")
     prompt = t.get_prompt("Hello", "English", "Spanish")
     # ALMA format: "Translate this from {src} to {tgt}:\n{src}: {text}\n{tgt}:"
@@ -38,11 +38,11 @@ def test_get_prompt_alma():
     assert "Spanish:" in prompt
 
 def test_translator_integration_context():
-    from translator import Translator
+    from src.translation.text_translator import Translator
     tr = Translator()
     
     # Mock LLMTranslator
-    with patch('translator.LLMTranslator') as MockLLM:
+    with patch('src.translation.text_translator.LLMTranslator') as MockLLM:
         mock_instance = MockLLM.return_value
         mock_instance.model_id = "meta-llama/Meta-Llama-3.1-8B-Instruct"
         mock_instance.translate_context_aware.return_value = "Translated"

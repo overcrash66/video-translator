@@ -14,7 +14,7 @@ class TestTTSValidation:
     
     def test_sanitize_text_empty(self):
         """Test that empty text returns None."""
-        from tts_engine import TTSEngine
+        from src.synthesis.tts import TTSEngine
         engine = TTSEngine()
         
         assert engine._sanitize_text("") is None
@@ -23,7 +23,7 @@ class TestTTSValidation:
     
     def test_sanitize_text_punctuation_only(self):
         """Test that punctuation-only text returns None."""
-        from tts_engine import TTSEngine
+        from src.synthesis.tts import TTSEngine
         engine = TTSEngine()
         
         assert engine._sanitize_text("...") is None
@@ -32,7 +32,7 @@ class TestTTSValidation:
     
     def test_sanitize_text_valid(self):
         """Test that valid text is returned stripped."""
-        from tts_engine import TTSEngine
+        from src.synthesis.tts import TTSEngine
         engine = TTSEngine()
         
         assert engine._sanitize_text("Hello world") == "Hello world"
@@ -41,7 +41,7 @@ class TestTTSValidation:
     
     def test_sanitize_text_cjk(self):
         """Test that CJK characters are accepted."""
-        from tts_engine import TTSEngine
+        from src.synthesis.tts import TTSEngine
         engine = TTSEngine()
         
         # Chinese
@@ -53,14 +53,14 @@ class TestTTSValidation:
     
     def test_validate_audio_file_missing(self):
         """Test validation of non-existent file."""
-        from tts_engine import TTSEngine
+        from src.synthesis.tts import TTSEngine
         engine = TTSEngine()
         
         assert engine._validate_audio_file("/non/existent/file.wav") is False
     
     def test_validate_audio_file_empty(self):
         """Test validation of empty file."""
-        from tts_engine import TTSEngine
+        from src.synthesis.tts import TTSEngine
         engine = TTSEngine()
         
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -73,7 +73,7 @@ class TestTTSValidation:
     
     def test_validate_audio_file_too_small(self):
         """Test validation of too-small file."""
-        from tts_engine import TTSEngine
+        from src.synthesis.tts import TTSEngine
         engine = TTSEngine()
         
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -87,7 +87,7 @@ class TestTTSValidation:
     
     def test_validate_audio_file_valid(self):
         """Test validation of valid-sized file."""
-        from tts_engine import TTSEngine
+        from src.synthesis.tts import TTSEngine
         engine = TTSEngine()
         
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:

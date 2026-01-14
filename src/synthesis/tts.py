@@ -1,12 +1,12 @@
 import asyncio
 import edge_tts
-import config
+from src.utils import config
 import logging
 from pathlib import Path
 import torchaudio
 import soundfile as sf
 import torch
-from f5_handler import F5TTSWrapper
+from src.synthesis.f5_tts import F5TTSWrapper
 
 # MONKEYPATCH: Torchaudio 2.9+ broken backend API fix for Windows
 # Forces soundfile backend for load() to bypass TorchCodec requirements

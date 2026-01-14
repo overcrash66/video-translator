@@ -1,7 +1,7 @@
 import ffmpeg
 import logging
 from pathlib import Path
-import config
+from src.utils import config
 import torchaudio
 import torch
 

@@ -12,7 +12,7 @@ class TestModelSizeMapping:
     
     def test_turbo_model_mapping(self):
         """Test that Turbo model name maps correctly."""
-        from transcriber import MODEL_SIZE_MAP
+        from src.audio.transcription import MODEL_SIZE_MAP
         
         # UI-friendly name should map to internal name
         assert MODEL_SIZE_MAP.get("Large v3 Turbo (Fast)") == "large-v3-turbo"
@@ -22,7 +22,7 @@ class TestModelSizeMapping:
     
     def test_direct_model_names(self):
         """Test that direct model names also work."""
-        from transcriber import MODEL_SIZE_MAP
+        from src.audio.transcription import MODEL_SIZE_MAP
         
         assert MODEL_SIZE_MAP.get("large-v3-turbo") == "large-v3-turbo"
         assert MODEL_SIZE_MAP.get("large-v3") == "large-v3"
@@ -34,7 +34,7 @@ class TestSileroVAD:
     
     def test_vad_initialization(self):
         """Test that SileroVAD initializes correctly."""
-        from transcriber import SileroVAD
+        from src.audio.transcription import SileroVAD
         
         vad = SileroVAD()
         assert vad.model is None
@@ -42,7 +42,7 @@ class TestSileroVAD:
     
     def test_vad_detect_speech_no_model(self):
         """Test that VAD returns None when model not available."""
-        from transcriber import SileroVAD
+        from src.audio.transcription import SileroVAD
         
         vad = SileroVAD()
         vad._loaded = False  # Force model unavailable
@@ -56,7 +56,7 @@ class TestTranscriberHelpers:
     
     def test_segment_overlaps_speech_true(self):
         """Test segment overlap detection - overlapping case."""
-        from transcriber import Transcriber
+        from src.audio.transcription import Transcriber
         
         t = Transcriber()
         vad_segments = [
@@ -72,7 +72,7 @@ class TestTranscriberHelpers:
     
     def test_segment_overlaps_speech_false(self):
         """Test segment overlap detection - non-overlapping case."""
-        from transcriber import Transcriber
+        from src.audio.transcription import Transcriber
         
         t = Transcriber()
         vad_segments = [

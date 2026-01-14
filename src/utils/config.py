@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Base directory
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # Directories
 TEMP_DIR = BASE_DIR / "temp"

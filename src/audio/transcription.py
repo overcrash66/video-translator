@@ -2,7 +2,7 @@ from faster_whisper import WhisperModel
 import torch
 import torchaudio
 import numpy as np
-import config
+from src.utils import config
 import logging
 from pathlib import Path
 

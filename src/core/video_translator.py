@@ -3,20 +3,20 @@ import gc
 import logging
 import os
 from pathlib import Path
-import config
+from src.utils import config
 
 # Component imports
-from audio_separator import AudioSeparator
-from transcriber import Transcriber
-from translator import Translator
-from tts_engine import TTSEngine
-from synchronizer import AudioSynchronizer
-from video_processor import VideoProcessor
-from diarizer import Diarizer
+from src.audio.separator import AudioSeparator
+from src.audio.transcription import Transcriber
+from src.translation.text_translator import Translator
+from src.synthesis.tts import TTSEngine
+from src.processing.synchronization import AudioSynchronizer
+from src.processing.video import VideoProcessor
+from src.audio.diarization import Diarizer
 
 # Optional imports for new features (Placeholder for now until implemented)
-from lipsync import LipSyncer
-from visual_translator import VisualTranslator
+from src.processing.lipsync import LipSyncer
+from src.translation.visual_translator import VisualTranslator
 
 logger = logging.getLogger(__name__)
 
