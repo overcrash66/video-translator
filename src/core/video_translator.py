@@ -110,6 +110,9 @@ class VideoTranslator:
                       enable_vad,
                       enable_lipsync,
                       enable_visual_translation,
+                      transcription_beam_size=5,
+                      tts_enable_cfg=False,
+                      tts_emotion=None,
                       diarization_model="pyannote/SpeechBrain (Default)"):
         """
         Orchestrates the full pipeline as a generator.
@@ -145,6 +148,8 @@ class VideoTranslator:
             diar_backend = "speechbrain"
             if "NeMo" in diarization_model:
                 diar_backend = "nemo"
+            elif "Community" in diarization_model:
+                diar_backend = "pyannote_community"
                 
             diarization_segments = self.diarizer.diarize(vocals_path, backend=diar_backend)
             speaker_map = self.diarizer.detect_genders(vocals_path, diarization_segments)
@@ -160,7 +165,7 @@ class VideoTranslator:
         self.load_model("whisper")
         yield ("progress", 0.3, "Transcribing...")
         source_code = config.get_language_code(source_lang)
-        segments = self.transcriber.transcribe(vocals_path, language=source_code, model_size=transcription_model_name, use_vad=enable_vad)
+        segments = self.transcriber.transcribe(vocals_path, language=source_code, model_size=transcription_model_name, use_vad=enable_vad, beam_size=transcription_beam_size)
         if not segments:
             raise Exception("No speech detected")
         yield ("log", f"Transcription complete. {len(segments)} segments.")
@@ -237,7 +242,10 @@ class VideoTranslator:
                 output_path=seg_out, 
                 model=tts_model_name, 
                 gender=gender,
-                speaker_id=best_speaker if enable_diarization else None
+
+                speaker_id=best_speaker if enable_diarization else None,
+                guidance_scale=1.3 if tts_enable_cfg else None,
+                emotion=tts_emotion
             )
              
              if generated_path and Path(generated_path).exists() and Path(generated_path).stat().st_size > 100:

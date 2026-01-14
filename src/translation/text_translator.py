@@ -114,14 +114,16 @@ class LLMTranslator:
         try:
             inputs = self.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(self.device)
             
+                
             with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs, 
-                    max_new_tokens=512, 
-                    temperature=0.3,
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.pad_token_id
-                )
+                with torch.amp.autocast("cuda", enabled=True):
+                    outputs = self.model.generate(
+                        **inputs, 
+                        max_new_tokens=512, 
+                        temperature=0.3,
+                        do_sample=True,
+                        pad_token_id=self.tokenizer.pad_token_id
+                    )
                 
             decoded = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
             
@@ -173,13 +175,14 @@ class LLMTranslator:
             inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
             
             with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs, 
-                    max_new_tokens=512, 
-                    temperature=0.3,
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.pad_token_id
-                )
+                with torch.amp.autocast("cuda", enabled=True):
+                    outputs = self.model.generate(
+                        **inputs, 
+                        max_new_tokens=512, 
+                        temperature=0.3,
+                        do_sample=True,
+                        pad_token_id=self.tokenizer.pad_token_id
+                    )
              
             # Slice input from output
             input_len = inputs.input_ids.shape[1]

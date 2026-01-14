@@ -97,8 +97,9 @@ class SileroVAD:
                 self.model,
                 sampling_rate=sr,
                 min_speech_duration_ms=min_speech_duration_ms,
-                min_silence_duration_ms=100,
-                speech_pad_ms=100,  # More padding to avoid cutting words at boundaries
+                min_silence_duration_ms=1000,
+                speech_pad_ms=400,  # Buffer to avoid clipping
+                threshold=0.6,
             )
             
             # Convert to seconds
@@ -168,7 +169,7 @@ class Transcriber:
                 torch.cuda.empty_cache()
             logger.info("Whisper model unloaded.")
 
-    def transcribe(self, audio_path, language=None, model_size=None, use_vad=None):
+    def transcribe(self, audio_path, language=None, model_size=None, use_vad=None, beam_size=5):
         """
         Transcribes the audio file and returns segments with timestamps.
         
@@ -177,6 +178,7 @@ class Transcriber:
             language: Language code or 'auto' for auto-detection
             model_size: Whisper model size (large-v3, large-v3-turbo, medium, base)
             use_vad: Override VAD preprocessing (default: self.use_vad)
+            beam_size: Beam size for transcription (default: 5)
             
         Returns:
             list of dicts {start, end, text, words}
@@ -207,7 +209,7 @@ class Transcriber:
         segments_generator, info = self.model.transcribe(
             str(audio_path), 
             language=lang_arg,
-            beam_size=5,
+            beam_size=beam_size if beam_size is not None else 5,
             word_timestamps=True,
             condition_on_previous_text=False,
             initial_prompt="This is a dialogue. Transcribe it accurately.",

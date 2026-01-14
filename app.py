@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Initialize central controller
 video_translator = VideoTranslator()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, enable_lipsync, enable_visual_translation, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg, tts_emotion, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -82,7 +82,11 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             enable_time_stretch=enable_time_stretch,
             enable_vad=enable_vad,
             enable_lipsync=enable_lipsync,
-            enable_visual_translation=enable_visual_translation
+
+            enable_visual_translation=enable_visual_translation,
+            transcription_beam_size=transcription_beam_size,
+            tts_enable_cfg=tts_enable_cfg,
+            tts_emotion=tts_emotion
         )
         
         final_video_path = None
@@ -184,7 +188,7 @@ def create_ui():
                 )
 
                 diarization_model = gr.Dropdown(
-                    choices=["pyannote/SpeechBrain (Default)", "NVIDIA NeMo (Advanced)"],
+                    choices=["pyannote/SpeechBrain (Default)", "pyannote/Community-1 (Advanced)", "NVIDIA NeMo (Advanced)"],
                     label="Diarization Backend",
                     value="pyannote/SpeechBrain (Default)",
                     visible=True 
@@ -201,11 +205,30 @@ def create_ui():
                     label="Speech-to-Text Model",
                     value="Large v3 Turbo (Fast)"
                 )
+
+                transcription_beam_size = gr.Slider(
+                    minimum=1, maximum=10, step=1, value=5, 
+                    label="Beam Size (Accuracy vs Speed)",
+                    info="Higher values improve accuracy but slow down transcription. (Default: 5)"
+                )
                 
                 tts_model = gr.Dropdown(
                     choices=["edge", "piper", "xtts", "f5"],
                     label="TTS Model (Edge=Online, Piper=Local, XTTS=Cloning)",
                     value="edge"
+                )
+
+                tts_enable_cfg = gr.Checkbox(
+                    label="Enable CFG (Better Quality, Slower)", 
+                    value=False,
+                    info="Applies Classifier-Free Guidance (scale 1.3) to XTTS for more natural speech."
+                )
+
+                tts_emotion = gr.Dropdown(
+                    choices=["neutral", "happy", "sad", "angry", "dull", "surprise"],
+                    label="Emotion (XTTS Only)",
+                    value=None,
+                    info="Select emotion style for cloned voice."
                 )
                 
                 enable_time_stretch = gr.Checkbox(
@@ -240,7 +263,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, enable_lipsync, enable_visual_translation],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg, tts_emotion],
             outputs=[video_output, logs_output]
         )
         

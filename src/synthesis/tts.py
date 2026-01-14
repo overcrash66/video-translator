@@ -207,12 +207,14 @@ class TTSEngine:
             logger.warning(f"Failed to validate audio file {file_path}: {e}")
             return False
 
-    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None):
+    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None, guidance_scale=None, emotion=None):
         """
         Generates audio using Edge-TTS, Piper, or XTTS.
-        model: "edge", "piper", or "xtts"
+        model: "edge", "piper", "xtts", or "f5"
         gender: "Male" or "Female" (used for default/edge mapping)
         speaker_id: Speaker identifier (e.g., "SPEAKER_00") used to select unique voice
+        guidance_scale: (XTTS) CFG scale, e.g. 1.2-1.5
+        emotion: (XTTS) Emotion preset
         """
         if not output_path:
             output_path = config.TEMP_DIR / "tts_output.wav"
@@ -228,7 +230,7 @@ class TTSEngine:
         if model == "piper":
              return self._generate_piper(sanitized_text, language, output_path)
         elif model == "xtts":
-             return self._generate_xtts(sanitized_text, language, speaker_wav_path, output_path)
+             return self._generate_xtts(sanitized_text, language, speaker_wav_path, output_path, guidance_scale=guidance_scale, emotion=emotion)
         elif model == "f5":
              return self._generate_f5(sanitized_text, speaker_wav_path, output_path)
 
@@ -298,7 +300,7 @@ class TTSEngine:
         logger.info(f"Generating placeholder audio for text: '{sanitized_text[:50]}...'")
         return self._generate_dummy_audio(sanitized_text, output_path)
 
-    def _generate_xtts(self, text, language, speaker_wav, output_path):
+    def _generate_xtts(self, text, language, speaker_wav, output_path, guidance_scale=None, emotion=None):
         try:
             self._load_xtts()
             logger.info(f"Generating XTTS audio for: '{text[:20]}...'")
@@ -308,11 +310,19 @@ class TTSEngine:
             if not self.xtts_model:
                  raise RuntimeError("XTTS model failed to load.")
 
+            # Optional params for XTTS
+            kwargs = {}
+            if guidance_scale is not None:
+                kwargs['guidance_scale'] = float(guidance_scale)
+            if emotion:
+                kwargs['emotion'] = emotion
+
             self.xtts_model.tts_to_file(
                 text=text, 
                 speaker_wav=str(speaker_wav), 
                 language=language, 
-                file_path=str(output_path)
+                file_path=str(output_path),
+                **kwargs
             )
             
             logger.info(f"Saved XTTS output to {output_path}")
