@@ -7,7 +7,8 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 *   **Vocal Separation**: Uses **HDemucs** (Meta's Hybrid Demucs) to cleanly separate speech from background music/sfx. Optimized with chunking to handle long videos on limited GPU memory.
 *   **Precision Transcription**: Powered by **Faster-Whisper** (CTranslate2). 
     *   **Whisper Large v3 Turbo** (Recommended): 30-50% faster with comparable accuracy.
-    *   **Silero VAD Preprocessing**: Filters non-speech regions to reduce hallucinations.
+    *   **Silero VAD Preprocessing**: Filters non-speech regions to reduce hallucinations. Fully configurable (Min Silence, Speech Pad) and toggleable.
+    *   **Beam Size Tuning**: Adjustable beam size (1-5) for balancing transcription speed vs accuracy.
     *   **Word-level Confidence Filtering**: Removes low-confidence transcriptions.
 *   **Multi-Language Translation**: 
     *   **Google Translate** (Online): Fast, reliable standard translation.
@@ -18,10 +19,10 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 *   **Neural TTS**: 
     *   **Edge-TTS** (Online): High-quality, natural-sounding speech generation.
     *   **Piper TTS** (Local): Robust offline neural TTS using the official Piper binary (automatically downloaded).
-    *   **XTTS-v2** (Local): High-fidelity voice cloning using Coqui TTS. Requires ~2GB VRAM.
+    *   **XTTS-v2** (Local): High-fidelity voice cloning with **Emotion Control** (Happy, Sad, Angry, etc.). Requires ~2GB VRAM.
     *   **F5-TTS** (Local): Fast, zero-shot voice cloning with Sway Sampling.
 *   **Smart Synchronization**: 
-    *   High-quality **PyRubberband** time-stretching with formant preservation.
+    *   High-quality **PyRubberband** time-stretching with formant preservation (Toggleable).
     *   **Cross-fade blending** for smooth transitions between audio segments.
 *   **Speaker Diarization**: 
     *   **SpeechBrain**: ECAPA-TDNN embeddings with spectral clustering.
