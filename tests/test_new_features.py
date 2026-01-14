@@ -52,6 +52,36 @@ class TestTranscriberFeatures:
         args, kwargs = mock_model.transcribe.call_args
         assert kwargs["beam_size"] == 5
 
+    @patch("src.audio.transcription.WhisperModel")
+    @patch("src.audio.transcription.SileroVAD")
+    def test_transcribe_vad_params(self, mock_vad_cls, mock_whisper_cls):
+        """Test that min_silence_duration_ms is passed to VAD."""
+        mock_model = MagicMock()
+        mock_whisper_cls.return_value = mock_model
+        mock_model.transcribe.return_value = ([], MagicMock())
+
+        mock_vad = MagicMock()
+        mock_vad_cls.return_value = mock_vad
+        mock_vad.detect_speech.return_value = [{'start': 0, 'end': 1}]
+        
+        transcriber = Transcriber()
+        transcriber.load_model("base")
+        # Mock internal helper to return float, avoiding f-string error
+        transcriber._get_audio_duration = MagicMock(return_value=10.0)
+        
+        # Call with specific VAD params
+        transcriber.transcribe(
+            "dummy.wav", 
+            use_vad=True, 
+            min_silence_duration_ms=500
+        )
+        
+        # Verify VAD called with correct param
+        mock_vad.detect_speech.assert_called_with(
+            "dummy.wav", 
+            min_silence_duration_ms=500
+        )
+
 class TestDiarizerFeatures:
     def test_run_pyannote_community(self):
         """Test PyAnnote pipeline loading and execution."""

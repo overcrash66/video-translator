@@ -110,6 +110,7 @@ class VideoTranslator:
                       enable_vad,
                       enable_lipsync,
                       enable_visual_translation,
+                      vad_min_silence_duration_ms=1000,
                       transcription_beam_size=5,
                       tts_enable_cfg=False,
                       tts_emotion=None,
@@ -165,7 +166,14 @@ class VideoTranslator:
         self.load_model("whisper")
         yield ("progress", 0.3, "Transcribing...")
         source_code = config.get_language_code(source_lang)
-        segments = self.transcriber.transcribe(vocals_path, language=source_code, model_size=transcription_model_name, use_vad=enable_vad, beam_size=transcription_beam_size)
+        segments = self.transcriber.transcribe(
+            vocals_path, 
+            language=source_code, 
+            model_size=transcription_model_name, 
+            use_vad=enable_vad, 
+            beam_size=transcription_beam_size,
+            min_silence_duration_ms=vad_min_silence_duration_ms
+        )
         if not segments:
             raise Exception("No speech detected")
         yield ("log", f"Transcription complete. {len(segments)} segments.")

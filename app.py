@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Initialize central controller
 video_translator = VideoTranslator()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg, tts_emotion, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg, tts_emotion, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -81,6 +81,7 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             diarization_model=diarization_model,
             enable_time_stretch=enable_time_stretch,
             enable_vad=enable_vad,
+            vad_min_silence_duration_ms=vad_min_silence,
             enable_lipsync=enable_lipsync,
 
             enable_visual_translation=enable_visual_translation,
@@ -243,6 +244,21 @@ def create_ui():
                     info="Uses Voice Activity Detection to filter non-speech audio. May cut words if too aggressive."
                 )
 
+                vad_min_silence = gr.Number(
+                    label="VAD Min Silence Duration (ms)",
+                    value=1000,
+                    minimum=0,
+                    step=50,
+                    visible=False,
+                    info="Minimum duration of silence to separate speech segments. Lower values = more segments."
+                )
+
+                enable_vad.change(
+                    fn=lambda x: gr.update(visible=x),
+                    inputs=[enable_vad],
+                    outputs=[vad_min_silence]
+                )
+
                 enable_lipsync = gr.Checkbox(
                     label="Enable Lip-Sync (Generative - Experimental)",
                     value=False,
@@ -263,7 +279,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg, tts_emotion],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg, tts_emotion],
             outputs=[video_output, logs_output]
         )
         

@@ -1,0 +1,21 @@
+============================= test session starts =============================
+platform win32 -- Python 3.10.11, pytest-9.0.2, pluggy-1.6.0
+rootdir: I:\video-translator
+plugins: anyio-4.12.1, hydra-core-1.3.2, typeguard-4.4.4
+collected 5 items
+
+tests\test_new_features.py .E...                                         [100%]
+
+=================================== ERRORS ====================================
+____ ERROR at setup of TestTranscriberFeatures.test_transcribe_vad_params _____
+file i:\video-translator\tests\test_new_features.py, line 55
+      @patch("src.audio.transcription.SileroVAD")
+      def test_transcribe_vad_params(self, mock_vad_cls, mock_whisper_cls):
+E       fixture 'mock_whisper_cls' not found
+>       available fixtures: anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, hydra_restore_singletons, hydra_sweep_runner, hydra_task_runner, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+i:\video-translator\tests\test_new_features.py:55
+=========================== short test summary info ===========================
+ERROR tests/test_new_features.py::TestTranscriberFeatures::test_transcribe_vad_params
+========================= 4 passed, 1 error in 1.90s ==========================

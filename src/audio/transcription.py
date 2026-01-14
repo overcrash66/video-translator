@@ -57,7 +57,7 @@ class SileroVAD:
             logger.warning(f"Failed to load Silero VAD: {e}. Proceeding without VAD.")
             self._loaded = False
     
-    def detect_speech(self, audio_path: str, min_speech_duration_ms: int = 250) -> list:
+    def detect_speech(self, audio_path: str, min_speech_duration_ms: int = 250, min_silence_duration_ms: int = 1000) -> list:
         """
         Detect speech segments in audio file.
         
@@ -97,7 +97,7 @@ class SileroVAD:
                 self.model,
                 sampling_rate=sr,
                 min_speech_duration_ms=min_speech_duration_ms,
-                min_silence_duration_ms=1000,
+                min_silence_duration_ms=min_silence_duration_ms,
                 speech_pad_ms=400,  # Buffer to avoid clipping
                 threshold=0.6,
             )
@@ -169,7 +169,7 @@ class Transcriber:
                 torch.cuda.empty_cache()
             logger.info("Whisper model unloaded.")
 
-    def transcribe(self, audio_path, language=None, model_size=None, use_vad=None, beam_size=5):
+    def transcribe(self, audio_path, language=None, model_size=None, use_vad=None, beam_size=5, min_silence_duration_ms=1000):
         """
         Transcribes the audio file and returns segments with timestamps.
         
@@ -195,8 +195,8 @@ class Transcriber:
         # VAD preprocessing to identify speech regions
         vad_segments = None
         if should_use_vad:
-            logger.info("Running VAD preprocessing...")
-            vad_segments = self.vad.detect_speech(str(audio_path))
+            logger.info(f"Running VAD preprocessing (Min Silence: {min_silence_duration_ms}ms)...")
+            vad_segments = self.vad.detect_speech(str(audio_path), min_silence_duration_ms=min_silence_duration_ms)
             if vad_segments:
                 total_audio_duration = self._get_audio_duration(audio_path)
                 speech_duration = sum(s['end'] - s['start'] for s in vad_segments)
