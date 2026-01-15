@@ -246,7 +246,14 @@ class VideoTranslator:
                      gender = speaker_map.get(best_speaker, "Female")
                      # Use specific speaker profile if available
                      if best_speaker in speaker_profiles:
-                         speaker_wav = speaker_profiles[best_speaker]
+                         profile_path = speaker_profiles[best_speaker]
+                         # [Smart Fallback V2] Pre-validate: 1.0s for F5, 2.0s for others
+                         min_dur = 1.0 if tts_model_name == 'f5' else 2.0
+                         if self.tts_engine._check_reference_audio(profile_path, min_duration=min_dur):
+                             speaker_wav = profile_path
+                         else:
+                             speaker_wav = vocals_path
+                             logger.warning(f"Profile validation failed for {best_speaker} (dur<{min_dur}s). Fallback to vocals.")
                      else:
                          # [Fix] Fallback Strategy if profile extraction failed (e.g. segments too short but existing)
                          # Instead of None (which forces Edge-TTS), try to find ANY segment for this speaker
