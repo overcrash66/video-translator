@@ -1,79 +1,99 @@
 
-import logging
-import torch
 import os
+import sys
+import torch
+import soundfile as sf
+import numpy as np
+from pathlib import Path
+import logging
+
+# Add src to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.synthesis.tts import TTSEngine
+from src.utils import config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def create_dummy_audio(filename, duration_sec, silence=False):
+    sr = 24000
+    samples = int(sr * duration_sec)
+    if silence:
+        # Absolute silence
+        wav = np.zeros(samples, dtype=np.float32)
+    else:
+        # Constant small value or noise
+        wav = np.random.randn(samples).astype(np.float32) * 0.1
+        
+    path = config.TEMP_DIR / filename
+    config.TEMP_DIR.mkdir(exist_ok=True, parents=True)
+    sf.write(str(path), wav, sr)
+    return str(path)
+
 def test_xtts_crash():
+    print("Testing XTTS Crash Conditions...")
+    
     if not torch.cuda.is_available():
-        logger.warning("CUDA not available, cannot reproduce CUDA crash.")
+        print("CUDA not available. Skipping crash test (since it's a device-side assert).")
         return
 
-    logger.info("Initializing TTS Engine...")
-    eng = TTSEngine()
+    engine = TTSEngine()
     
-    # Use a real reference wav if possible, or create a dummy one that is at least valid
-    # XTTS needs a valid wav file for speaker cloning
-    dummy_wav = "tests/data/test_audio.wav"
-    if not os.path.exists(dummy_wav):
-        # Create a dummy wav
-        import soundfile as sf
-        import numpy as np
-        sr = 22050
-        wav = np.random.uniform(-0.1, 0.1, sr * 3) # 3 seconds
-        os.makedirs("tests/data", exist_ok=True)
-        sf.write(dummy_wav, wav, sr)
-
-    text = "Thank you."
-    output_path = "tests/data/xtts_crash_test.wav"
+    # 1. Very short audio (0.1s)
+    short_audio = create_dummy_audio("short_ref.wav", 0.1, silence=False)
+    print(f"Created short audio: {short_audio}")
     
-    logger.info("Starting BAD AUDIO stress test...")
+    # 2. Silent audio (2.0s)
+    silent_audio = create_dummy_audio("silent_ref.wav", 2.0, silence=True)
+    print(f"Created silent audio: {silent_audio}")
     
-    # Test 1: Absolute Silence
-    logger.info("Test 1: Absolute Silence Reference")
-    silent_wav = "tests/data/silent.wav"
-    import soundfile as sf
-    import numpy as np
-    sf.write(silent_wav, np.zeros(22050 * 3), 22050)
+    # 3. Valid length but near silence (0.8s)
+    near_short = create_dummy_audio("near_short.wav", 0.8, silence=False)
     
-    try:
-        eng.generate_audio(
-            text="Testing silence.", 
-            speaker_wav_path=silent_wav, 
-            language="en", 
-            output_path=output_path, 
-            model="xtts"
-        )
-        logger.info("Silence test passed (Unexpected)")
-    except Exception as e:
-        logger.error(f"Silence test failed: {e}")
-
-    # Test 2: Very Short Audio
-    logger.info("Test 2: Short Audio Reference (0.1s)")
-    short_wav = "tests/data/short.wav"
-    sf.write(short_wav, np.random.uniform(-0.1, 0.1, 2205), 22050) # 0.1s
+    # 4. Medium Short (1.8s) - Should fail new check
+    medium_short = create_dummy_audio("medium_short.wav", 1.8, silence=False)
     
-    try:
-        eng.generate_audio(
-            text="Testing short audio.", 
-            speaker_wav_path=short_wav, 
-            language="en", 
-            output_path=output_path, 
-            model="xtts"
-        )
-        logger.info("Short audio test passed")
-    except Exception as e:
-        logger.error(f"Short audio test failed: {e}")
-        
-    logger.info("Attempting to empty cache...")
-    try:
-        torch.cuda.empty_cache()
-        logger.info("Cache emptied successfully.")
-    except Exception as e:
-        logger.critical(f"CRITICAL: Failed to empty cache (CUDA Poisoned?): {e}")
+    # 5. Valid Audio (5.0s) to test Short TEXT
+    valid_audio = create_dummy_audio("valid_ref.wav", 5.0, silence=False)
+    
+    # 6. Large Audio (60.0s) - Test potential memory/buffer issues with large refs
+    large_audio = create_dummy_audio("large_ref.wav", 60.0, silence=False)
+    
+    text = "This is a test of the emergency broadcast system."
+    short_text = "Hi."
+    dot_text = "."
+    dots_text = "I'm not sure...."
+    
+    cases = [
+        ("Short Audio (0.1s)", short_audio, text),
+        ("Silent Audio (2.0s)", silent_audio, text),
+        ("Near Short (0.8s)", near_short, text),
+        ("Medium Short (1.8s)", medium_short, text),
+        ("Short Text ('Hi.')", valid_audio, short_text),
+        ("Dot Text ('.')", valid_audio, dot_text),
+        ("Trailing Dots ('I'm not sure....')", valid_audio, dots_text),
+        ("Large Audio (60s)", large_audio, text)
+    ]
+    
+    for name, ref_audio, txt in cases:
+        print(f"\n--- Running Case: {name} ---")
+        try:
+            output = engine.generate_audio(
+                text=txt,
+                speaker_wav_path=ref_audio,
+                language="en",
+                model="xtts",
+                output_path=config.TEMP_DIR / f"output_{name.split()[0]}.wav"
+            )
+            print(f"Result: {output}")
+            
+        except Exception as e:
+            print(f"Caught Exception: {e}")
+        except RuntimeError as e:
+            print(f"Caught RuntimeError: {e}")
+            
+    print("\nTest Complete.")
 
 if __name__ == "__main__":
     test_xtts_crash()

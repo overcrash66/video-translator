@@ -221,18 +221,26 @@ class TTSEngine:
             
             # Using sf.info first for fast duration check
             info = sf.info(wav_path)
-            if info.duration < 1.0: # XTTS often fails with < 1s
-                logger.warning(f"Reference audio too short ({info.duration:.2f}s < 1.0s). Skipping clone.")
+            # [Fix] XTTS prone to crashing with < 2.0s audio or mostly silent audio
+            if info.duration < 2.0: 
+                logger.warning(f"Reference audio too short ({info.duration:.2f}s < 2.0s). Skipping clone.")
                 return False
                 
             # Check for silence/signal
-            data, sr = sf.read(wav_path, dtype='float32')
+            # Limit read to first 10 seconds to avoid loading huge files
+            data, sr = sf.read(wav_path, dtype='float32', frames=int(info.samplerate * 10))
             if len(data.shape) > 1:
                 data = data.mean(axis=1) # mix to mono
                 
             rms = np.sqrt(np.mean(data**2))
-            if rms < 0.01: # Silence threshold
+            if rms < 0.02: # Increased Silence threshold (was 0.01)
                 logger.warning(f"Reference audio too silent (RMS={rms:.4f}). Skipping clone.")
+                return False
+                
+            # Check for flat signal (low variance) which might be just DC offset or hum
+            variance = np.var(data)
+            if variance < 1e-5:
+                logger.warning(f"Reference audio has low variance ({variance}). Likely background noise only. Skipping clone.")
                 return False
                 
             return True

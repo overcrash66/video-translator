@@ -469,8 +469,17 @@ class Diarizer:
             grouped[seg['speaker']].append(seg)
             
         for sp, segs in grouped.items():
-            # Simply sort by length for now, assuming longer is better/cleaner
-            sorted_segs = sorted(segs, key=lambda x: x['end']-x['start'], reverse=True)
+            # [Fix] Filter out very short segments that cause "Frankenstein" audio issues with XTTS
+            # XTTS crashes often when fed concatenated 400ms clips.
+            # Only keep segments >= 1.0 seconds
+            valid_segs = [s for s in segs if (s['end'] - s['start']) >= 1.0]
+            
+            if not valid_segs:
+                 logger.warning(f"No valid segments (>1.0s) found for {sp}. Skipping profile creation.")
+                 continue
+
+            # Sort by length, preferring longer continuous segments
+            sorted_segs = sorted(valid_segs, key=lambda x: x['end']-x['start'], reverse=True)
             
             samples = []
             total_dur = 0
@@ -484,7 +493,8 @@ class Diarizer:
                 total_dur += (seg['end'] - seg['start'])
                 if total_dur >= 15.0: break
             
-            if samples:
+            # [Fix] Ensure the final profile is long enough for stable cloning (> 3.0s)
+            if samples and total_dur >= 3.0:
                 full_sp_audio = np.concatenate(samples)
                 if len(full_sp_audio) > 15 * sr:
                     full_sp_audio = full_sp_audio[:15*sr]
@@ -493,6 +503,8 @@ class Diarizer:
                 sf.write(str(out_path), full_sp_audio, sr)
                 profiles[sp] = str(out_path)
                 logger.info(f"Created profile for {sp}: {out_path} ({len(full_sp_audio)/sr:.1f}s)")
+            else:
+                logger.warning(f"Profile for {sp} too short ({total_dur:.1f}s < 3.0s). Skipping to avoid XTTS crash.")
                 
         return profiles
 

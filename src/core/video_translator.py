@@ -224,7 +224,12 @@ class VideoTranslator:
              # Gender/Speaker logic
              gender = "Female"
              best_speaker = None
-             speaker_wav = vocals_path # Default to full audio if no profile
+             
+             # [Fix] Only use full audio as reference if Diarization is DISABLE (Single speaker mode).
+             # If Diarization is ENABLED, we must use a specific speaker profile. 
+             # If that profile is missing (too short segments), we should FALLBACK to Edge-TTS rather than 
+             # using the full mixed-speaker audio which causes "Frankenstein" voices and CUDA crashes.
+             speaker_wav = vocals_path if not enable_diarization else None
              
              if enable_diarization and diarization_segments:
                  seg_start = seg['start']
@@ -243,6 +248,9 @@ class VideoTranslator:
                      # Use specific speaker profile if available
                      if best_speaker in speaker_profiles:
                          speaker_wav = speaker_profiles[best_speaker]
+                     else:
+                         # Explicitly ensure it's None so we don't accidentally use full audio
+                         speaker_wav = None
                      
              generated_path = self.tts_engine.generate_audio(
                 text, speaker_wav, 
