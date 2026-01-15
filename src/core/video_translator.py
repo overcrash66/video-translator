@@ -113,7 +113,6 @@ class VideoTranslator:
                       vad_min_silence_duration_ms=1000,
                       transcription_beam_size=5,
                       tts_enable_cfg=False,
-                      tts_emotion=None,
                       diarization_model="pyannote/SpeechBrain (Default)"):
         """
         Orchestrates the full pipeline as a generator.
@@ -260,8 +259,7 @@ class VideoTranslator:
                 gender=gender,
 
                 speaker_id=best_speaker if enable_diarization else None,
-                guidance_scale=1.3 if tts_enable_cfg else None,
-                emotion=tts_emotion
+                guidance_scale=1.3 if tts_enable_cfg else None
             )
              
              if generated_path and Path(generated_path).exists() and Path(generated_path).stat().st_size > 100:

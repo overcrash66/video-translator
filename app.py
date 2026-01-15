@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Initialize central controller
 video_translator = VideoTranslator()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg, tts_emotion, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -86,8 +86,7 @@ def process_video(video_path, source_language, target_language, audio_model, tts
 
             enable_visual_translation=enable_visual_translation,
             transcription_beam_size=transcription_beam_size,
-            tts_enable_cfg=tts_enable_cfg,
-            tts_emotion=tts_emotion
+            tts_enable_cfg=tts_enable_cfg
         )
         
         final_video_path = None
@@ -220,17 +219,12 @@ def create_ui():
                 )
 
                 tts_enable_cfg = gr.Checkbox(
-                    label="Enable CFG (Better Quality, Slower)", 
+                    label="Enable CFG (Works with f5-TTS)-Better Quality, Slower)", 
                     value=False,
-                    info="Applies Classifier-Free Guidance (scale 1.3) to XTTS for more natural speech."
+                    info="Applies Classifier-Free Guidance (scale 1.3) to f5-TTS for more natural speech."
                 )
 
-                tts_emotion = gr.Dropdown(
-                    choices=["neutral", "happy", "sad", "angry", "dull", "surprise"],
-                    label="Emotion (XTTS Only)",
-                    value=None,
-                    info="Select emotion style for cloned voice."
-                )
+
                 
                 enable_time_stretch = gr.Checkbox(
                     label="Enable Time-Stretch (Experimental)",
@@ -279,7 +273,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg, tts_emotion],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg],
             outputs=[video_output, logs_output]
         )
         

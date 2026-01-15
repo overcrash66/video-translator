@@ -51,10 +51,13 @@ class F5TTSWrapper:
         self.model_loaded = False
         logger.info("F5-TTS unloaded.")
 
-    def generate_voice_clone(self, text, ref_audio_path, ref_text="", output_path=None):
+    def generate_voice_clone(self, text, ref_audio_path, ref_text="", output_path=None, cfg_strength=2.0):
         """
         Generates speech using F5-TTS with voice cloning.
         Supports long-form text by segmenting and merging.
+        
+        Args:
+            cfg_strength: Classifier-free guidance strength (default 2.0)
         """
         if not self.model_loaded:
             self.load_model()
@@ -73,7 +76,7 @@ class F5TTSWrapper:
             seg = pysbd.Segmenter(language="en", clean=False)
             sentences = seg.segment(text)
             
-            logger.info(f"F5-TTS: Segmented text into {len(sentences)} parts.")
+            logger.info(f"F5-TTS: Segmented text into {len(sentences)} parts (cfg={cfg_strength})")
             
             audio_segments = []
             
@@ -82,15 +85,15 @@ class F5TTSWrapper:
                 
                 logger.info(f"Generating segment {i+1}/{len(sentences)}: '{sentence[:20]}...'")
                 
-                # Infer single segment
-                # F5TTS api.infer returns (wav, sr, spect)
+                # Infer single segment with CFG
                 wav, sr, _ = self.pipeline.infer(
                     ref_file=str(ref_audio_path),
                     ref_text=ref_text,
                     gen_text=sentence,
                     file_wave=None,
                     file_spec=None,
-                    seed=-1
+                    seed=-1,
+                    cfg_strength=cfg_strength
                 )
                 
                 # Convert to pydub AudioSegment

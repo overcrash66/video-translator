@@ -275,9 +275,14 @@ class TTSEngine:
              # Strict validation for cloning models
              if self._check_reference_audio(speaker_wav_path):
                  if model == "xtts":
-                    return self._generate_xtts(sanitized_text, language, speaker_wav_path, output_path, guidance_scale=guidance_scale, emotion=emotion)
+                    # XTTS does NOT support CFG or emotion - warn and ignore
+                    if guidance_scale is not None or emotion:
+                        logger.warning("CFG (guidance_scale) and emotion are NOT supported by XTTS-v2. Ignoring.")
+                    return self._generate_xtts(sanitized_text, language, speaker_wav_path, output_path)
                  else:
-                    return self._generate_f5(sanitized_text, speaker_wav_path, output_path)
+                    # F5-TTS DOES support CFG (cfg_strength)
+                    cfg = float(guidance_scale) if guidance_scale else 2.0
+                    return self._generate_f5(sanitized_text, speaker_wav_path, output_path, cfg_strength=cfg)
              else:
                  logger.warning("Invalid reference audio for cloning. Falling back to Edge-TTS.")
                  # Fallback to edge below
@@ -347,29 +352,20 @@ class TTSEngine:
         logger.info(f"Generating placeholder audio for text: '{sanitized_text[:50]}...'")
         return self._generate_dummy_audio(sanitized_text, output_path)
 
-    def _generate_xtts(self, text, language, speaker_wav, output_path, guidance_scale=None, emotion=None):
+    def _generate_xtts(self, text, language, speaker_wav, output_path):
+        """Generate audio using XTTS-v2. Note: CFG and emotion are NOT supported."""
         try:
             self._load_xtts()
             logger.info(f"Generating XTTS audio for: '{text[:20]}...'")
             
-            # XTTS language codes might differ slightly, but usually ISO 2-letter
-            # TTS api handles file saving
             if not self.xtts_model:
                  raise RuntimeError("XTTS model failed to load.")
-
-            # Optional params for XTTS
-            kwargs = {}
-            if guidance_scale is not None:
-                kwargs['guidance_scale'] = float(guidance_scale)
-            if emotion:
-                kwargs['emotion'] = emotion
 
             self.xtts_model.tts_to_file(
                 text=text, 
                 speaker_wav=str(speaker_wav), 
                 language=language, 
-                file_path=str(output_path),
-                **kwargs
+                file_path=str(output_path)
             )
             
             logger.info(f"Saved XTTS output to {output_path}")
@@ -379,15 +375,14 @@ class TTSEngine:
             # Fallback
             return self.generate_audio(text, speaker_wav, language, output_path, model="edge")
 
-    def _generate_f5(self, text, speaker_wav, output_path):
-        """Generates audio using F5-TTS."""
+    def _generate_f5(self, text, speaker_wav, output_path, cfg_strength=2.0):
+        """Generates audio using F5-TTS. Supports CFG via cfg_strength param."""
         if not self.f5_model:
             self.f5_model = F5TTSWrapper()
             
         try:
-             # F5 usually auto-detects cloning from wav, no lanauge code needed (it's often Multilingual or English focused base)
-             # Current F5 release is mainly English/Multilingual mixed.
-             return self.f5_model.generate_voice_clone(text, speaker_wav, ref_text="", output_path=output_path)
+             logger.info(f"F5-TTS with cfg_strength={cfg_strength}")
+             return self.f5_model.generate_voice_clone(text, speaker_wav, ref_text="", output_path=output_path, cfg_strength=cfg_strength)
         except Exception as e:
              logger.error(f"F5 generation failed: {e}")
              return self.generate_audio(text, speaker_wav, "en", output_path, model="edge")
