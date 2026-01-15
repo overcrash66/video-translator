@@ -207,7 +207,7 @@ class TTSEngine:
             logger.warning(f"Failed to validate audio file {file_path}: {e}")
             return False
 
-    def _check_reference_audio(self, wav_path):
+    def _check_reference_audio(self, wav_path, min_duration=2.0):
         """
         Checks if reference audio is suitable for cloning (has signal, reasonable duration).
         Returns True if valid, False otherwise.
@@ -221,9 +221,9 @@ class TTSEngine:
             
             # Using sf.info first for fast duration check
             info = sf.info(wav_path)
-            # [Fix] XTTS prone to crashing with < 2.0s audio or mostly silent audio
-            if info.duration < 2.0: 
-                logger.warning(f"Reference audio too short ({info.duration:.2f}s < 2.0s). Skipping clone.")
+            # [Fix] XTTS prone to crashing with < 2.0s audio, but F5 can handle down to 1.0s
+            if info.duration < min_duration: 
+                logger.warning(f"Reference audio too short ({info.duration:.2f}s < {min_duration}s). Skipping clone.")
                 return False
                 
             # Check for silence/signal
@@ -273,7 +273,10 @@ class TTSEngine:
              
         elif model == "xtts" or model == "f5":
              # Strict validation for cloning models
-             if self._check_reference_audio(speaker_wav_path):
+             # [Fix] F5-TTS is robust to shorter audio (1.0s), XTTS needs 2.0s to avoid crashing
+             min_dur = 1.0 if model == "f5" else 2.0
+             
+             if self._check_reference_audio(speaker_wav_path, min_duration=min_dur):
                  if model == "xtts":
                     # XTTS does NOT support CFG or emotion - warn and ignore
                     if guidance_scale is not None or emotion:

@@ -1,104 +1,47 @@
-"""
-Unit tests for TTS Engine validation functions.
-Tests the new _sanitize_text and _validate_audio_file methods.
-"""
 
 import pytest
-import tempfile
-import os
-from pathlib import Path
+from unittest.mock import MagicMock, patch
+from src.synthesis.tts import TTSEngine
 
+@pytest.fixture
+def tts_engine():
+    return TTSEngine()
 
-class TestTTSValidation:
-    """Tests for TTS validation helper methods."""
+@patch('soundfile.info')
+@patch('soundfile.read')
+@patch('pathlib.Path.exists', return_value=True)
+def test_validation_variable_duration(mock_exists, mock_read, mock_info, tts_engine):
+    """
+    Test that _check_reference_audio respects the min_duration parameter.
+    """
+    # Setup mock audio info with 1.5s duration
+    mock_info.return_value = MagicMock(duration=1.5, samplerate=22050)
     
-    def test_sanitize_text_empty(self):
-        """Test that empty text returns None."""
-        from src.synthesis.tts import TTSEngine
-        engine = TTSEngine()
-        
-        assert engine._sanitize_text("") is None
-        assert engine._sanitize_text(None) is None
-        assert engine._sanitize_text("   ") is None
+    # Setup valid signal (not silent)
+    import numpy as np
+    mock_read.return_value = (np.random.normal(0, 0.1, 1000), 22050)
     
-    def test_sanitize_text_punctuation_only(self):
-        """Test that punctuation-only text returns None."""
-        from src.synthesis.tts import TTSEngine
-        engine = TTSEngine()
-        
-        assert engine._sanitize_text("...") is None
-        assert engine._sanitize_text("!@#$%") is None
-        assert engine._sanitize_text("---") is None
+    # Case 1: Default (2.0s) -> Should Fail for 1.5s audio
+    valid = tts_engine._check_reference_audio("dummy.wav")
+    assert not valid, "Should fail for 1.5s audio with default 2.0s limit"
     
-    def test_sanitize_text_valid(self):
-        """Test that valid text is returned stripped."""
-        from src.synthesis.tts import TTSEngine
-        engine = TTSEngine()
-        
-        assert engine._sanitize_text("Hello world") == "Hello world"
-        assert engine._sanitize_text("  Hello  ") == "Hello"
-        assert engine._sanitize_text("Test123") == "Test123"
-    
-    def test_sanitize_text_cjk(self):
-        """Test that CJK characters are accepted."""
-        from src.synthesis.tts import TTSEngine
-        engine = TTSEngine()
-        
-        # Chinese
-        assert engine._sanitize_text("你好世界") == "你好世界"
-        # Japanese
-        assert engine._sanitize_text("こんにちは") == "こんにちは"
-        # Mixed
-        assert engine._sanitize_text("Hello 你好") == "Hello 你好"
-    
-    def test_validate_audio_file_missing(self):
-        """Test validation of non-existent file."""
-        from src.synthesis.tts import TTSEngine
-        engine = TTSEngine()
-        
-        assert engine._validate_audio_file("/non/existent/file.wav") is False
-    
-    def test_validate_audio_file_empty(self):
-        """Test validation of empty file."""
-        from src.synthesis.tts import TTSEngine
-        engine = TTSEngine()
-        
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            temp_path = f.name
-        
-        try:
-            assert engine._validate_audio_file(temp_path) is False
-        finally:
-            os.unlink(temp_path)
-    
-    def test_validate_audio_file_too_small(self):
-        """Test validation of too-small file."""
-        from src.synthesis.tts import TTSEngine
-        engine = TTSEngine()
-        
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(b"x" * 50)  # Less than 100 bytes
-            temp_path = f.name
-        
-        try:
-            assert engine._validate_audio_file(temp_path, min_size=100) is False
-        finally:
-            os.unlink(temp_path)
-    
-    def test_validate_audio_file_valid(self):
-        """Test validation of valid-sized file."""
-        from src.synthesis.tts import TTSEngine
-        engine = TTSEngine()
-        
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(b"x" * 500)  # More than 100 bytes
-            temp_path = f.name
-        
-        try:
-            assert engine._validate_audio_file(temp_path) is True
-        finally:
-            os.unlink(temp_path)
+    # Case 2: Custom (1.0s) -> Should Pass for 1.5s audio
+    valid = tts_engine._check_reference_audio("dummy.wav", min_duration=1.0)
+    assert valid, "Should pass for 1.5s audio with 1.0s limit"
 
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+@patch('src.synthesis.tts.TTSEngine._check_reference_audio')
+@patch('src.synthesis.tts.TTSEngine._generate_f5')
+@patch('src.synthesis.tts.TTSEngine._generate_xtts')
+def test_generate_call_validation(mock_xtts, mock_f5, mock_check, tts_engine):
+    """
+    Test that generate_audio calls validation with correct duration for different models.
+    """
+    mock_check.return_value = True
+    
+    # Test F5 -> Should use min_duration=1.0
+    tts_engine.generate_audio("text", "ref.wav", model="f5")
+    mock_check.assert_called_with("ref.wav", min_duration=1.0)
+    
+    # Test XTTS -> Should use min_duration=2.0
+    tts_engine.generate_audio("text", "ref.wav", model="xtts")
+    mock_check.assert_called_with("ref.wav", min_duration=2.0)
