@@ -188,3 +188,4 @@ cython_debug/
 /tests/data
 /models
 /debug_download
+.agent/skills/project_guardian/SKILL.md
