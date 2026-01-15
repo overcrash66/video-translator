@@ -60,11 +60,39 @@ class Diarizer:
             
         try:
             from speechbrain.inference.speaker import EncoderClassifier
+            from huggingface_hub import snapshot_download
+            
             logger.info("Loading SpeechBrain ECAPA-TDNN model...")
+            
+            # [Fix] Use local directory with no symlinks to avoid WinError 1314
+            # We download to a persistent 'models' directory instead of temp
+            model_dir = config.BASE_DIR / "models" / "speechbrain" / "spkrec-ecapa-voxceleb"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Force copy files instead of symlinking from cache
+            local_path = snapshot_download(
+                repo_id="speechbrain/spkrec-ecapa-voxceleb",
+                local_dir=str(model_dir),
+                local_dir_use_symlinks=False,
+                resume_download=True
+            )
+            
+            # Override pretrained_path to point to local dir, inhibiting Hub fetch
+            # ensure path string is safe for yaml
+            local_path_str = str(local_path).replace("\\", "/")
+            
+            # [Fix] SpeechBrain tries to symlink label_encoder.txt to .ckpt which fails on Windows
+            # We verify expected files and create copies if needed instead of symlinks
+            lab_txt = Path(local_path) / "label_encoder.txt"
+            lab_ckpt = Path(local_path) / "label_encoder.ckpt"
+            if lab_txt.exists() and not lab_ckpt.exists():
+                shutil.copy2(lab_txt, lab_ckpt)
+            
             self.embedding_model = EncoderClassifier.from_hparams(
-                source="speechbrain/spkrec-ecapa-voxceleb",
-                savedir=str(config.TEMP_DIR / "speechbrain_models"),
-                run_opts={"device": str(self.device)}
+                source=local_path,
+                savedir=local_path,
+                run_opts={"device": str(self.device)},
+                overrides={"pretrained_path": local_path_str}
             )
             self.current_backend = "speechbrain"
             logger.info(f"SpeechBrain model loaded on {self.device}")

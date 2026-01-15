@@ -186,3 +186,5 @@ cython_debug/
 /.vscode
 /MuseTalk
 /tests/data
+/models
+/debug_download
