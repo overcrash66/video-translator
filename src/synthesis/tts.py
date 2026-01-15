@@ -248,7 +248,7 @@ class TTSEngine:
             logger.warning(f"Failed to analyze reference audio: {e}")
             return False
 
-    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None, guidance_scale=None, emotion=None):
+    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None, guidance_scale=None, emotion=None, force_cloning=False):
         """
         Generates audio using Edge-TTS, Piper, or XTTS.
         model: "edge", "piper", "xtts", or "f5"
@@ -256,6 +256,7 @@ class TTSEngine:
         speaker_id: Speaker identifier (e.g., "SPEAKER_00") used to select unique voice
         guidance_scale: (XTTS) CFG scale, e.g. 1.2-1.5
         emotion: (XTTS) Emotion preset
+        force_cloning: If True, bypass validation and attempt cloning regardless (for fallback audio)
         """
         if not output_path:
             output_path = config.TEMP_DIR / "tts_output.wav"
@@ -272,11 +273,16 @@ class TTSEngine:
              return self._generate_piper(sanitized_text, language, output_path)
              
         elif model == "xtts" or model == "f5":
-             # Strict validation for cloning models
-             # [Fix] F5-TTS is robust to shorter audio (1.0s), XTTS needs 2.0s to avoid crashing
-             min_dur = 1.0 if model == "f5" else 2.0
+             # [Force Cloning] Bypass validation if caller explicitly requests it (fallback audio scenario)
+             should_attempt_clone = force_cloning
              
-             if self._check_reference_audio(speaker_wav_path, min_duration=min_dur):
+             if not force_cloning:
+                 # Strict validation for cloning models
+                 # [Fix] F5-TTS is robust to shorter audio (1.0s), XTTS needs 2.0s to avoid crashing
+                 min_dur = 1.0 if model == "f5" else 2.0
+                 should_attempt_clone = self._check_reference_audio(speaker_wav_path, min_duration=min_dur)
+             
+             if should_attempt_clone:
                  if model == "xtts":
                     # XTTS does NOT support CFG or emotion - warn and ignore
                     if guidance_scale is not None or emotion:

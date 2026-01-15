@@ -84,7 +84,8 @@ def test_smart_fallback_profile_invalid(video_translator):
         model='f5', 
         gender=ANY, 
         speaker_id='SPEAKER_00', 
-        guidance_scale=ANY
+        guidance_scale=ANY,
+        force_cloning=ANY
     )
 
 def test_smart_fallback_profile_valid(video_translator):
@@ -145,5 +146,6 @@ def test_smart_fallback_profile_valid(video_translator):
         model='f5', 
         gender=ANY, 
         speaker_id='SPEAKER_00', 
-        guidance_scale=ANY
+        guidance_scale=ANY,
+        force_cloning=ANY
     )

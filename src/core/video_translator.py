@@ -229,6 +229,13 @@ class VideoTranslator:
              # If that profile is missing (too short segments), we should FALLBACK to Edge-TTS rather than 
              # using the full mixed-speaker audio which causes "Frankenstein" voices and CUDA crashes.
              speaker_wav = vocals_path if not enable_diarization else None
+             use_force_cloning = False  # Track if we're using fallback audio
+             
+             # [Fix] Handle case where diarization is enabled but returned NO segments (NeMo, sparse audio)
+             if enable_diarization and not diarization_segments:
+                 speaker_wav = vocals_path
+                 use_force_cloning = True
+                 logger.warning(f"Diarization enabled but no segments detected. Fallback to full vocals.")
              
              if enable_diarization and diarization_segments:
                  seg_start = seg['start']
@@ -253,6 +260,7 @@ class VideoTranslator:
                              speaker_wav = profile_path
                          else:
                              speaker_wav = vocals_path
+                             use_force_cloning = True  # Fallback - bypass validation in TTS
                              logger.warning(f"Profile validation failed for {best_speaker} (dur<{min_dur}s). Fallback to vocals.")
                      else:
                          # [Fix] Fallback Strategy if profile extraction failed (e.g. segments too short but existing)
@@ -261,18 +269,26 @@ class VideoTranslator:
                          if speaker_segs:
                              # Use the longest segment available as raw reference
                              longest_seg = max(speaker_segs, key=lambda x: x['end'] - x['start'])
-                             # We can't easily pass a segment time range to TTS, but we can rely on the fact 
+                             # We can't easily pass a segment time range to TTS, but we can rely on the fact
                              # that if profile extraction failed, it might be due to total duration < 1.0s.
                              # But passing None is fatal for F5.
                              
                              # Ideally we should extract it on the fly, but for now, let's fallback to VOCALS PATH
                              # This is "dirty" (includes other speakers potentially) but better than failure.
-                             speaker_wav = vocals_path 
+                             speaker_wav = vocals_path
+                             use_force_cloning = True  # Fallback - bypass validation in TTS
                              logger.warning(f"No clean profile for {best_speaker}. Falling back to full vocals as reference.")
                          else:
                              # No segments for this speaker? Should be impossible if best_speaker came from diarization_segments
                              speaker_wav = vocals_path
+                             use_force_cloning = True  # Fallback - bypass validation in TTS
                              logger.warning(f"Profile missing for {best_speaker}. Fallback to full vocals.")
+                 else:
+                     # [Fix] No speaker overlap found for this text segment
+                     # Fallback to vocals_path so F5-TTS can still try to clone (better than Edge-TTS)
+                     speaker_wav = vocals_path
+                     use_force_cloning = True  # Fallback - bypass validation in TTS
+                     logger.warning(f"No specific speaker detected for segment {i}. Fallback to full vocals.")
                      
              generated_path = self.tts_engine.generate_audio(
                 text, speaker_wav, 
@@ -282,7 +298,8 @@ class VideoTranslator:
                 gender=gender,
 
                 speaker_id=best_speaker if enable_diarization else None,
-                guidance_scale=1.3 if tts_enable_cfg else None
+                guidance_scale=1.3 if tts_enable_cfg else None,
+                force_cloning=use_force_cloning
             )
              
              if generated_path and Path(generated_path).exists() and Path(generated_path).stat().st_size > 100:
