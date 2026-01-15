@@ -248,8 +248,24 @@ class VideoTranslator:
                      if best_speaker in speaker_profiles:
                          speaker_wav = speaker_profiles[best_speaker]
                      else:
-                         # Explicitly ensure it's None so we don't accidentally use full audio
-                         speaker_wav = None
+                         # [Fix] Fallback Strategy if profile extraction failed (e.g. segments too short but existing)
+                         # Instead of None (which forces Edge-TTS), try to find ANY segment for this speaker
+                         speaker_segs = [s for s in diarization_segments if s['speaker'] == best_speaker]
+                         if speaker_segs:
+                             # Use the longest segment available as raw reference
+                             longest_seg = max(speaker_segs, key=lambda x: x['end'] - x['start'])
+                             # We can't easily pass a segment time range to TTS, but we can rely on the fact 
+                             # that if profile extraction failed, it might be due to total duration < 1.0s.
+                             # But passing None is fatal for F5.
+                             
+                             # Ideally we should extract it on the fly, but for now, let's fallback to VOCALS PATH
+                             # This is "dirty" (includes other speakers potentially) but better than failure.
+                             speaker_wav = vocals_path 
+                             logger.warning(f"No clean profile for {best_speaker}. Falling back to full vocals as reference.")
+                         else:
+                             # No segments for this speaker? Should be impossible if best_speaker came from diarization_segments
+                             speaker_wav = vocals_path
+                             logger.warning(f"Profile missing for {best_speaker}. Fallback to full vocals.")
                      
              generated_path = self.tts_engine.generate_audio(
                 text, speaker_wav, 
