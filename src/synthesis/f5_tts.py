@@ -85,16 +85,29 @@ class F5TTSWrapper:
                 
                 logger.info(f"Generating segment {i+1}/{len(sentences)}: '{sentence[:20]}...'")
                 
-                # Infer single segment with CFG
-                wav, sr, _ = self.pipeline.infer(
-                    ref_file=str(ref_audio_path),
-                    ref_text=ref_text,
-                    gen_text=sentence,
-                    file_wave=None,
-                    file_spec=None,
-                    seed=-1,
-                    cfg_strength=cfg_strength
-                )
+                # [Fix] Patch torchaudio.load to use soundfile directly, preventing TorchCodec errors on Windows
+                from unittest.mock import patch
+                
+                def _safe_load(path, **kwargs):
+                    data, rate = sf.read(path, dtype='float32')
+                    # Convert to (C, T) tensor
+                    if data.ndim == 1:
+                        tensor = torch.from_numpy(data).unsqueeze(0)
+                    else:
+                        tensor = torch.from_numpy(data.T)
+                    return tensor, rate
+
+                with patch("torchaudio.load", side_effect=_safe_load):
+                    # Infer single segment with CFG
+                    wav, sr, _ = self.pipeline.infer(
+                        ref_file=str(ref_audio_path),
+                        ref_text=ref_text,
+                        gen_text=sentence,
+                        file_wave=None,
+                        file_spec=None,
+                        seed=-1,
+                        cfg_strength=cfg_strength
+                    )
                 
                 # Convert to pydub AudioSegment
                 if hasattr(wav, 'cpu'): wav = wav.squeeze().cpu().numpy()

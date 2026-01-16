@@ -27,7 +27,8 @@ def test_smart_fallback_profile_invalid(video_translator):
     """
     # Setup Mocks to inject data INTO process_video
     video_translator.separator.separate.return_value = ("vocals.wav", "bg.wav")
-    video_translator.transcriber.transcribe.return_value = {"segments": [{"text": "Hello", "start": 0.0, "end": 2.0, "speaker": "SPEAKER_00"}]}
+    video_translator.separator.separate.return_value = ("vocals.wav", "bg.wav")
+    video_translator.transcriber.transcribe.return_value = ([{"text": "Hello", "start": 0.0, "end": 2.0, "speaker": "SPEAKER_00"}], "en")
     
     # Inject Diarization Data
     diarization_segments = [{'start': 0.0, 'end': 2.0, 'speaker': 'SPEAKER_00'}]
@@ -78,14 +79,15 @@ def test_smart_fallback_profile_invalid(video_translator):
     # We expect 'vocals.wav' because validation failed
     video_translator.tts_engine.generate_audio.assert_called_with(
         ANY, 
-        'vocals.wav', # EXPECTED FALLBACK
+        None, # EXPECTED FALLBACK to GENERIC (None)
         language='es', 
         output_path=ANY, 
         model='f5', 
         gender=ANY, 
         speaker_id='SPEAKER_00', 
         guidance_scale=ANY,
-        force_cloning=ANY
+        force_cloning=ANY,
+        voice_selector=ANY # Added voice_selector
     )
 
 def test_smart_fallback_profile_valid(video_translator):
@@ -95,7 +97,8 @@ def test_smart_fallback_profile_valid(video_translator):
     """
     # Setup Mocks
     video_translator.separator.separate.return_value = ("vocals.wav", "bg.wav")
-    video_translator.transcriber.transcribe.return_value = {"segments": [{"text": "Hello", "start": 0.0, "end": 2.0, "speaker": "SPEAKER_00"}]}
+    video_translator.separator.separate.return_value = ("vocals.wav", "bg.wav")
+    video_translator.transcriber.transcribe.return_value = ([{"text": "Hello", "start": 0.0, "end": 2.0, "speaker": "SPEAKER_00"}], "en")
     
     diarization_segments = [{'start': 0.0, 'end': 2.0, 'speaker': 'SPEAKER_00'}]
     speaker_profiles = {'SPEAKER_00': 'profile.wav'}
@@ -147,5 +150,6 @@ def test_smart_fallback_profile_valid(video_translator):
         gender=ANY, 
         speaker_id='SPEAKER_00', 
         guidance_scale=ANY,
-        force_cloning=ANY
+        force_cloning=ANY,
+        voice_selector=ANY # Added voice_selector
     )

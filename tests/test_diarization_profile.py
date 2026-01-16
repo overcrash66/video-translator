@@ -8,10 +8,11 @@ from src.audio.diarization import Diarizer
 
 # Mock soundfile.read to return dummy audio
 def mock_sf_read(file, **kwargs):
-    # Return 10 seconds of silence/noise at 16kHz
+    # Return 10 seconds of noise at 16kHz
     sr = 16000
     duration = 10
-    audio = np.zeros(sr * duration)
+    # Use random noise to pass RMS checks (> 0.01)
+    audio = np.random.uniform(-0.5, 0.5, size=int(sr * duration))
     return audio, sr
 
 # Mock soundfile.write to do nothing

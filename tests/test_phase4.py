@@ -32,7 +32,7 @@ def test_process_video_lipsync_call():
     # Setup mocks to return valid paths/data
     vt.processor.extract_audio.return_value = "extracted.wav"
     vt.separator.separate.return_value = ("vocals.wav", "bg.wav")
-    vt.transcriber.transcribe.return_value = [{"text": "Hello", "start": 0, "end": 1}]
+    vt.transcriber.transcribe.return_value = ([{"text": "Hello", "start": 0, "end": 1}], "en")
     vt.translator.translate_segments.return_value = [{"text": "Hello", "translated_text": "Hola", "start": 0, "end": 1}]
     vt.tts_engine.generate_audio.return_value = "tts.wav"
     vt.synchronizer.merge_segments.return_value = True
@@ -91,7 +91,7 @@ def test_process_video_lipsync_skip():
     # Setup happy path
     vt.processor.extract_audio.return_value = "extracted.wav"
     vt.separator.separate.return_value = ("vocals.wav", "bg.wav")
-    vt.transcriber.transcribe.return_value = [{"text": "Hello", "start": 0, "end": 1}]
+    vt.transcriber.transcribe.return_value = ([{"text": "Hello", "start": 0, "end": 1}], "en")
     vt.translator.translate_segments.return_value = [{"text": "Hello", "translated_text": "Hola", "start": 0, "end": 1}]
     vt.tts_engine.generate_audio.return_value = "tts.wav"
     vt.synchronizer.merge_segments.return_value = True

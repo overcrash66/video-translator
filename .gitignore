@@ -189,3 +189,4 @@ cython_debug/
 /models
 /debug_download
 .agent/skills/project_guardian/SKILL.md
+/.agent

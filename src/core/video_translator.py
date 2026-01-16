@@ -38,6 +38,51 @@ class VideoTranslator:
         
         # Track currently loaded model to avoid redundant unloads/loads
         self.current_model = None
+        
+        # Session state for deterministic voice mapping
+        self.speaker_voice_map = {} 
+        self.used_voices = set()
+
+    def _get_assigned_voice(self, speaker_id, available_voices):
+        """
+        Deterministically assigns an unused voice to a speaker ID for the session.
+        """
+        if speaker_id in self.speaker_voice_map:
+            return self.speaker_voice_map[speaker_id]
+            
+        # Find first unused voice
+        for voice in available_voices:
+            if voice not in self.used_voices:
+                self.speaker_voice_map[speaker_id] = voice
+                self.used_voices.add(voice)
+                return voice
+                
+        # If all used, cycle using modulo (fallback)
+        idx = len(self.speaker_voice_map) % len(available_voices)
+        return available_voices[idx]
+
+    def _resolve_speaker_reference(self, speaker_id, speaker_profiles, vocals_path, tts_model_name):
+        """
+        Determines the best reference audio for a speaker.
+        Returns: (path_to_wav, is_fallback)
+        """
+        # Case 1: No speaker ID (Single speaker mode)
+        if not speaker_id:
+             return vocals_path, False
+
+        # Case 2: Speaker has a clean profile
+        if speaker_id in speaker_profiles:
+            profile_path = speaker_profiles[speaker_id]
+            # Use public validation API
+            if self.tts_engine.validate_reference(profile_path, model_name=tts_model_name):
+                return profile_path, False
+            else:
+                logger.warning(f"Profile validation failed for {speaker_id}. Fallback to generic voice.")
+                return None, False
+
+        # Case 3: Speaker identified but no profile extracted
+        logger.warning(f"No clean profile for {speaker_id}. Fallback to generic voice.")
+        return None, False  # Return None to signal use of generic voice, NOT full vocals
 
     def unload_all_models(self):
         """
@@ -113,7 +158,9 @@ class VideoTranslator:
                       vad_min_silence_duration_ms=1000,
                       transcription_beam_size=5,
                       tts_enable_cfg=False,
-                      diarization_model="pyannote/SpeechBrain (Default)"):
+                      diarization_model="pyannote/SpeechBrain (Default)",
+                      min_speakers=1,
+                      max_speakers=10):
         """
         Orchestrates the full pipeline as a generator.
         Yields: ("log", message) or ("progress", value, desc) or ("result", path)
@@ -140,6 +187,11 @@ class VideoTranslator:
         speaker_map = {}
         diarization_segments = []
         speaker_profiles = {}
+        
+        # Reset voice map for new video
+        self.speaker_voice_map = {}
+        self.used_voices = set()
+        
         if enable_diarization:
             self.load_model("diarization")
             yield ("progress", 0.25, "Diarizing...")
@@ -151,7 +203,7 @@ class VideoTranslator:
             elif "Community" in diarization_model:
                 diar_backend = "pyannote_community"
                 
-            diarization_segments = self.diarizer.diarize(vocals_path, backend=diar_backend)
+            diarization_segments = self.diarizer.diarize(vocals_path, backend=diar_backend, min_speakers=min_speakers, max_speakers=max_speakers)
             speaker_map = self.diarizer.detect_genders(vocals_path, diarization_segments)
             
             # EXTRACT PROFILES FOR TTS CLONING
@@ -195,6 +247,23 @@ class VideoTranslator:
         elif "ALMA" in effective_model_name:
              trans_model_key = "alma"
         
+        # [Refactor] Transcriber now returns (segments, detected_lang_code)
+        segments, detected_lang = self.transcriber.transcribe(
+            str(vocals_path), 
+            language=source_code,
+            beam_size=5,
+            use_vad=enable_vad
+        )
+        
+        # [Fix] Update source_code if it was auto/unknown, so Translator uses correct source lang
+        if source_code == "auto" or source_code is None:
+            logger.info(f"Updating source language from 'auto' to '{detected_lang}'")
+            source_code = detected_lang
+            if target_code == "auto": # Corner case
+                 target_code = "en"
+
+        yield ("progress", 0.4, "Translating...")
+        
         translated_segments = self.translator.translate_segments(
             segments, 
             target_code, 
@@ -224,71 +293,38 @@ class VideoTranslator:
              gender = "Female"
              best_speaker = None
              
-             # [Fix] Only use full audio as reference if Diarization is DISABLE (Single speaker mode).
-             # If Diarization is ENABLED, we must use a specific speaker profile. 
-             # If that profile is missing (too short segments), we should FALLBACK to Edge-TTS rather than 
-             # using the full mixed-speaker audio which causes "Frankenstein" voices and CUDA crashes.
-             speaker_wav = vocals_path if not enable_diarization else None
-             use_force_cloning = False  # Track if we're using fallback audio
-             
-             # [Fix] Handle case where diarization is enabled but returned NO segments (NeMo, sparse audio)
-             if enable_diarization and not diarization_segments:
-                 speaker_wav = vocals_path
-                 use_force_cloning = True
-                 logger.warning(f"Diarization enabled but no segments detected. Fallback to full vocals.")
-             
-             if enable_diarization and diarization_segments:
-                 seg_start = seg['start']
-                 seg_end = seg['end']
-                 max_overlap = 0
-                 for d_seg in diarization_segments:
-                     overlap_start = max(seg_start, d_seg['start'])
-                     overlap_end = min(seg_end, d_seg['end'])
-                     overlap = max(0, overlap_end - overlap_start)
-                     if overlap > max_overlap:
-                         max_overlap = overlap
-                         best_speaker = d_seg['speaker']
-                         
-                 if best_speaker:
-                     gender = speaker_map.get(best_speaker, "Female")
-                     # Use specific speaker profile if available
-                     if best_speaker in speaker_profiles:
-                         profile_path = speaker_profiles[best_speaker]
-                         # [Smart Fallback V2] Pre-validate: 1.0s for F5, 2.0s for others
-                         min_dur = 1.0 if tts_model_name == 'f5' else 2.0
-                         if self.tts_engine._check_reference_audio(profile_path, min_duration=min_dur):
-                             speaker_wav = profile_path
-                         else:
-                             speaker_wav = vocals_path
-                             use_force_cloning = True  # Fallback - bypass validation in TTS
-                             logger.warning(f"Profile validation failed for {best_speaker} (dur<{min_dur}s). Fallback to vocals.")
-                     else:
-                         # [Fix] Fallback Strategy if profile extraction failed (e.g. segments too short but existing)
-                         # Instead of None (which forces Edge-TTS), try to find ANY segment for this speaker
-                         speaker_segs = [s for s in diarization_segments if s['speaker'] == best_speaker]
-                         if speaker_segs:
-                             # Use the longest segment available as raw reference
-                             longest_seg = max(speaker_segs, key=lambda x: x['end'] - x['start'])
-                             # We can't easily pass a segment time range to TTS, but we can rely on the fact
-                             # that if profile extraction failed, it might be due to total duration < 1.0s.
-                             # But passing None is fatal for F5.
-                             
-                             # Ideally we should extract it on the fly, but for now, let's fallback to VOCALS PATH
-                             # This is "dirty" (includes other speakers potentially) but better than failure.
-                             speaker_wav = vocals_path
-                             use_force_cloning = True  # Fallback - bypass validation in TTS
-                             logger.warning(f"No clean profile for {best_speaker}. Falling back to full vocals as reference.")
-                         else:
-                             # No segments for this speaker? Should be impossible if best_speaker came from diarization_segments
-                             speaker_wav = vocals_path
-                             use_force_cloning = True  # Fallback - bypass validation in TTS
-                             logger.warning(f"Profile missing for {best_speaker}. Fallback to full vocals.")
+             # Speaker Logic Simplification
+             speaker_wav = vocals_path
+             use_force_cloning = False
+
+             if enable_diarization:
+                 if not diarization_segments:
+                     use_force_cloning = True
+                     logger.warning("Diarization enabled but no segments. Fallback to full vocals.")
                  else:
-                     # [Fix] No speaker overlap found for this text segment
-                     # Fallback to vocals_path so F5-TTS can still try to clone (better than Edge-TTS)
-                     speaker_wav = vocals_path
-                     use_force_cloning = True  # Fallback - bypass validation in TTS
-                     logger.warning(f"No specific speaker detected for segment {i}. Fallback to full vocals.")
+                     # Find overlapping speaker
+                     seg_start = seg['start']
+                     seg_end = seg['end']
+                     max_overlap = 0
+                     for d_seg in diarization_segments:
+                          overlap_start = max(seg_start, d_seg['start'])
+                          overlap_end = min(seg_end, d_seg['end'])
+                          overlap = max(0, overlap_end - overlap_start)
+                          if overlap > max_overlap:
+                              max_overlap = overlap
+                              best_speaker = d_seg['speaker']
+                     
+                     if best_speaker:
+                         gender = speaker_map.get(best_speaker, "Female")
+                         speaker_wav, use_force_cloning = self._resolve_speaker_reference(
+                             best_speaker, speaker_profiles, vocals_path, tts_model_name
+                         )
+                     else:
+                         # No overlap logic - likely just background noise or briefly spoken word
+                         # We still try to find closest speaker... but for now, Generic.
+                         use_force_cloning = False # Do NOT force clone full track
+                         speaker_wav = None # Signal generic
+                         logger.warning(f"No specific speaker detected for segment {i}. Using generic voice.")
                      
              generated_path = self.tts_engine.generate_audio(
                 text, speaker_wav, 
@@ -299,7 +335,8 @@ class VideoTranslator:
 
                 speaker_id=best_speaker if enable_diarization else None,
                 guidance_scale=1.3 if tts_enable_cfg else None,
-                force_cloning=use_force_cloning
+                force_cloning=use_force_cloning,
+                voice_selector=self._get_assigned_voice # Pass function or we handle mapping here
             )
              
              if generated_path and Path(generated_path).exists() and Path(generated_path).stat().st_size > 100:

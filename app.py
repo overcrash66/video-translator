@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Initialize central controller
 video_translator = VideoTranslator()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -36,31 +36,27 @@ def process_video(video_path, source_language, target_language, audio_model, tts
         if config.HF_TOKEN:
             os.environ["HF_TOKEN"] = config.HF_TOKEN
         
-        # [Fix] Copy input video to local temp to avoid PermissionError on Windows
+        # [Fix] Copy input video to local temp using shutil (safe for Windows)
         import uuid
         import time
-        import subprocess
+        from src.utils import audio_utils
         
-        time.sleep(1) # Brief delay
+        time.sleep(0.5) # Brief delay
         local_video_path = config.TEMP_DIR / f"input_{uuid.uuid4().hex}.mp4"
         
         copied = False
         for attempt in range(5):
             try:
-                cmd = f'copy /Y "{str(video_path)}"\t"{str(local_video_path)}"'
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                if result.returncode == 0 and local_video_path.exists():
+                shutil.copy2(str(video_path), str(local_video_path))
+                if local_video_path.exists():
                     copied = True
                     break
             except Exception as e:
-                update_log(f"Copy retry {attempt+1}...")
+                update_log(f"Copy retry {attempt+1}... ({str(e)})")
                 time.sleep(1)
         
         if not copied:
-            try:
-                shutil.copyfile(str(video_path), str(local_video_path))
-            except:
-                return None, update_log("Error: Could not access uploaded file.")
+             return None, update_log("Error: Could not access uploaded file (Locked?).")
 
         video_path = local_video_path
         update_log(f"Created local copy: {local_video_path.name}")
@@ -86,7 +82,9 @@ def process_video(video_path, source_language, target_language, audio_model, tts
 
             enable_visual_translation=enable_visual_translation,
             transcription_beam_size=transcription_beam_size,
-            tts_enable_cfg=tts_enable_cfg
+            tts_enable_cfg=tts_enable_cfg,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers
         )
         
         final_video_path = None
@@ -193,6 +191,19 @@ def create_ui():
                     value="pyannote/SpeechBrain (Default)",
                     visible=True 
                 )
+
+                with gr.Row(visible=True) as diarization_params:
+                    min_speakers = gr.Slider(1, 10, value=1, step=1, label="Min Speakers")
+                    max_speakers = gr.Slider(1, 20, value=5, step=1, label="Max Speakers")
+
+                def update_diarization_visibility(enabled):
+                    return gr.update(visible=enabled), gr.update(visible=enabled)
+
+                enable_diarization.change(
+                    fn=update_diarization_visibility,
+                    inputs=[enable_diarization],
+                    outputs=[diarization_model, diarization_params]
+                )
                 
                 transcription_model = gr.Dropdown(
                     choices=[
@@ -273,26 +284,15 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg],
             outputs=[video_output, logs_output]
         )
         
     return app
 
 if __name__ == "__main__":
-    # Ensure config has language helper
-    if not hasattr(config, 'get_language_code'):
-        # Add basic mapper dynamically if missing from config
-        def get_language_code(name):
-             lang_map = {
-                "English": "en", "Spanish": "es", "French": "fr", "German": "de",
-                "Italian": "it", "Portuguese": "pt", "Polish": "pl", "Turkish": "tr",
-                "Russian": "ru", "Dutch": "nl", "Czech": "cs", "Arabic": "ar",
-                "Chinese (Simplified)": "zh-cn", "Japanese": "ja", "Korean": "ko",
-                "Hindi": "hi"
-            }
-             return lang_map.get(name, "en")
-        config.get_language_code = get_language_code
+    # Config check passed
+    pass
 
     demo = create_ui()
     demo.queue() # Enable queueing for progress bars

@@ -112,18 +112,43 @@ class LLMTranslator:
         prompts = [self.get_prompt(t, source_lang_code, target_lang_code) for t in texts]
         
         try:
-            inputs = self.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(self.device)
+            # [Fix] Enforce truncation and max length
+            self.tokenizer.model_max_length = 2048 # Explicitly set
+            inputs = self.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True, max_length=2048).to(self.device)
             
+            # [Fix] Safety check for Token ID OOB (Root cause of CUDA assert in Embedding)
+            vocab_size = self.model.config.vocab_size
+            
+            # Check for negatives
+            if (inputs.input_ids < 0).any():
+                logger.warning("Found negative token IDs. Clamping to 0.")
+                inputs.input_ids[inputs.input_ids < 0] = 0
                 
+            # Check for overflow
+            if (inputs.input_ids >= vocab_size).any():
+                logger.warning("Found token IDs exceeding vocab size. Clamping...")
+                inputs.input_ids[inputs.input_ids >= vocab_size] = self.tokenizer.unk_token_id or 0
+            
+            # Verify pad_token_id
+            pad_id = self.tokenizer.pad_token_id
+            if pad_id is None or pad_id >= vocab_size or pad_id < 0:
+                logger.warning(f"Invalid pad_token_id {pad_id}. Resetting to eos_token_id or 0.")
+                pad_id = self.tokenizer.eos_token_id
+                if pad_id is None or pad_id >= vocab_size:
+                    pad_id = 0
+                self.tokenizer.pad_token_id = pad_id
+            
             with torch.no_grad():
-                with torch.amp.autocast("cuda", enabled=True):
-                    outputs = self.model.generate(
-                        **inputs, 
-                        max_new_tokens=512, 
-                        temperature=0.3,
-                        do_sample=True,
-                        pad_token_id=self.tokenizer.pad_token_id
-                    )
+                # [Stability Fix] Disable autocast and use greedy decoding to prevent CUDA asserts
+                # caused by sampling from unstable distributions in 4-bit models on Windows.
+                outputs = self.model.generate(
+                    **inputs, 
+                    max_new_tokens=512, 
+                    do_sample=False, # Robustness: greedy decoding
+                    num_beams=1,
+                    pad_token_id=pad_id
+                )
+                torch.cuda.synchronize()
                 
             decoded = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
             
@@ -172,17 +197,32 @@ class LLMTranslator:
         prompt = self.get_prompt(text, source_lang, target_lang, context_prev=prev_text)
         
         try:
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+            # [Fix] Enforce truncation and max length
+            self.tokenizer.model_max_length = 2048
+            inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=2048).to(self.device)
             
+            # [Fix] Safety check
+            vocab_size = self.model.config.vocab_size
+            if (inputs.input_ids < 0).any(): inputs.input_ids[inputs.input_ids < 0] = 0
+            if (inputs.input_ids >= vocab_size).any():
+                inputs.input_ids[inputs.input_ids >= vocab_size] = self.tokenizer.unk_token_id or 0
+                
+            # Verify pad_token_id
+            pad_id = self.tokenizer.pad_token_id
+            if pad_id is None or pad_id >= vocab_size or pad_id < 0:
+                pad_id = self.tokenizer.eos_token_id or 0
+                self.tokenizer.pad_token_id = pad_id
+
             with torch.no_grad():
-                with torch.amp.autocast("cuda", enabled=True):
-                    outputs = self.model.generate(
-                        **inputs, 
-                        max_new_tokens=512, 
-                        temperature=0.3,
-                        do_sample=True,
-                        pad_token_id=self.tokenizer.pad_token_id
-                    )
+                # [Stability Fix] Disable autocast and use greedy decoding to prevent CUDA asserts
+                outputs = self.model.generate(
+                    **inputs, 
+                    max_new_tokens=512, 
+                    do_sample=False,
+                    num_beams=1,
+                    pad_token_id=pad_id
+                )
+                torch.cuda.synchronize()
              
             # Slice input from output
             input_len = inputs.input_ids.shape[1]
@@ -207,17 +247,14 @@ class Translator:
     def __init__(self):
         self.translator_cache = {}
         self.llm_translator = None 
+        # Import centralized languages
+        from src.utils import languages
+        self.languages = languages
 
     def get_google_translator(self, target_lang):
-        # ... Reuse map ...
-        lang_map = {
-            "English": "en", "Spanish": "es", "French": "fr", "German": "de",
-            "Italian": "it", "Portuguese": "pt", "Polish": "pl", "Turkish": "tr",
-            "Russian": "ru", "Dutch": "nl", "Czech": "cs", "Arabic": "ar",
-            "Chinese (Simplified)": "zh-CN", "Japanese": "ja", "Korean": "ko",
-            "Hindi": "hi"
-        }
-        code = lang_map.get(target_lang, target_lang.lower())
+        # Use centralized map
+        code = self.languages.get_language_code(target_lang)
+        
         if code not in self.translator_cache:
             self.translator_cache[code] = GoogleTranslator(source='auto', target=code)
         return self.translator_cache[code], code

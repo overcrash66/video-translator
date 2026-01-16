@@ -3,6 +3,8 @@ import torch
 import torchaudio
 import numpy as np
 from src.utils import config
+from src.utils import audio_utils
+import soundfile as sf
 import logging
 from pathlib import Path
 
@@ -77,18 +79,10 @@ class SileroVAD:
         
         try:
             # Load audio at 16kHz (required by Silero)
-            waveform, sr = torchaudio.load(audio_path)
+            # Use utility for safety
+            waveform, sr = audio_utils.load_audio(audio_path, target_sr=16000, mono=True)
             
-            # Resample if needed
-            if sr != 16000:
-                resampler = torchaudio.transforms.Resample(sr, 16000)
-                waveform = resampler(waveform)
-                sr = 16000
-            
-            # Convert to mono if stereo
-            if waveform.shape[0] > 1:
-                waveform = waveform.mean(dim=0, keepdim=True)
-            
+            # Squeeze to 1D [Time] as Silero expects
             waveform = waveform.squeeze()
             
             # Get speech timestamps
@@ -262,13 +256,13 @@ class Transcriber:
         logger.info(f"Raw segments: {len(segments)}. Running cleanup...")
         segments = self._clean_segments(segments)
         logger.info(f"Cleanup complete. Found {len(segments)} unique segments.")
-        return segments
+        return segments, info.language
     
     def _get_audio_duration(self, audio_path) -> float:
         """Get audio file duration in seconds."""
         try:
-            info = torchaudio.info(str(audio_path))
-            return info.num_frames / info.sample_rate
+            info = sf.info(str(audio_path))
+            return info.duration
         except Exception:
             return 0.0
     

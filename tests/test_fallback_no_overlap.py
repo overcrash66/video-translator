@@ -29,9 +29,8 @@ def test_fallback_no_speaker_overlap(video_translator):
     video_translator.separator.separate.return_value = ("vocals.wav", "bg.wav")
     
     # Text segment that is 0.0-2.0
-    video_translator.transcriber.transcribe.return_value = {
-        "segments": [{"text": "Hello", "start": 0.0, "end": 2.0}]
-    }
+    # Text segment that is 0.0-2.0
+    video_translator.transcriber.transcribe.return_value = ([{"text": "Hello", "start": 0.0, "end": 2.0}], "en")
     
     # Diarization segment that is WAY later (10.0-12.0) -> NO OVERLAP
     diarization_segments = [{'start': 10.0, 'end': 12.0, 'speaker': 'SPEAKER_00'}]
@@ -77,12 +76,13 @@ def test_fallback_no_speaker_overlap(video_translator):
     # Should fallback to 'vocals.wav'
     video_translator.tts_engine.generate_audio.assert_called_with(
         ANY, 
-        'vocals.wav', # EXPECTED FALLBACK (No overlap)
+        None, # EXPECTED FALLBACK (No overlap -> Generic)
         language='es', 
         output_path=ANY, 
         model='f5', 
         gender=ANY, 
         speaker_id=None, # No speaker identified
         guidance_scale=ANY,
-        force_cloning=ANY
+        force_cloning=ANY,
+        voice_selector=ANY
     )

@@ -12,13 +12,6 @@ logger = logging.getLogger(__name__)
 
 class AudioSeparator:
     def __init__(self):
-        # Force soundfile backend if available, as default might be missing on Windows
-        try:
-             import torchaudio
-             torchaudio.set_audio_backend("soundfile")
-        except Exception:
-             pass # Might already be soundfile or not available
-
         self.device = config.DEVICE
         self.output_dir = config.TEMP_DIR
 
@@ -100,19 +93,10 @@ class AudioSeparator:
     def _separate_demucs(self, audio_path, output_vocals, output_bg):
         logger.info(f"Separating with HDemucs: {audio_path}")
         try:
-            import soundfile as sf
+            from src.utils import audio_utils
             
-            # Use soundfile to read
-            waveform_np, sr = sf.read(str(audio_path))
-            
-            # Soundfile returns [Time, Channels] or [Time] if mono
-            # PyTorch expects [Channels, Time]
-            if waveform_np.ndim == 1:
-                waveform_np = waveform_np[np.newaxis, :]  # [1, Time]
-            else:
-                waveform_np = waveform_np.T # [Channels, Time]
-                
-            waveform = torch.from_numpy(waveform_np).float()
+            # Use utility to load [Channels, Time]
+            waveform, sr = audio_utils.load_audio(audio_path)
             
             # HDemucs requires Stereo (2 channels). If Mono, duplicate channel.
             if waveform.shape[0] == 1:
@@ -150,16 +134,9 @@ class AudioSeparator:
             vocals = sources[3]
             background = sources[0] + sources[1] + sources[2]
             
-            # Save using soundfile to avoid 'TorchCodec' errors
-            import soundfile as sf
-            
-            # Torchaudio tensors are [Channel, Time], Soundfile expects [Time, Channel]
-            vocals_np = vocals.cpu().numpy().T
-            bg_np = background.cpu().numpy().T
-            
-
-            sf.write(str(output_vocals), vocals_np, self.sample_rate)
-            sf.write(str(output_bg), bg_np, self.sample_rate)
+            # Save using utility
+            audio_utils.save_audio(output_vocals, vocals.cpu(), self.sample_rate)
+            audio_utils.save_audio(output_bg, background.cpu(), self.sample_rate)
             
             # Cleanup memory
             del waveform, sources, vocals, background

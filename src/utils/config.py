@@ -50,15 +50,7 @@ DEVICE = get_device()
 WHISPER_MODEL_SIZE = "large-v3"
 
 
+from src.utils import languages
+
 def get_language_code(name):
-    if name == "Auto Detect":
-        return "auto"
-        
-    lang_map = {
-        "English": "en", "Spanish": "es", "French": "fr", "German": "de",
-        "Italian": "it", "Portuguese": "pt", "Polish": "pl", "Turkish": "tr",
-        "Russian": "ru", "Dutch": "nl", "Czech": "cs", "Arabic": "ar",
-        "Chinese (Simplified)": "zh", "Chinese": "zh", "Japanese": "ja", "Korean": "ko",
-        "Hindi": "hi"
-    }
-    return lang_map.get(name, "en")
+    return languages.get_language_code(name)

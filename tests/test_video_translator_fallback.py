@@ -50,7 +50,7 @@ def test_tts_fallback_strategy(video_translator):
     video_translator.diarizer.diarize = MagicMock(return_value=diarization_segments)
     video_translator.diarizer.detect_genders = MagicMock(return_value=speaker_map)
     video_translator.diarizer.extract_speaker_profiles = MagicMock(return_value=speaker_profiles) # Empty profiles
-    video_translator.transcriber.transcribe = MagicMock(return_value=[{'start': 0.0, 'end': 1.0, 'text': 'Hello'}])
+    video_translator.transcriber.transcribe = MagicMock(return_value=([{'start': 0.0, 'end': 1.0, 'text': 'Hello'}], "en"))
     video_translator.translator.translate_segments = MagicMock(return_value=[{'start': 0.0, 'end': 1.0, 'translated_text': 'Hola'}])
     
     # Mock synchronizer to avoid Step 7 crash
@@ -98,7 +98,7 @@ def test_tts_fallback_strategy(video_translator):
         
         print(f"Called with speaker_wav: {speaker_wav_arg}")
         
-        # We expect vocals_path ("vocab_path.wav")
-        assert speaker_wav_arg == vocals_path, f"Expected fallback to {vocals_path}, but got {speaker_wav_arg}"
+        # We expect None (Generic Voice) because "vocals_path" fallback was removed to avoid demon voices
+        assert speaker_wav_arg is None, f"Expected fallback to Generic (None), but got {speaker_wav_arg}"
     else:
         pytest.fail("generate_audio was never called!")

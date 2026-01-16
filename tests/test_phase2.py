@@ -30,5 +30,5 @@ def test_tts_engine_f5_dispatch():
     engine = TTSEngine()
     
     with patch.object(engine, '_generate_f5') as mock_f5:
-        engine.generate_audio("test", "wav.wav", model="f5")
+        engine.generate_audio("test", "wav.wav", model="f5", force_cloning=True)
         mock_f5.assert_called_once()

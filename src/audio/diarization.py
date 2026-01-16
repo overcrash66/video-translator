@@ -124,16 +124,10 @@ class Diarizer:
 
     def _extract_embeddings(self, audio_path, segments):
         """Extract speaker embeddings for each audio segment (SpeechBrain)."""
-        # Load full audio
-        waveform, sample_rate = torchaudio.load(audio_path)
+        from src.utils import audio_utils
         
-        if waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0, keepdim=True)
-        
-        if sample_rate != 16000:
-            resampler = torchaudio.transforms.Resample(sample_rate, 16000)
-            waveform = resampler(waveform)
-            sample_rate = 16000
+        # Load full audio safely
+        waveform, sample_rate = audio_utils.load_audio(audio_path, target_sr=16000, mono=True)
         
         embeddings = []
         valid_segments = []
@@ -268,6 +262,7 @@ class Diarizer:
         """
         try:
             from pyannote.audio import Pipeline
+            from src.utils import audio_utils
         except ImportError:
             logger.error("pyannote.audio not installed.")
             return []
@@ -291,13 +286,15 @@ class Diarizer:
             
             # Use autocast for mixed precision
             device_type = "cuda" if self.device.type == "cuda" else "cpu"
-            dtype = torch.float16 if device_type == "cuda" else torch.bfloat16
             
-            # Some CPU backends might not support bfloat16autocast, defaulting to float16 or just enabled=False if needed
-            # For simplicity, we target CUDA mainly for mixed precision
+            # Load audio safely
+            waveform, sample_rate = audio_utils.load_audio(audio_path)
+            
+            # PyAnnote expects dict for memory-based inference or path
+            input_data = {"waveform": waveform, "sample_rate": sample_rate}
             
             with torch.amp.autocast(device_type=device_type, enabled=(device_type=="cuda")):
-                diarization = pipeline(audio_path)
+                diarization = pipeline(input_data)
 
             segments = []
             for turn, _, speaker in diarization.itertracks(yield_label=True):
@@ -314,18 +311,23 @@ class Diarizer:
             logger.error(f"PyAnnote diarization failed: {e}")
             return []
 
-    def diarize(self, audio_path, backend="speechbrain"):
+    def diarize(self, audio_path, backend="speechbrain", min_speakers=1, max_speakers=None):
         """
         Perform speaker diarization.
         backend: 'speechbrain' or 'nemo'
         """
-        logger.info(f"Diarizing {audio_path} using {backend}...")
+        self.min_speakers = min_speakers
+        if max_speakers: self.max_speakers = max_speakers
+
+        logger.info(f"Diarizing {audio_path} using {backend} (min={self.min_speakers}, max={self.max_speakers})...")
         
         if backend == "nemo":
             try:
                 self._load_nemo()
                 segments = self._run_nemo_diarization(audio_path)
-                return segments
+                if segments:
+                    return segments
+                logger.warning("NeMo backend returned 0 segments. Falling back to SpeechBrain.")
             except Exception as e:
                 logger.warning(f"NeMo backend failed: {e}. Falling back to SpeechBrain.")
                 # Fallthrough
@@ -334,12 +336,6 @@ class Diarizer:
             model = "pyannote/speaker-diarization-3.1"
             if backend == "pyannote_community":
                  # Use the community pipeline if specified
-                 model = "pyannote/speaker-diarization-3.1" # Currently maps to same base, user can customize if needed
-                 # Actually checking if there is a specific community model string requested: 'pyannote/speaker-diarization-community-1' is not a standard HF ID usually, 
-                 # but 'pyannote/speaker-diarization' is the main one. 
-                 # The user request mentioned 'pyannote/speaker-diarization-community-1'. Let's try to support it if it's a valid ID.
-                 # If not, we fallback to 3.1.
-                 # For now we use the main one as they likely meant the standard pipeline which IS the community standard.
                  pass
             
             # Allow passing specific model ID via config if needed, but for now standardizing
@@ -370,12 +366,13 @@ class Diarizer:
 
     def _create_segments_from_vad(self, audio_path):
         """Create segments using simple energy-based VAD."""
-        waveform, sample_rate = torchaudio.load(audio_path)
-        if waveform.shape[0] > 1: waveform = waveform.mean(dim=0, keepdim=True)
+        from src.utils import audio_utils
+        
+        waveform, sample_rate = audio_utils.load_audio(audio_path, mono=True)
         
         frame_size = int(0.025 * sample_rate)
         hop_length = int(0.010 * sample_rate)
-        waveform_np = waveform.squeeze().numpy()
+        waveform_np = waveform.squeeze().cpu().numpy()
         num_frames = (len(waveform_np) - frame_size) // hop_length + 1
         
         energies = np.array([np.sum(waveform_np[i*hop_length : i*hop_length+frame_size]**2) for i in range(num_frames)])
@@ -436,7 +433,9 @@ class Diarizer:
              
         if best_labels is None:
             from sklearn.cluster import KMeans
-            best_labels = KMeans(n_clusters=2).fit_predict(embeddings_norm)
+            # Fallback to KMeans if spectral failed, respecting min/max
+            k = max(2, min(max_speakers, n_samples))
+            best_labels = KMeans(n_clusters=k).fit_predict(embeddings_norm)
             
         return best_labels
 
@@ -497,9 +496,7 @@ class Diarizer:
             grouped[seg['speaker']].append(seg)
             
         for sp, segs in grouped.items():
-            # [Fix] Filter out very short segments to avoid "Frankenstein" audio, but be more lenient for F5-TTS.
-            # XTTS crashes often when fed concatenated 400ms clips, but F5 is more robust.
-            # Only keep segments >= 0.5 seconds (was 1.0s)
+            # [Fix] Filter out very short segments to avoid "Frankenstein" audio
             valid_segs = [s for s in segs if (s['end'] - s['start']) >= 0.5]
             
             if not valid_segs:
@@ -517,11 +514,31 @@ class Diarizer:
                 end = int(seg['end'] * sr)
                 
                 chunk = audio[start:end]
+                
+                # [Improvement] RMS/Energy Check to avoid silent chunks
+                rms = np.sqrt(np.mean(chunk**2))
+                if rms < 0.01: # Skip near-silent chunks
+                    continue
+                
+                # [Improvement] Normalize Chunk (-3dB)
+                max_val = np.max(np.abs(chunk))
+                if max_val > 0:
+                     target_amp = 10 ** (-3/20) # -3dB
+                     chunk = chunk * (target_amp / max_val)
+                
+                # [Improvement] Add Micro-Fades (10ms) to prevent clicks
+                fade_len = int(0.01 * sr)
+                if len(chunk) > 2 * fade_len:
+                    fade_in = np.linspace(0, 1, fade_len)
+                    fade_out = np.linspace(1, 0, fade_len)
+                    chunk[:fade_len] *= fade_in
+                    chunk[-fade_len:] *= fade_out
+                
                 samples.append(chunk)
-                total_dur += (seg['end'] - seg['start'])
+                total_dur += (len(chunk) / sr)
                 if total_dur >= 15.0: break
             
-            # [Fix] Ensure the final profile is long enough for stable cloning (> 1.0s) (was 3.0s)
+            # [Fix] Ensure the final profile is long enough for stable cloning (> 1.0s)
             if samples and total_dur >= 1.0:
                 full_sp_audio = np.concatenate(samples)
                 if len(full_sp_audio) > 15 * sr:

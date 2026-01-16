@@ -1,6 +1,8 @@
 import asyncio
 import edge_tts
 from src.utils import config
+from src.utils import languages
+from src.utils import audio_utils
 import logging
 from pathlib import Path
 import torchaudio
@@ -8,27 +10,8 @@ import soundfile as sf
 import torch
 from src.synthesis.f5_tts import F5TTSWrapper
 
-# MONKEYPATCH: Torchaudio 2.9+ broken backend API fix for Windows
-# Forces soundfile backend for load() to bypass TorchCodec requirements
-def _custom_load_patch(filepath, **kwargs):
-    # Fallback to soundfile directly
-    # FORCE float32 to match PyTorch model weights (fixes "expected Double found Float" error)
-    data, samplerate = sf.read(filepath, dtype='float32')
-    # Convert to standard (channels, frames) format
-    tensor = torch.from_numpy(data)
-    if tensor.ndim == 1:
-        tensor = tensor.unsqueeze(0) # (1, frames)
-    else:
-        tensor = tensor.transpose(0, 1) # (frames, channels)
-    return tensor, samplerate
-
-# Apply the patch forcibly
-torchaudio.load = _custom_load_patch
-try:
-    if hasattr(torchaudio, "set_audio_backend"):
-         torchaudio.set_audio_backend("soundfile")
-except:
-    pass
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,89 +19,15 @@ logger = logging.getLogger(__name__)
 class TTSEngine:
     def __init__(self):
         self.device = config.DEVICE
-        # Mapping from language code to Edge-TTS Voices (Gender-aware, multiple voices per gender)
-        # Each gender has a LIST of voices to support multiple speakers
-        self.voice_map = {
-            "en": {
-                "Female": ["en-US-AriaNeural", "en-US-JennyNeural", "en-GB-SoniaNeural"],
-                "Male": ["en-US-GuyNeural", "en-US-ChristopherNeural", "en-GB-RyanNeural"]
-            },
-            "es": {
-                "Female": ["es-ES-ElviraNeural", "es-MX-DaliaNeural"],
-                "Male": ["es-ES-AlvaroNeural", "es-MX-JorgeNeural"]
-            },
-            "fr": {
-                "Female": ["fr-FR-DeniseNeural", "fr-CA-SylvieNeural"],
-                "Male": ["fr-FR-HenriNeural", "fr-CA-JeanNeural"]
-            },
-            "de": {
-                "Female": ["de-DE-KatjaNeural", "de-AT-IngridNeural"],
-                "Male": ["de-DE-ConradNeural", "de-AT-JonasNeural"]
-            },
-            "it": {
-                "Female": ["it-IT-ElsaNeural", "it-IT-IsabellaNeural"],
-                "Male": ["it-IT-DiegoNeural", "it-IT-GiuseppeNeural"]
-            },
-            "pt": {
-                "Female": ["pt-BR-FranciscaNeural", "pt-PT-RaquelNeural"],
-                "Male": ["pt-BR-AntonioNeural", "pt-PT-DuarteNeural"]
-            },
-            "pl": {
-                "Female": ["pl-PL-ZofiaNeural", "pl-PL-AgnieszkaNeural"],
-                "Male": ["pl-PL-MarekNeural"]
-            },
-            "tr": {
-                "Female": ["tr-TR-EmelNeural"],
-                "Male": ["tr-TR-AhmetNeural"]
-            },
-            "ru": {
-                "Female": ["ru-RU-SvetlanaNeural", "ru-RU-DariyaNeural"],
-                "Male": ["ru-RU-DmitryNeural"]
-            },
-            "nl": {
-                "Female": ["nl-NL-ColetteNeural", "nl-NL-FennaNeural"],
-                "Male": ["nl-NL-MaartenNeural"]
-            },
-            "cs": {
-                "Female": ["cs-CZ-VlastaNeural"],
-                "Male": ["cs-CZ-AntoninNeural"]
-            },
-            "ar": {
-                "Female": ["ar-SA-ZariyahNeural", "ar-EG-SalmaNeural"],
-                "Male": ["ar-SA-HamedNeural", "ar-EG-ShakirNeural"]
-            },
-            "zh-cn": {
-                "Female": ["zh-CN-XiaoxiaoNeural", "zh-CN-XiaoyiNeural", "zh-CN-XiaochenNeural"],
-                "Male": ["zh-CN-YunxiNeural", "zh-CN-YunjianNeural", "zh-CN-YunyeNeural"]
-            },
-            "ja": {
-                "Female": ["ja-JP-NanamiNeural", "ja-JP-AoiNeural"],
-                "Male": ["ja-JP-KeitaNeural", "ja-JP-DaichiNeural"]
-            },
-            "ko": {
-                "Female": ["ko-KR-SunHiNeural", "ko-KR-JiMinNeural"],
-                "Male": ["ko-KR-InJoonNeural", "ko-KR-BongJinNeural"]
-            },
-            "hi": {
-                "Female": ["hi-IN-SwaraNeural"],
-                "Male": ["hi-IN-MadhurNeural"]
-            }
-        }
+        
+        # Mapping from language code to Edge-TTS Voices
+        self.voice_map = languages.EDGE_TTS_VOICE_MAP
 
         self.xtts_model = None
         self.f5_model = None
         
         # Mapping for Piper (language code -> model name)
-        # We use a default 'high' quality voice for each language if available
-        self.piper_map = {
-            "en": "en_US-lessac-high",
-            "es": "es_ES-sharvard-medium",
-            "fr": "fr_FR-siwis-medium",
-            "de": "de_DE-thorsten-medium",
-            "it": "it_IT-riccardo-x_low", # Limited options in public index, this is just a placeholder logic
-            # For robustness, we will default to english if specific lang model not found, or use a generic one.
-            # Real implementation would query the piper face or json index.
-        }
+        self.piper_map = languages.PIPER_MODEL_MAP
 
     def unload_model(self):
         """Unload XTTS and F5 models if loaded."""
@@ -207,6 +116,15 @@ class TTSEngine:
             logger.warning(f"Failed to validate audio file {file_path}: {e}")
             return False
 
+    def validate_reference(self, wav_path, model_name="XTTS"):
+        """
+        Public API to check if a reference audio is valid for the target model.
+        XTTS requires ~2.0s, F5-TTS can handle ~1.0s.
+        """
+        # Determine strictness based on model
+        min_dur = 1.0 if "F5" in model_name else 2.0
+        return self._check_reference_audio(wav_path, min_duration=min_dur)
+
     def _check_reference_audio(self, wav_path, min_duration=2.0):
         """
         Checks if reference audio is suitable for cloning (has signal, reasonable duration).
@@ -248,7 +166,7 @@ class TTSEngine:
             logger.warning(f"Failed to analyze reference audio: {e}")
             return False
 
-    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None, guidance_scale=None, emotion=None, force_cloning=False):
+    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None, guidance_scale=None, emotion=None, force_cloning=False, voice_selector=None):
         """
         Generates audio using Edge-TTS, Piper, or XTTS.
         model: "edge", "piper", "xtts", or "f5"
@@ -257,6 +175,7 @@ class TTSEngine:
         guidance_scale: (XTTS) CFG scale, e.g. 1.2-1.5
         emotion: (XTTS) Emotion preset
         force_cloning: If True, bypass validation and attempt cloning regardless (for fallback audio)
+        voice_selector: Optional callback(speaker_id, voice_list) -> voice_name
         """
         if not output_path:
             output_path = config.TEMP_DIR / "tts_output.wav"
@@ -309,14 +228,22 @@ class TTSEngine:
         # Select voice based on speaker_id
         voice_index = 0
         if speaker_id:
-            try:
-                # Extract speaker number from ID like "SPEAKER_00", "SPEAKER_01", etc.
-                speaker_num = int(speaker_id.split("_")[-1])
-                voice_index = speaker_num % len(voice_list)  # Cycle through available voices
-            except (ValueError, IndexError):
-                pass
-        
-        voice = voice_list[voice_index]
+            # deterministic voice selection via callback
+            if voice_selector:
+                voice = voice_selector(speaker_id, voice_list)
+                logger.info(f"Selected voice via callback for {speaker_id}: {voice}")
+                # We skip the manual index selection below
+            else:
+                # Fallback to modulo
+                try:
+                    # Extract speaker number from ID like "SPEAKER_00", "SPEAKER_01", etc.
+                    speaker_num = int(speaker_id.split("_")[-1])
+                    voice_index = speaker_num % len(voice_list)  # Cycle through available voices
+                    voice = voice_list[voice_index]
+                except (ValueError, IndexError):
+                    voice = voice_list[0]
+        else:
+             voice = voice_list[0]
         
         logger.info(f"Generating TTS: lang='{language}', gender='{gender}', speaker='{speaker_id}' -> voice='{voice}'")
         
