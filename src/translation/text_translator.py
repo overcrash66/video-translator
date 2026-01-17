@@ -68,6 +68,11 @@ class LLMTranslator:
 
     def get_prompt(self, text, source_lang, target_lang, context_prev=None, context_next=None):
         """Generates prompt based on model type and global context."""
+        from src.utils.languages import get_language_name
+        
+        # Convert codes to full names (e.g. "en" -> "English")
+        source_name = get_language_name(source_lang)
+        target_name = get_language_name(target_lang)
         
         # Standard Translation Prompt
         if self.is_llama:
@@ -79,7 +84,7 @@ class LLMTranslator:
             if context_prev:
                 sys_prompt += f"\nContext (Previous Line): {context_prev}"
                 
-            user_prompt = f"Translate from {source_lang} to {target_lang}:\n\n{text}"
+            user_prompt = f"Translate from {source_name} to {target_name}:\n\n{text}"
             
             messages = [
                 {"role": "system", "content": sys_prompt},
@@ -95,15 +100,16 @@ class LLMTranslator:
             # ALMA-R (Advanced Language Model-based Translator)
             # ALMA uses specific formatting: "Translate this from {src} to {tgt}:\n{src_text}\n{tgt_text}"
             # Reference: https://github.com/fe1ixxu/ALMA
-            prompt = f"Translate this from {source_lang} to {target_lang}:\n{source_lang}: {text}\n{target_lang}:"
+            # NOTE: ALMA expects full English names (e.g. English, French)
+            prompt = f"Translate this from {source_name} to {target_name}:\n{source_name}: {text}\n{target_name}:"
             return prompt
             
         else:
             # HY-MT (Default / Fallback)
-            messages = [{"role": "user", "content": f"Translate the following text from {source_lang} to {target_lang}:\n{text}"}]
+            messages = [{"role": "user", "content": f"Translate the following text from {source_name} to {target_name}:\n{text}"}]
             if self.tokenizer.chat_template:
                  return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            return f"<|user|>\nTranslate from {source_lang} to {target_lang}:\n{text}\n<|assistant|>\n"
+            return f"<|user|>\nTranslate from {source_name} to {target_name}:\n{text}\n<|assistant|>\n"
 
     def translate_batch(self, texts, source_lang_code, target_lang_code):
         if not texts: return []
