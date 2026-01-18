@@ -227,7 +227,7 @@ class VisualTranslator:
             if frame_count % process_interval == 0:
                 try:
                     # Run OCR detection
-                    result = self.ocr_model.ocr(frame, cls=True)
+                    result = self.ocr_model.ocr(frame)
                     
                     if result and result[0]:
                         boxes = []
