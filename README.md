@@ -29,13 +29,14 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     *   **NVIDIA NeMo** (New): Advanced multi-scale diarization decoder (MSDD) for precise speaker turn detection.
 *   **Visual Enhancements (Experimental)**:
     *   **Lip-Sync (MuseTalk)**: Generative video synchronization to match lips to the translated audio.
-    *   **Visual Text Translation**: Uses **PaddleOCR** to detect text in video frames and simpler inpainting to replace it (Proof of Concept).
+    *   **Visual Text Translation**: Uses **PaddleOCR** to detect text in video frames and **OpenCV** inpainting to replace it with translated text.
 *   **GPU Optimized**: Custom **VideoTranslator** orchestration enforces strict "one-heavy-model-at-a-time" policy to run comfortably on 8GB-16GB VRAM GPUs.
 *   **Friendly UI**: Easy-to-use **Gradio** web interface.
 
 ## 🛠️ Prerequisites
 
-*   **Python 3.10+** (Python 3.10 recommended for XTTS/NeMo compatibility)
+*   **Python 3.10+** (Python 3.10 recommended for XTTS/NeMo/F5-TTS compatibility)
+*   **CUDA Toolkit 12+** (For GPU acceleration)
 *   **FFmpeg**: Must be installed and accessible in your system's PATH.
     *   *Windows (Option 1)*: `winget install ffmpeg` then restart terminal.
     *   *Windows (Option 2 - Manual)*: 
@@ -66,7 +67,8 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 
 3.  **Additional Requirements (Optional)**:
     *   **NeMo**: If using NeMo diarization, ensure `nemo_toolkit[asr]` is installed (added in requirements).
-    *   **MuseTalk**: Requires downloading huge weights (~10GB) for the full experience. The app will warn if missing.
+    *   **MuseTalk**: Requires downloading huge weights (~10GB) for the full experience. Use the `download_weights.bat` inside `MuseTalk/` or let the app warn you.
+    *   **F5-TTS**: Requires `f5-tts` package and GPU.
 
 ## 🖥️ Usage
 
@@ -121,7 +123,6 @@ flowchart TD
     Vocals -.-> Diarize{"Diarize<br/>(NeMo / SpeechBrain)"}
     Diarize -.-> SpeakerProfiling[Speaker Profiling]
     
-    cat1[Context Context] --> Translate
     Segments --> Translate{"Translate<br/>(Llama 3.1 / ALMA / HY-MT)"}
     
     Translate --> TTS{"Neural TTS<br/>(F5-TTS / XTTS / Edge)"}
@@ -129,15 +130,19 @@ flowchart TD
     TTS --> TTSAudio[Generated Speech Clips]
     
     TTSAudio --> Sync{"Synchronize<br/>(PyRubberband)"}
-    Sync --> Mix{Mix Audio}
+    Sync --> MergedSpeech[Merged Speech Track]
+    
+    MergedSpeech --> Mix{Mix Audio}
     Background --> Mix
     
     Mix --> FinalAudio[Final Audio Track]
     
-    FinalAudio --> Mux{"Merge with Video<br/>(FFmpeg)"}
-    Video --> FaceDetect[Face/Text Detect]
-    FaceDetect --> VisualFX{"Visual FX<br/>(MuseTalk / PaddleOCR)"}
-    VisualFX --> Mux
+    Video --> VisualTrans{"Visual Translation<br/>(PaddleOCR)"}
+    VisualTrans --> LipSync{"Lip-Sync<br/>(MuseTalk)"}
+    MergedSpeech -.-> LipSync
+    
+    LipSync --> Mux{"Merge with Video<br/>(FFmpeg)"}
+    FinalAudio --> Mux
     
     Mux --> Output[Translated Output Video]
 ```

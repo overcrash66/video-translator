@@ -381,7 +381,13 @@ class VideoTranslator:
              self.load_model("visual")
              visual_out = config.TEMP_DIR / f"{video_path.stem}_visual.mp4"
              try:
-                 self.visual_translator.translate_video_text(str(video_path), str(visual_out))
+                 # Pass source and target language for proper text translation
+                 self.visual_translator.translate_video_text(
+                     str(video_path), 
+                     str(visual_out),
+                     target_lang=target_code,
+                     source_lang=source_code
+                 )
                  if visual_out.exists():
                      video_path = visual_out
                      yield ("log", "Visual translation complete.")

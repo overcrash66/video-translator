@@ -51,7 +51,7 @@ class TestVisualTranslatorLoadModel:
         translator.load_model()
         
         assert translator.model_loaded is True
-        mock_paddle_ocr.assert_called_once_with(use_angle_cls=True, lang='en')
+        mock_paddle_ocr.assert_called_once_with(use_angle_cls=True, lang='en', show_log=False)
     
     @patch('src.translation.visual_translator.PADDLE_AVAILABLE', False)
     def test_load_model_paddle_not_installed(self):

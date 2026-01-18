@@ -3,236 +3,200 @@ Unit tests for the LipSyncer class (src.processing.lipsync).
 
 Tests cover:
 - Initialization
-- Model loading (with and without MuseTalk availability)
+- Model loading (checking paths and imports)
 - Model unloading and resource cleanup
-- Lip-sync fallback behavior
+- Lip-sync orchestration (mocking actual inference)
 - Error handling
 """
 
 import pytest
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch, call
 from pathlib import Path
 import sys
-
+import os
 
 class TestLipSyncerInit:
     """Tests for LipSyncer initialization."""
     
     def test_init_defaults(self):
-        """Verify initial state: model_loaded=False, musetalk=None."""
+        """Verify initial state."""
         from src.processing.lipsync import LipSyncer
         
         syncer = LipSyncer()
         
         assert syncer.model_loaded is False
-        assert syncer.musetalk is None
-        assert 'model_config' in dir(syncer)
-    
-    def test_init_config_structure(self):
-        """Verify model_config has expected structure."""
-        from src.processing.lipsync import LipSyncer
-        
-        syncer = LipSyncer()
-        
-        assert isinstance(syncer.model_config, dict)
-        assert 'task_1' in syncer.model_config
-
+        assert syncer.vae is None
+        assert syncer.unet is None
+        assert syncer.whisper is None
+        assert syncer.face_parser is None
+        assert syncer.batch_size == 8
+        assert syncer.version == "v15"
 
 class TestLipSyncerLoadModel:
     """Tests for model loading behavior."""
     
-    def test_load_model_musetalk_available(self):
-        """Test model loading when MuseTalk is available."""
-        # We need to mock the import within load_model
-        with patch.dict(sys.modules, {'musetalk': MagicMock()}):
-            from src.processing.lipsync import LipSyncer
-            
-            syncer = LipSyncer()
-            syncer.load_model()
-            
-            assert syncer.model_loaded is True
-            assert syncer.musetalk is True  # Placeholder value
-    
-    def test_load_model_musetalk_not_installed(self):
-        """Test graceful handling when MuseTalk import fails."""
-        # Clear musetalk from cache if present
-        if 'musetalk' in sys.modules:
-            del sys.modules['musetalk']
-            
+    @patch('src.processing.lipsync.Path.exists')
+    def test_check_models_exist_failure(self, mock_exists):
+        """Test missing model files detection."""
         from src.processing.lipsync import LipSyncer
         
         syncer = LipSyncer()
+        mock_exists.return_value = False
         
-        # Mock the import to raise ImportError
-        with patch.object(syncer, 'load_model') as mock_load:
-            # Simulate the actual behavior
-            syncer.model_loaded = False
-            syncer.musetalk = None
-            
-        # Without mocking, the actual code handles ImportError gracefully
-        syncer.load_model()
-        
-        # The actual implementation catches ImportError and sets model_loaded=False
-        assert syncer.model_loaded is False
+        assert syncer._check_models_exist() is False
     
-    def test_load_model_already_loaded(self):
-        """Verify no duplicate loading when model is already loaded."""
+    @patch('src.processing.lipsync.Path.exists')
+    def test_check_models_exist_success(self, mock_exists):
+        """Test successful model files detection."""
         from src.processing.lipsync import LipSyncer
         
         syncer = LipSyncer()
-        syncer.model_loaded = True  # Simulate already loaded
+        mock_exists.return_value = True
         
-        # Should return early without doing anything
-        syncer.load_model()
-        
-        assert syncer.model_loaded is True
-    
-    def test_load_model_exception_handling(self):
-        """Test that exceptions during load are caught and logged."""
+        assert syncer._check_models_exist() is True
+
+    @patch('src.processing.lipsync.LipSyncer._check_models_exist')
+    @patch('src.processing.lipsync.os.chdir')
+    def test_load_model_success(self, mock_chdir, mock_check_exists):
+        """Test successful model loading."""
         from src.processing.lipsync import LipSyncer
         
         syncer = LipSyncer()
+        mock_check_exists.return_value = True
         
-        # Even if an unexpected exception occurs, it should be caught
-        # The current implementation sets model_loaded=False on any error
-        syncer.load_model()
+        with patch.dict(sys.modules, {
+            'musetalk.utils.utils': MagicMock(),
+            'musetalk.utils.preprocessing': MagicMock(),
+            'musetalk.utils.blending': MagicMock(),
+            'musetalk.utils.face_parsing': MagicMock(),
+            'musetalk.utils.audio_processor': MagicMock(),
+            'transformers': MagicMock(),
+        }):
+             sys.modules['musetalk.utils.utils'].load_all_model.return_value = (MagicMock(), MagicMock(), MagicMock())
+             
+             syncer.load_model()
+             assert syncer.model_loaded is True
+             assert syncer.device is not None
+
+    @patch('src.processing.lipsync.LipSyncer._check_models_exist')
+    def test_load_model_missing_files(self, mock_check_exists):
+        """Test load_model returns False if files missing."""
+        from src.processing.lipsync import LipSyncer
+        syncer = LipSyncer()
+        mock_check_exists.return_value = False
         
-        # After attempting load (musetalk not installed), model_loaded should be False
+        assert syncer.load_model() is False
         assert syncer.model_loaded is False
 
 
 class TestLipSyncerUnloadModel:
-    """Tests for model unloading and resource cleanup."""
+    """Tests for model unloading."""
     
-    def test_unload_model_clears_state(self):
-        """Verify model reference is cleared after unload."""
+    @patch('src.processing.lipsync.torch')
+    @patch('src.processing.lipsync.gc')
+    def test_unload_model(self, mock_gc, mock_torch):
+        """Verify resources are freed."""
         from src.processing.lipsync import LipSyncer
         
         syncer = LipSyncer()
-        syncer.musetalk = MagicMock()  # Simulate loaded model
         syncer.model_loaded = True
+        syncer.vae = MagicMock()
+        syncer.unet = MagicMock()
         
         syncer.unload_model()
         
-        assert syncer.musetalk is None
         assert syncer.model_loaded is False
-    
-    @patch('src.processing.lipsync.torch')
-    def test_unload_model_clears_cuda_cache(self, mock_torch):
-        """Verify CUDA cache is cleared when GPU is available."""
-        mock_torch.cuda.is_available.return_value = True
-        
-        from src.processing.lipsync import LipSyncer
-        
-        syncer = LipSyncer()
-        syncer.musetalk = MagicMock()
-        syncer.model_loaded = True
-        
-        syncer.unload_model()
-        
-        mock_torch.cuda.empty_cache.assert_called_once()
-    
-    @patch('src.processing.lipsync.torch')
-    def test_unload_model_skips_cuda_when_unavailable(self, mock_torch):
-        """Verify CUDA cleanup is skipped when GPU is not available."""
-        mock_torch.cuda.is_available.return_value = False
-        
-        from src.processing.lipsync import LipSyncer
-        
-        syncer = LipSyncer()
-        syncer.musetalk = MagicMock()
-        syncer.model_loaded = True
-        
-        syncer.unload_model()
-        
-        mock_torch.cuda.empty_cache.assert_not_called()
-
+        assert syncer.vae is None
+        assert syncer.unet is None
+        mock_gc.collect.assert_called()
+        if mock_torch.cuda.is_available():
+            mock_torch.cuda.empty_cache.assert_called()
 
 class TestLipSyncerSyncLips:
-    """Tests for the sync_lips method."""
+    """Tests for the sync_lips orchestration."""
     
+    @patch('src.processing.lipsync.LipSyncer.load_model')
     @patch('shutil.copy')
-    def test_sync_lips_fallback_copy(self, mock_copy):
-        """When model not available, verify file is copied to output."""
+    def test_sync_lips_fallback_if_load_fails(self, mock_copy, mock_load):
+        """Test fallback to copy if model fails to load."""
         from src.processing.lipsync import LipSyncer
         
         syncer = LipSyncer()
-        syncer.model_loaded = False
+        mock_load.return_value = False # Load failed
         
-        result = syncer.sync_lips("input.mp4", "audio.wav", "output.mp4")
+        result = syncer.sync_lips("in.mp4", "aud.wav", "out.mp4")
         
-        mock_copy.assert_called_with("input.mp4", "output.mp4")
-        assert result == "output.mp4"
-    
-    @patch('shutil.copy')
-    def test_sync_lips_returns_output_path(self, mock_copy):
-        """Verify correct output path is returned."""
-        from src.processing.lipsync import LipSyncer
-        
-        syncer = LipSyncer()
-        syncer.model_loaded = True
-        syncer.musetalk = MagicMock()
-        
-        result = syncer.sync_lips("input.mp4", "audio.wav", "output.mp4")
-        
-        assert result == "output.mp4"
-    
-    @patch('shutil.copy')
-    def test_sync_lips_calls_load_model(self, mock_copy):
-        """Verify lazy loading when model not loaded."""
-        from src.processing.lipsync import LipSyncer
-        
-        syncer = LipSyncer()
-        syncer.model_loaded = False
-        
-        with patch.object(syncer, 'load_model') as mock_load:
-            syncer.sync_lips("input.mp4", "audio.wav", "output.mp4")
-        
-        mock_load.assert_called_once()
-    
-    @patch('shutil.copy')
-    def test_sync_lips_logs_info(self, mock_copy):
-        """Verify info logging during lip-sync process."""
-        from src.processing.lipsync import LipSyncer
-        
-        syncer = LipSyncer()
-        syncer.model_loaded = True
-        syncer.musetalk = MagicMock()
-        
-        with patch('src.processing.lipsync.logger') as mock_logger:
-            syncer.sync_lips("input.mp4", "audio.wav", "output.mp4")
-        
-        # Should log info about the process
-        assert mock_logger.info.called
-    
-    @patch('shutil.copy')
-    def test_sync_lips_with_path_objects(self, mock_copy):
-        """Verify sync_lips works with Path objects."""
-        from src.processing.lipsync import LipSyncer
-        
-        syncer = LipSyncer()
-        syncer.model_loaded = True
-        syncer.musetalk = MagicMock()
-        
-        video_path = Path("input.mp4")
-        audio_path = Path("audio.wav")
-        output_path = Path("output.mp4")
-        
-        result = syncer.sync_lips(str(video_path), str(audio_path), str(output_path))
-        
-        assert result == str(output_path)
-    
-    @patch('shutil.copy')
-    def test_sync_lips_exception_raised(self, mock_copy):
-        """Verify exception is raised properly on internal error."""
-        from src.processing.lipsync import LipSyncer
-        
-        syncer = LipSyncer()
-        syncer.model_loaded = True
-        syncer.musetalk = MagicMock()
-        
-        mock_copy.side_effect = Exception("Copy failed")
-        
-        with pytest.raises(Exception, match="Copy failed"):
-            syncer.sync_lips("input.mp4", "audio.wav", "output.mp4")
+        assert result == "out.mp4"
+        mock_copy.assert_called_with("in.mp4", "out.mp4")
 
+    @patch('src.processing.lipsync.LipSyncer.load_model')
+    @patch('src.processing.lipsync.os.system')
+    @patch('src.processing.lipsync.glob.glob')
+    @patch('src.processing.lipsync.shutil.rmtree')
+    @patch('src.processing.lipsync.cv2')
+    def test_sync_lips_success_flow(self, mock_cv2, mock_rmtree, mock_glob, mock_system, mock_load):
+        """
+        Test the happy path of lip sync.
+        We need to mock a LOT of internal calls since they come from `self._imports`.
+        """
+        from src.processing.lipsync import LipSyncer
+        
+        syncer = LipSyncer()
+        syncer.model_loaded = True
+        syncer.device = "cpu"
+        syncer.audio_processor = MagicMock()
+        syncer.unet = MagicMock()
+        syncer.vae = MagicMock()
+        syncer.pe = MagicMock()
+        syncer.whisper = MagicMock()
+        
+        # Create a Mock Frame that behaves like a numpy array (has shape)
+        frame_mock = MagicMock()
+        frame_mock.shape = (256, 256, 3)
+        frame_mock.__getitem__.return_value = frame_mock
+        
+        # Mock cv2.resize to return the same frame mock
+        mock_cv2.resize.return_value = frame_mock
+        
+        # Populate _imports with mocks so the method can call them
+        syncer._imports = {
+            'get_file_type': MagicMock(return_value="video"),
+            'get_video_fps': MagicMock(return_value=25),
+            'datagen': MagicMock(return_value=[(MagicMock(), MagicMock())]), 
+            'get_landmark_and_bbox': MagicMock(return_value=([ (0,0,100,100) ], [ frame_mock ])),
+            'read_imgs': MagicMock(),
+            'coord_placeholder': (0,0,0,0),
+            'get_image': MagicMock(return_value=frame_mock), 
+        }
+        
+        mock_glob.return_value = ["frame1.png"]
+        syncer.audio_processor.get_audio_feature.return_value = (MagicMock(), 100)
+        syncer.audio_processor.get_whisper_chunk.return_value = [MagicMock()]
+        
+        syncer.vae.get_latents_for_unet.return_value = MagicMock()
+        syncer.vae.decode_latents.return_value = [MagicMock()] 
+        
+        syncer.unet.model.return_value.sample = MagicMock()
+        
+        with patch('pathlib.Path.exists', return_value=True): 
+             result = syncer.sync_lips("video.mp4", "audio.wav", "output.mp4")
+             
+        assert result == str(Path("output.mp4"))
+        assert mock_system.call_count >= 2 
+
+    @patch('shutil.copy')
+    def test_sync_lips_exception_handling(self, mock_copy):
+        """Test that exceptions trigger fallback copy."""
+        from src.processing.lipsync import LipSyncer
+        
+        syncer = LipSyncer()
+        syncer.model_loaded = True
+        
+        # Force an error by having empty Imports
+        syncer._imports = {} 
+        
+        # Should catch KeyError/Exception and fallback
+        result = syncer.sync_lips("video.mp4", "audio.wav", "output.mp4")
+        
+        mock_copy.assert_called()
+        assert result == "output.mp4"
