@@ -1,8 +1,20 @@
 
 import pytest
 from unittest.mock import MagicMock
-from src.utils.languages import LANGUAGE_CODE_MAP, get_language_name
+from src.utils.languages import LANGUAGE_CODE_MAP, get_language_name, get_language_code
 from src.translation.text_translator import LLMTranslator
+
+def test_get_language_code_passthrough():
+    """Verify get_language_code returns the code if a valid code is passed."""
+    # Test known codes
+    assert get_language_code("fr") == "fr"
+    assert get_language_code("en") == "en"
+    assert get_language_code("es") == "es"
+    # Test valid names still work
+    assert get_language_code("French") == "fr"
+    assert get_language_code("English") == "en"
+    # Test invalid still defaults to en
+    assert get_language_code("InvalidLang") == "en"
 
 def test_get_language_name_all_codes():
     """Verify reverse lookup works for all defined codes."""

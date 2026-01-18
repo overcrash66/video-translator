@@ -166,9 +166,13 @@ class LLMTranslator:
                 
                 clean = raw
                 if self.is_alma:
+                    from src.utils.languages import get_language_name
+                    target_name = get_language_name(target_lang_code)
                     # ALMA output structure: ...\n{target_lang}: {translation}
-                    if f"{target_lang_code}:" in raw:
-                        clean = raw.split(f"{target_lang_code}:")[-1].strip()
+                    if f"{target_name}:" in raw:
+                        clean = raw.split(f"{target_name}:")[-1].strip()
+                    elif f"{target_lang_code}:" in raw: # Fallback for code
+                         clean = raw.split(f"{target_lang_code}:")[-1].strip()
                     else:
                         # Fallback heuristic
                          clean = raw.replace(prompts[i], "").strip()
@@ -177,7 +181,6 @@ class LLMTranslator:
                      # If prompt is included, strip it.
                      pass # Transformers usually handles this with decode if not 'return_full_text=? '
                      # Actually generate() by default returns input+output.
-                     # We must slice. 
                      pass
                      
                 # Correct slicing for all models (transformers default behavior for causal LM is to return input+output)
@@ -236,8 +239,11 @@ class LLMTranslator:
             decoded = self.tokenizer.decode(gen_tokens, skip_special_tokens=True).strip()
             
             # Post-process ALMA
-            if self.is_alma and f"{target_lang}:" in decoded:
-                 decoded = decoded.split(f"{target_lang}:")[-1].strip()
+            if self.is_alma:
+                 from src.utils.languages import get_language_name
+                 target_name = get_language_name(target_lang)
+                 if f"{target_name}:" in decoded:
+                     decoded = decoded.split(f"{target_name}:")[-1].strip()
                  
             return decoded
             

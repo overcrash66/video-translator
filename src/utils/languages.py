@@ -23,9 +23,13 @@ LANGUAGE_CODE_MAP = {
 
 def get_language_code(name: str) -> str:
     """Returns the internal language code for a given display name."""
+    # Check if it's already a valid code
+    if name in LANGUAGE_CODE_MAP.values():
+        return name
     return LANGUAGE_CODE_MAP.get(name, "en")
 
 def get_language_name(code: str) -> str:
+
     """Returns the display name for a given language code (reverse lookup)."""
     for name, lang_code in LANGUAGE_CODE_MAP.items():
         if lang_code == code:
