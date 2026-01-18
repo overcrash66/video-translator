@@ -124,12 +124,11 @@ class Wav2LipSyncer:
                 else:
                     results.append(None)
                 
-                # Move to next frame
                 i += 1
-                
+
             except Exception as e:
                 # check for CUDA error
-                if "CUDA" in str(e) and self.device.type == "cuda":
+                if "CUDA" in str(e):
                     logger.warning(f"CUDA Error during face detection on frame {i}: {e}")
                     logger.warning("Switching Face Detector to CPU fallback...")
                     
@@ -194,9 +193,21 @@ class Wav2LipSyncer:
                 break
                 
         if curr_box is None:
-             logger.warning("No faces detected in ANY frame. Falling back to center crop (Quality will be poor).")
-             h, w = frames[0].shape[:2]
-             curr_box = [w//4, h//4, 3*w//4, 3*h//4]
+             logger.error("No faces detected in ANY frame. Skipping Wav2Lip processing (returning original).")
+             # Returing None or skipping? We should probably just copy original video to output
+             # Doing center crop creates terrible artifacts.
+             import shutil
+             # If audio was different, we need to merge audio but keep video frames
+             # But sync_lips contract implies lip sync. If we can't sync, we can't sync.
+             # Better to fail loud or return original with new audio?
+             # Let's return original video frames merged with new audio.
+             
+             # ffmpeg merge video + audio
+             cmd = f'ffmpeg -y -v warning -i "{str(video_path)}" -i "{str(audio_path)}" -c:v copy -c:a aac "{output_path}"'
+             os.system(cmd)
+             return output_path
+             
+        # Forward Fill
              
         # Forward Fill
         for i in range(len(face_boxes)):
