@@ -22,6 +22,9 @@ try:
         from mmcv.ops import RoIAlign
         print("MMCV/MMPose Import: Success")
         
+        import mmdet
+        print("MMDetection Import: Success")
+        
         # Try a CUDA-specific MMCV op if possible?
         # RoIAlign is a compiled op.
         roi_align = RoIAlign(output_size=(7, 7), spatial_scale=1.0)
