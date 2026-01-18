@@ -51,7 +51,7 @@ class TestVisualTranslatorLoadModel:
         translator.load_model()
         
         assert translator.model_loaded is True
-        mock_paddle_ocr.assert_called_once_with(use_angle_cls=True, lang='en', show_log=False)
+        mock_paddle_ocr.assert_called_once_with(use_angle_cls=True, lang='en', enable_mkldnn=False)
     
     @patch('src.translation.visual_translator.PADDLE_AVAILABLE', False)
     def test_load_model_paddle_not_installed(self):
@@ -72,6 +72,7 @@ class TestVisualTranslatorLoadModel:
         
         translator = VisualTranslator()
         translator.model_loaded = True
+        translator.current_engine = "PaddleOCR"  # Ensure engine matches default
         translator.ocr_model = MagicMock()
         
         translator.load_model()

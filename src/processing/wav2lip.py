@@ -57,49 +57,59 @@ class Wav2LipSyncer:
     def detect_faces(self, frames):
         """
         Detect faces in frames using face_alignment.
-        Returns list of [x1, y1, x2, y2]
+        Returns list of [x1, y1, x2, y2]. Selects the largest face if multiple are found.
         """
         results = []
-        # Process in batches to speed up if possible, but FA is typically single image
-        # Batching for FA is manual.
         
         logger.info("Detecting faces...")
         for i, frame in enumerate(tqdm(frames, desc="Detecting Faces")):
             try:
-                preds = self.detector.get_landmarks(frame)
+                # Face Alignment expects RGB
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                preds = self.detector.get_landmarks(rgb_frame)
                 if preds:
-                    # Use first face
-                    lm = preds[0] # (68, 2)
-                    x_min, y_min = np.min(lm, axis=0)
-                    x_max, y_max = np.max(lm, axis=0)
+                    # Choose largest face
+                    best_box = None
+                    max_area = -1
                     
-                    w = x_max - x_min
-                    h = y_max - y_min
+                    for lm in preds:
+                        x_min, y_min = np.min(lm, axis=0)
+                        x_max, y_max = np.max(lm, axis=0)
+                        
+                        w = x_max - x_min
+                        h = y_max - y_min
+                        area = w * h
+                        
+                        if area > max_area:
+                            max_area = area
+                            
+                            # Expand box
+                            scale = 1.6 # typical scaling for Wav2Lip crop
+                            
+                            cx = (x_min + x_max) / 2
+                            cy = (y_min + y_max) / 2
+                            
+                            nw = w * scale
+                            nh = h * scale
+                            
+                            x1 = int(cx - nw / 2)
+                            y1 = int(cy - nh / 2)
+                            x2 = int(cx + nw / 2)
+                            y2 = int(cy + nh / 2)
+                            
+                            # Pad / Clamp
+                            x1 = max(0, x1)
+                            y1 = max(0, y1)
+                            x2 = min(frame.shape[1], x2)
+                            y2 = min(frame.shape[0], y2)
+                            
+                            best_box = [x1, y1, x2, y2]
                     
-                    # Expand box
-                    scale = 1.6 # typical scaling for Wav2Lip crop (include chin/forehead)
-                    
-                    cx = (x_min + x_max) / 2
-                    cy = (y_min + y_max) / 2
-                    
-                    nw = w * scale
-                    nh = h * scale
-                    
-                    x1 = int(cx - nw / 2)
-                    y1 = int(cy - nh / 2)
-                    x2 = int(cx + nw / 2)
-                    y2 = int(cy + nh / 2)
-                    
-                    # Pad / Clamp
-                    x1 = max(0, x1)
-                    y1 = max(0, y1)
-                    x2 = min(frame.shape[1], x2)
-                    y2 = min(frame.shape[0], y2)
-                    
-                    results.append([x1, y1, x2, y2])
+                    results.append(best_box)
                 else:
                     results.append(None)
-            except Exception:
+            except Exception as e:
+                 logger.warning(f"Face detection error on frame {i}: {e}")
                  results.append(None)
                  
         return results
@@ -131,23 +141,37 @@ class Wav2LipSyncer:
         mel_idx_multiplier = 80.0 / fps 
         
         # 3. Detect Faces
-        # Ideally, we detect once and track/interpolate. 
-        # For simple scenes (talking head), detection per frame is OK.
-        # If detection fails, use previous box.
         face_boxes = self.detect_faces(frames)
         
-        # Fill missing boxes
-        last_box = None
+        # Fill missing boxes (Interpolation / Forward-Backward Fill)
+        # Avoid defaulting to center unless absolutely no faces are found anywhere
+        
+        # Find at least one valid box to start with
+        curr_box = None
+        for box in face_boxes:
+            if box is not None:
+                curr_box = box
+                break
+                
+        if curr_box is None:
+             logger.warning("No faces detected in ANY frame. Falling back to center crop (Quality will be poor).")
+             h, w = frames[0].shape[:2]
+             curr_box = [w//4, h//4, 3*w//4, 3*h//4]
+             
+        # Forward Fill
         for i in range(len(face_boxes)):
             if face_boxes[i] is None:
-                if last_box is not None:
-                    face_boxes[i] = last_box
-                else:
-                    # Look ahead? Or just full frame?
-                    # Fallback to center crop?
-                    h, w = frames[i].shape[:2]
-                    face_boxes[i] = [w//4, h//4, 3*w//4, 3*h//4]
-            last_box = face_boxes[i]
+                face_boxes[i] = curr_box
+            else:
+                curr_box = face_boxes[i]
+                
+        # Backward Fill (for leading None frames)
+        for i in range(len(face_boxes)-1, -1, -1):
+            if face_boxes[i] is None:
+                # Should not happen due to forward fill unless start was None and we used the 'first valid' logic
+                # But if we did forward fill with initial curr_box, we are good.
+                # Just in case:
+                 pass
 
         # 4. Batch Inference
         mel_chunks = []

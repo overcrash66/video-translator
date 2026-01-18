@@ -85,5 +85,6 @@ def test_fallback_no_speaker_overlap(video_translator):
         guidance_scale=ANY,
         force_cloning=ANY,
         voice_selector=ANY,
-        source_lang='en'
+        source_lang='en',
+        preferred_voice=ANY
     )

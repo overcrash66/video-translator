@@ -88,7 +88,8 @@ def test_smart_fallback_profile_invalid(video_translator):
         guidance_scale=ANY,
         force_cloning=ANY,
         voice_selector=ANY,
-        source_lang='en'
+        source_lang='en',
+        preferred_voice=ANY
     )
 
 def test_smart_fallback_profile_valid(video_translator):
@@ -153,5 +154,6 @@ def test_smart_fallback_profile_valid(video_translator):
         guidance_scale=ANY,
         force_cloning=ANY,
         voice_selector=ANY,
-        source_lang='en'
+        source_lang='en',
+        preferred_voice=ANY
     )
