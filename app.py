@@ -2,7 +2,7 @@ import gradio as gr
 import os
 import shutil
 from pathlib import Path
-from src.utils import config
+from src.utils import config, languages
 import logging
 from src.core.video_translator import VideoTranslator
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Initialize central controller
 video_translator = VideoTranslator()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, ocr_model, transcription_beam_size, tts_enable_cfg, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -85,7 +85,8 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             tts_enable_cfg=tts_enable_cfg,
             min_speakers=min_speakers,
             max_speakers=max_speakers,
-            ocr_model_name=ocr_model
+            ocr_model_name=ocr_model,
+            tts_voice=tts_voice
         )
         
         final_video_path = None
@@ -235,6 +236,30 @@ def create_ui():
                     value=False,
                     info="Applies Classifier-Free Guidance (scale 1.3) to f5-TTS for more natural speech."
                 )
+                
+                tts_voice = gr.Dropdown(
+                    choices=["Auto"],
+                    label="TTS Voice (Specific Selection)",
+                    value="Auto",
+                    info="Select a specific voice to override default selection. (Updates based on Model/Language)"
+                )
+                
+                # Update voices choices when model or language changes
+                def update_tts_voices(model, lang_name):
+                    try:
+                        lang_code = languages.get_language_code(lang_name)
+                        voices = video_translator.get_available_tts_voices(model, lang_code)
+                        if not voices:
+                            choices = ["Auto"]
+                        else:
+                            choices = ["Auto"] + voices
+                        return gr.update(choices=choices, value="Auto")
+                    except Exception as e:
+                        logger.error(f"Failed to update voices: {e}")
+                        return gr.update(choices=["Auto"], value="Auto")
+
+                tts_model.change(update_tts_voices, inputs=[tts_model, target_language], outputs=[tts_voice])
+                target_language.change(update_tts_voices, inputs=[tts_model, target_language], outputs=[tts_voice])
 
 
                 
@@ -299,7 +324,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, ocr_model, transcription_beam_size, tts_enable_cfg],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg],
             outputs=[video_output, logs_output]
         )
         

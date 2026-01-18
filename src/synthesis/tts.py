@@ -27,8 +27,35 @@ class TTSEngine:
         self.f5_model = None
         
         # Mapping for Piper (language code -> model name)
-        self.piper_map = languages.PIPER_MODEL_MAP
-
+    def get_available_voices(self, model_name: str, language_code: str) -> list:
+        """
+        Returns a list of available voices for the given model and language.
+        """
+        if model_name == "edge":
+            # Flatten male/female lists from voice_map
+            opts = self.voice_map.get(language_code, {})
+            voices = []
+            if not opts and language_code != "en":
+                 # Fallback to English if language not found? Or return empty?
+                 # Let's return empty, UI can handle it or show default
+                 pass
+            
+            for gender in ["Female", "Male"]:
+                v_list = opts.get(gender, [])
+                if isinstance(v_list, str): v_list = [v_list]
+                voices.extend(v_list)
+            return sorted(voices)
+            
+        elif model_name == "piper":
+            # Return the single model name if available
+            val = self.piper_map.get(language_code)
+            return [val] if val else []
+            
+        elif model_name in ["xtts", "f5"]:
+            # Cloning models don't have preset voices (unless we list samples later)
+            return ["Cloning (Reference Audio)"]
+            
+        return []
     def unload_model(self):
         """Unload XTTS and F5 models if loaded."""
         if self.xtts_model:
@@ -166,7 +193,7 @@ class TTSEngine:
             logger.warning(f"Failed to analyze reference audio: {e}")
             return False
 
-    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None, guidance_scale=None, emotion=None, force_cloning=False, voice_selector=None, source_lang=None):
+    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None, guidance_scale=None, emotion=None, force_cloning=False, voice_selector=None, source_lang=None, preferred_voice=None):
         """
         Generates audio using Edge-TTS, Piper, or XTTS.
         model: "edge", "piper", "xtts", or "f5"
@@ -177,6 +204,7 @@ class TTSEngine:
         force_cloning: If True, bypass validation and attempt cloning regardless (for fallback audio)
         voice_selector: Optional callback(speaker_id, voice_list) -> voice_name
         source_lang: Language of the original/reference audio (for cross-lingual detection)
+        preferred_voice: Specific voice name to use (overrides automatic selection for Edge-TTS)
         """
         if not output_path:
             output_path = config.TEMP_DIR / "tts_output.wav"
@@ -231,9 +259,13 @@ class TTSEngine:
         if isinstance(voice_list, str):
             voice_list = [voice_list]
         
-        # Select voice based on speaker_id
-        voice_index = 0
-        if speaker_id:
+        # Select voice
+        voice = voice_list[0]
+        
+        if preferred_voice and preferred_voice != "Auto":
+            voice = preferred_voice
+            logger.info(f"Using preferred voice: {voice}")
+        elif speaker_id:
             # deterministic voice selection via callback
             if voice_selector:
                 voice = voice_selector(speaker_id, voice_list)
@@ -248,8 +280,6 @@ class TTSEngine:
                     voice = voice_list[voice_index]
                 except (ValueError, IndexError):
                     voice = voice_list[0]
-        else:
-             voice = voice_list[0]
         
         logger.info(f"Generating TTS: lang='{language}', gender='{gender}', speaker='{speaker_id}' -> voice='{voice}'")
         

@@ -140,6 +140,12 @@ class VideoTranslator:
         # In the future, we can call specific load methods here if needed
         pass
 
+    self.get_available_voices = self.tts_engine.get_available_voices
+
+    def get_available_tts_voices(self, model_name, language_code):
+        """Wrapper to get available voices from TTSEngine."""
+        return self.tts_engine.get_available_voices(model_name, language_code)
+
     def process_video(self, 
                       video_path, 
                       source_lang, 
@@ -161,7 +167,8 @@ class VideoTranslator:
                       diarization_model="pyannote/SpeechBrain (Default)",
                       min_speakers=1,
                       max_speakers=10,
-                      ocr_model_name="PaddleOCR"):
+                      ocr_model_name="PaddleOCR",
+                      tts_voice=None):
         """
         Orchestrates the full pipeline as a generator.
         Yields: ("log", message) or ("progress", value, desc) or ("result", path)
@@ -338,7 +345,8 @@ class VideoTranslator:
                 guidance_scale=1.3 if tts_enable_cfg else None,
                 force_cloning=use_force_cloning,
                 voice_selector=self._get_assigned_voice, # Pass function or we handle mapping here
-                source_lang=source_code  # For cross-lingual detection
+                source_lang=source_code,  # For cross-lingual detection
+                preferred_voice=tts_voice
             )
              
              if generated_path and Path(generated_path).exists() and Path(generated_path).stat().st_size > 100:
