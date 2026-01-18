@@ -58,15 +58,30 @@ class Wav2LipSyncer:
         """
         Detect faces in frames using face_alignment.
         Returns list of [x1, y1, x2, y2]. Selects the largest face if multiple are found.
+        Handles CUDA errors by falling back to CPU.
         """
         results = []
         
         logger.info("Detecting faces...")
-        for i, frame in enumerate(tqdm(frames, desc="Detecting Faces")):
+        
+        # We need to restart detection if fallback happens, or handle per-frame.
+        # Since 'frames' is a list, we can just continue from current index if we are careful.
+        # But 'enumerate' in loop makes it tricky to retry current frame cleanly without complex iterator logic.
+        # Simpler approach: Iterate by index.
+        
+        i = 0
+        while i < len(frames):
+            frame = frames[i]
+            
+            # Progress bar update (manual)
+            if i % 100 == 0:
+                logger.debug(f"Detecting face {i}/{len(frames)}")
+
             try:
                 # Face Alignment expects RGB
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 preds = self.detector.get_landmarks(rgb_frame)
+                
                 if preds:
                     # Choose largest face
                     best_box = None
@@ -108,9 +123,34 @@ class Wav2LipSyncer:
                     results.append(best_box)
                 else:
                     results.append(None)
+                
+                # Move to next frame
+                i += 1
+                
             except Exception as e:
-                 logger.warning(f"Face detection error on frame {i}: {e}")
-                 results.append(None)
+                # check for CUDA error
+                if "CUDA" in str(e) and self.device.type == "cuda":
+                    logger.warning(f"CUDA Error during face detection on frame {i}: {e}")
+                    logger.warning("Switching Face Detector to CPU fallback...")
+                    
+                    # Switch to CPU globally for this instance
+                    self.device = torch.device("cpu")
+                    
+                    # Re-init detector on CPU
+                    del self.detector
+                    torch.cuda.empty_cache()
+                    
+                    self.detector = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, 
+                                                     flip_input=False, device='cpu')
+                                                     
+                    # Retry CURRENT frame (do not increment i)
+                    logger.info("Retrying current frame on CPU...")
+                    continue
+                    
+                else:
+                    logger.warning(f"Face detection error on frame {i}: {e}")
+                    results.append(None)
+                    i += 1
                  
         return results
 
