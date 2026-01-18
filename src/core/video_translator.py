@@ -336,7 +336,8 @@ class VideoTranslator:
                 speaker_id=best_speaker if enable_diarization else None,
                 guidance_scale=1.3 if tts_enable_cfg else None,
                 force_cloning=use_force_cloning,
-                voice_selector=self._get_assigned_voice # Pass function or we handle mapping here
+                voice_selector=self._get_assigned_voice, # Pass function or we handle mapping here
+                source_lang=source_code  # For cross-lingual detection
             )
              
              if generated_path and Path(generated_path).exists() and Path(generated_path).stat().st_size > 100:

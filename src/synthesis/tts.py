@@ -166,7 +166,7 @@ class TTSEngine:
             logger.warning(f"Failed to analyze reference audio: {e}")
             return False
 
-    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None, guidance_scale=None, emotion=None, force_cloning=False, voice_selector=None):
+    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None, guidance_scale=None, emotion=None, force_cloning=False, voice_selector=None, source_lang=None):
         """
         Generates audio using Edge-TTS, Piper, or XTTS.
         model: "edge", "piper", "xtts", or "f5"
@@ -176,6 +176,7 @@ class TTSEngine:
         emotion: (XTTS) Emotion preset
         force_cloning: If True, bypass validation and attempt cloning regardless (for fallback audio)
         voice_selector: Optional callback(speaker_id, voice_list) -> voice_name
+        source_lang: Language of the original/reference audio (for cross-lingual detection)
         """
         if not output_path:
             output_path = config.TEMP_DIR / "tts_output.wav"
@@ -196,10 +197,15 @@ class TTSEngine:
              should_attempt_clone = force_cloning
              
              if not force_cloning:
-                 # Strict validation for cloning models
-                 # [Fix] F5-TTS is robust to shorter audio (1.0s), XTTS needs 2.0s to avoid crashing
-                 min_dur = 1.0 if model == "f5" else 2.0
-                 should_attempt_clone = self._check_reference_audio(speaker_wav_path, min_duration=min_dur)
+                 # Cross-lingual check: F5/XTTS cannot handle cloning across languages
+                 if source_lang and source_lang != language:
+                     logger.warning(f"Cross-lingual synthesis (source='{source_lang}', target='{language}'). Falling back to Edge-TTS.")
+                     should_attempt_clone = False
+                 else:
+                     # Strict validation for cloning models
+                     # [Fix] F5-TTS is robust to shorter audio (1.0s), XTTS needs 2.0s to avoid crashing
+                     min_dur = 1.0 if model == "f5" else 2.0
+                     should_attempt_clone = self._check_reference_audio(speaker_wav_path, min_duration=min_dur)
              
              if should_attempt_clone:
                  if model == "xtts":
