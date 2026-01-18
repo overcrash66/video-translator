@@ -39,7 +39,7 @@ def test_smart_fallback_profile_invalid(video_translator):
     video_translator.diarizer.detect_genders.return_value = {}
     
     # Mock TTS validation failure
-    video_translator.tts_engine._check_reference_audio.return_value = False # INVALID PROFILE
+    video_translator.tts_engine.validate_reference.return_value = False # INVALID PROFILE
     
     # Create dummy output file for validation checks
     with open("output.wav", "wb") as f:
@@ -87,7 +87,8 @@ def test_smart_fallback_profile_invalid(video_translator):
         speaker_id='SPEAKER_00', 
         guidance_scale=ANY,
         force_cloning=ANY,
-        voice_selector=ANY # Added voice_selector
+        voice_selector=ANY,
+        source_lang='en'
     )
 
 def test_smart_fallback_profile_valid(video_translator):
@@ -151,5 +152,6 @@ def test_smart_fallback_profile_valid(video_translator):
         speaker_id='SPEAKER_00', 
         guidance_scale=ANY,
         force_cloning=ANY,
-        voice_selector=ANY # Added voice_selector
+        voice_selector=ANY,
+        source_lang='en'
     )

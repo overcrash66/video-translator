@@ -84,5 +84,6 @@ def test_fallback_no_speaker_overlap(video_translator):
         speaker_id=None, # No speaker identified
         guidance_scale=ANY,
         force_cloning=ANY,
-        voice_selector=ANY
+        voice_selector=ANY,
+        source_lang='en'
     )

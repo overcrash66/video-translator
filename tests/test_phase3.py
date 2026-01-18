@@ -26,13 +26,15 @@ def test_get_prompt_llama():
     prompt = t.get_prompt("Hello", "en", "es", context_prev="Previous")
     assert "You are a professional video translator" in prompt
     assert "Context (Previous Line): Previous" in prompt
-    assert "Translate from en to es" in prompt
+    # Implementation uses get_language_name() to convert codes to full names
+    assert "Translate from English to Spanish" in prompt
 
 def test_get_prompt_alma():
     from src.translation.text_translator import LLMTranslator
     t = LLMTranslator("haoranxu/ALMA-7B-R")
-    prompt = t.get_prompt("Hello", "English", "Spanish")
-    # ALMA format: "Translate this from {src} to {tgt}:\n{src}: {text}\n{tgt}:"
+    # Use language CODES, not names, as the implementation calls get_language_name() to convert
+    prompt = t.get_prompt("Hello", "en", "es")
+    # ALMA format: "Translate this from {src_name} to {tgt_name}:\n{src_name}: {text}\n{tgt_name}:"
     assert "Translate this from English to Spanish" in prompt
     assert "English: Hello" in prompt
     assert "Spanish:" in prompt
