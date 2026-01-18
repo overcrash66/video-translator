@@ -1,7 +1,7 @@
 gradio
-torch --index-url https://download.pytorch.org/whl/cu128
-torchaudio --index-url https://download.pytorch.org/whl/cu128
-torchvision --index-url https://download.pytorch.org/whl/cu128
+torch==2.3.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+torchaudio==2.3.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+torchvision==0.18.1+cu121 --index-url https://download.pytorch.org/whl/cu121
 transformers
 accelerate<0.28.0
 soundfile
@@ -31,7 +31,7 @@ peft>=0.10.0
 
 openmim
 mmengine
-mmcv>=2.0.0
+mmcv==2.2.0
 mmdet>=3.0.0
 mmpose>=1.0.0
 easyocr

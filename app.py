@@ -336,4 +336,4 @@ if __name__ == "__main__":
 
     demo = create_ui()
     demo.queue() # Enable queueing for progress bars
-    demo.launch(server_name="127.0.0.1", server_port=7860, share=False)
+    demo.launch(server_name="127.0.0.1", share=False)
