@@ -140,7 +140,7 @@ class VideoTranslator:
         # In the future, we can call specific load methods here if needed
         pass
 
-    self.get_available_voices = self.tts_engine.get_available_voices
+
 
     def get_available_tts_voices(self, model_name, language_code):
         """Wrapper to get available voices from TTSEngine."""
