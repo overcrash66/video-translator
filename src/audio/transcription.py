@@ -150,9 +150,23 @@ class Transcriber:
             self.model = WhisperModel(self.model_size, device=self.device, compute_type=compute_type)
             logger.info("Faster-Whisper model loaded.")
         except Exception as e:
+            if "CUDA" in str(e) and self.device == "cuda":
+                logger.warning(f"CUDA Error loading Whisper: {e}")
+                logger.warning("Switching to CPU fallback for Transcription...")
+                self.device = "cpu"
+                # Recursive retry on CPU
+                return self.load_model(size)
+
             logger.error(f"Failed to load Faster-Whisper model: {e}")
             logger.info("Attempting to load 'base' model as fallback.")
-            self.model = WhisperModel("base", device=self.device, compute_type="int8")
+            try:
+                self.model = WhisperModel("base", device=self.device, compute_type="int8")
+            except Exception as e2:
+                 logger.error(f"Fallback to base model failed: {e2}")
+                 if self.device == "cuda":
+                     logger.warning("Attempting final fallback to CPU base model...")
+                     self.device = "cpu"
+                     self.model = WhisperModel("base", device="cpu", compute_type="int8")
 
     def unload_model(self):
         if self.model:

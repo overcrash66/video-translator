@@ -62,6 +62,16 @@ class AudioSeparator:
             self.loaded = True
             logger.info("HDemucs loaded successfully.")
         except Exception as e:
+            if "CUDA" in str(e) and self.device == "cuda":
+                logger.warning(f"CUDA Error loading HDemucs: {e}")
+                logger.warning("Switching to CPU fallback for Audio Separator...")
+                self.device = "cpu"
+                if hasattr(self.model, 'to'):
+                    self.model = self.model.to("cpu")
+                # Retry load
+                self._load_demucs()
+                return
+
             logger.error(f"Failed to load HDemucs: {e}")
             self.loaded = False
 

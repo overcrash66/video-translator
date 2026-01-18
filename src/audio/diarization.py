@@ -97,6 +97,14 @@ class Diarizer:
             self.current_backend = "speechbrain"
             logger.info(f"SpeechBrain model loaded on {self.device}")
         except Exception as e:
+            if "CUDA" in str(e) and self.device.type == "cuda":
+                logger.warning(f"CUDA Error loading SpeechBrain: {e}")
+                logger.warning("Switching to CPU fallback for Diarization (SpeechBrain)...")
+                self.device = torch.device("cpu")
+                # Retry
+                self._load_speechbrain()
+                return
+
             logger.error(f"Failed to load SpeechBrain model: {e}")
             raise
 
@@ -308,6 +316,13 @@ class Diarizer:
             return segments
 
         except Exception as e:
+            if "CUDA" in str(e) and self.device.type == "cuda":
+                logger.warning(f"CUDA Error in PyAnnote: {e}")
+                logger.warning("Switching to CPU fallback for Diarization (PyAnnote)...")
+                self.device = torch.device("cpu")
+                # Retry
+                return self._run_pyannote(audio_path, model_name)
+
             logger.error(f"PyAnnote diarization failed: {e}")
             return []
 

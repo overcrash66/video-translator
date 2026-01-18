@@ -37,6 +37,20 @@ class F5TTSWrapper:
             logger.error("F5-TTS module not found. Install with `pip install f5-tts`.")
             raise
         except Exception as e:
+            if "CUDA" in str(e) and self.device == "cuda":
+                logger.warning(f"CUDA Error loading F5-TTS: {e}")
+                logger.warning("Switching to CPU fallback for F5-TTS...")
+                self.device = "cpu"
+                if self.pipeline:
+                    del self.pipeline
+                    self.pipeline = None
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
+                # Retry
+                self.load_model()
+                return
+
             logger.error(f"Failed to load F5-TTS: {e}")
             raise
 

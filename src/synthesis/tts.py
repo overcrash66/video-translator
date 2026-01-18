@@ -86,6 +86,20 @@ class TTSEngine:
             self.xtts_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
             logger.info("XTTS-v2 model loaded.")
         except Exception as e:
+            if "CUDA" in str(e) and self.device == "cuda":
+                logger.warning(f"CUDA Error loading XTTS: {e}")
+                logger.warning("Switching to CPU fallback for XTTS...")
+                self.device = "cpu"
+                if self.xtts_model:
+                     del self.xtts_model
+                     self.xtts_model = None
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    
+                # Retry
+                self._load_xtts()
+                return
+
             logger.error(f"Failed to load XTTS model: {e}")
             raise
 

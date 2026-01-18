@@ -38,19 +38,28 @@ class LLMTranslator:
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, trust_remote_code=True)
             
-            # Use 4-bit quantization
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4"
-            )
+            # Use 4-bit quantization ONLY on CUDA
+            quantization_config = None
+            if self.device == "cuda":
+                quantization_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4"
+                )
             
+            # Load model
+            # For CPU, we might need to be explicit about dtype to avoid OOM or Half errors
+            torch_dtype = "auto"
+            if self.device == "cpu":
+                torch_dtype = torch.float32
+
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.model_id, 
-                device_map="auto", 
+                device_map="auto" if self.device == "cuda" else "cpu", 
                 quantization_config=quantization_config,
-                trust_remote_code=True
+                trust_remote_code=True,
+                torch_dtype=torch_dtype
             )
             
             # Ensure proper pad token
@@ -63,6 +72,19 @@ class LLMTranslator:
             logger.info(f"{self.model_id} loaded successfully.")
             
         except Exception as e:
+            if "CUDA" in str(e) and self.device == "cuda":
+                logger.warning(f"CUDA Error loading LLM: {e}")
+                logger.warning("Switching to CPU fallback for LLM (Warning: Slow, No Quantization)...")
+                # Unload partial
+                self.model = None
+                self.tokenizer = None
+                if torch.cuda.is_available(): torch.cuda.empty_cache()
+                
+                self.device = "cpu"
+                # Retry
+                self.load_model()
+                return
+
             logger.error(f"Failed to load LLM: {e}")
             raise
 

@@ -18,6 +18,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from src.utils import config
+from src.processing.wav2lip import Wav2LipSyncer
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,13 @@ class LipSyncer:
         self.extra_margin = 10
         self.version = "v15"
         self.parsing_mode = "jaw"
+
+        self.wav2lip_engine = None
+        
+    def _get_wav2lip(self):
+        if self.wav2lip_engine is None:
+            self.wav2lip_engine = Wav2LipSyncer()
+        return self.wav2lip_engine
         
     def _setup_paths(self):
         """Add MuseTalk directories to Python path."""
@@ -180,6 +188,19 @@ class LipSyncer:
             return False
             
         except Exception as e:
+            if "CUDA" in str(e) and self.device.type == "cuda":
+                logger.warning(f"CUDA Error encountered during MuseTalk loading: {e}")
+                logger.warning("Switching to CPU fallback for MuseTalk...")
+                
+                # Cleanup potential partial loads
+                self.unload_model()
+                
+                # Switch to CPU
+                self.device = torch.device("cpu")
+                
+                # Retry loading
+                return self.load_model()
+            
             logger.error(f"Failed to load MuseTalk models: {e}")
             self.model_loaded = False
             return False
@@ -217,8 +238,7 @@ class LipSyncer:
         self.model_loaded = False
         logger.info("MuseTalk models unloaded.")
 
-    @torch.no_grad()
-    def sync_lips(self, video_path: str, audio_path: str, output_path: str) -> str:
+    def sync_lips(self, video_path: str, audio_path: str, output_path: str, model_name: str = "musetalk") -> str:
         """
         Synchronizes lips in video_path to match audio_path.
         
@@ -226,10 +246,25 @@ class LipSyncer:
             video_path: Path to input video with face
             audio_path: Path to audio file to sync lips to
             output_path: Path for output video
+            model_name: 'musetalk' or 'wav2lip'
             
         Returns:
-            Path to output video, or input video path if lip-sync fails
+            Path to output video
         """
+        if model_name.lower() == "wav2lip":
+            try:
+                engine = self._get_wav2lip()
+                return engine.sync_lips(video_path, audio_path, output_path)
+            except Exception as e:
+                logger.error(f"Wav2Lip failed: {e}")
+                return video_path # Fallback or Raise?
+
+        # Default to MuseTalk
+        return self._sync_musetalk(video_path, audio_path, output_path)
+
+    @torch.no_grad()
+    def _sync_musetalk(self, video_path: str, audio_path: str, output_path: str) -> str:
+        """Original MuseTalk pipeline"""
         # Ensure models are loaded
         if not self.model_loaded:
             if not self.load_model():
