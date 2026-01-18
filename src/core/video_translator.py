@@ -160,7 +160,8 @@ class VideoTranslator:
                       tts_enable_cfg=False,
                       diarization_model="pyannote/SpeechBrain (Default)",
                       min_speakers=1,
-                      max_speakers=10):
+                      max_speakers=10,
+                      ocr_model_name="PaddleOCR"):
         """
         Orchestrates the full pipeline as a generator.
         Yields: ("log", message) or ("progress", value, desc) or ("result", path)
@@ -383,10 +384,10 @@ class VideoTranslator:
              try:
                  # Pass source and target language for proper text translation
                  self.visual_translator.translate_video_text(
-                     str(video_path), 
                      str(visual_out),
                      target_lang=target_code,
-                     source_lang=source_code
+                     source_lang=source_code,
+                     ocr_engine=ocr_model_name
                  )
                  if visual_out.exists():
                      video_path = visual_out

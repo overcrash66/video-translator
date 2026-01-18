@@ -31,41 +31,63 @@ class VisualTranslator:
         self.ocr_model = None
         self.model_loaded = False
         self.translator_cache = {}
+        self.current_engine = None
         
-    def load_model(self, source_lang: str = 'en'):
-        """Load PaddleOCR model for the specified source language."""
-        if self.model_loaded:
-            return
-            
-        if not PADDLE_AVAILABLE:
-            logger.warning("PaddleOCR not installed. Visual translation disabled.")
-            return
 
-        logger.info(f"Loading PaddleOCR model for language: {source_lang}...")
-        try:
-            # Map common language codes to PaddleOCR lang codes
-            paddle_lang_map = {
-                'en': 'en',
-                'ar': 'ar',
-                'zh': 'ch',  # Chinese
-                'fr': 'fr',
-                'de': 'german',
-                'es': 'es',
-                'it': 'it',
-                'ja': 'japan',
-                'ko': 'korean',
-                'ru': 'ru',
-                'pt': 'pt',
-            }
-            ocr_lang = paddle_lang_map.get(source_lang, 'en')
+    def load_model(self, source_lang: str = 'en', ocr_engine: str = "PaddleOCR"):
+        """
+        Load OCR model (PaddleOCR or EasyOCR).
+        ocr_engine: "PaddleOCR" or "EasyOCR"
+        """
+        if self.model_loaded and self.current_engine == ocr_engine:
+            return
             
-            # use_angle_cls=True for robust detection of rotated text
-            self.ocr_model = PaddleOCR(use_angle_cls=True, lang=ocr_lang)
-            self.model_loaded = True
-            logger.info("PaddleOCR loaded successfully.")
-        except Exception as e:
-            logger.error(f"Failed to load PaddleOCR: {e}")
-            raise
+        # Unload previous model if engine changed
+        if self.model_loaded and self.current_engine != ocr_engine:
+            self.unload_model()
+
+        self.current_engine = ocr_engine
+        
+        if ocr_engine == "PaddleOCR":
+            if not PADDLE_AVAILABLE:
+                logger.warning("PaddleOCR not installed. Visual translation disabled.")
+                return
+
+            logger.info(f"Loading PaddleOCR model for language: {source_lang}...")
+            try:
+                # Map common language codes to PaddleOCR lang codes
+                paddle_lang_map = {
+                    'en': 'en', 'ar': 'ar', 'zh': 'ch', 'fr': 'fr', 'de': 'german',
+                    'es': 'es', 'it': 'it', 'ja': 'japan', 'ko': 'korean', 'ru': 'ru', 'pt': 'pt',
+                }
+                ocr_lang = paddle_lang_map.get(source_lang, 'en')
+                
+                # use_angle_cls=True for robust detection of rotated text
+                # enable_mkldnn=False to fix oneDNN crash on Windows
+                self.ocr_model = PaddleOCR(use_angle_cls=True, lang=ocr_lang, enable_mkldnn=False)
+                self.model_loaded = True
+                logger.info("PaddleOCR loaded successfully.")
+            except Exception as e:
+                logger.error(f"Failed to load PaddleOCR: {e}")
+                raise
+                
+        elif ocr_engine == "EasyOCR":
+            logger.info(f"Loading EasyOCR model for language: {source_lang}...")
+            try:
+                import easyocr
+                # Map common language codes to EasyOCR
+                # EasyOCR uses standard codes mostly, but let's be safe
+                if source_lang == 'zh': source_lang = 'ch_sim'
+                
+                self.ocr_model = easyocr.Reader([source_lang, 'en']) # Always include English for robustness
+                self.model_loaded = True
+                logger.info("EasyOCR loaded successfully.")
+            except ImportError:
+                 logger.error("EasyOCR not installed. Run `pip install easyocr`.")
+                 raise
+            except Exception as e:
+                logger.error(f"Failed to load EasyOCR: {e}")
+                raise
 
     def unload_model(self):
         """Unload OCR model to free memory."""
@@ -73,6 +95,7 @@ class VisualTranslator:
             del self.ocr_model
             self.ocr_model = None
         self.model_loaded = False
+        self.current_engine = None
         self.translator_cache = {}
         logger.info("VisualTranslator model unloaded.")
 
@@ -165,31 +188,21 @@ class VisualTranslator:
 
     def translate_video_text(self, video_path: str, output_path: str, 
                               target_lang: str = 'fr', source_lang: str = 'en',
+                              ocr_engine: str = "PaddleOCR",
                               process_interval: int = 1) -> str:
         """
         Process video to detect and translate text.
-        
-        Args:
-            video_path: Path to input video
-            output_path: Path to save output video
-            target_lang: Target language code (e.g., 'fr', 'es')
-            source_lang: Source language code for OCR (e.g., 'en', 'ar')
-            process_interval: Process every Nth frame (1 = all frames, higher = faster but less accurate)
-            
-        Returns:
-            Path to output video
         """
-        if not self.model_loaded:
-            self.load_model(source_lang)
+        if not self.model_loaded or self.current_engine != ocr_engine:
+            self.load_model(source_lang, ocr_engine)
             
-        if not PADDLE_AVAILABLE or not self.model_loaded:
-            logger.warning("Skipping visual translation (PaddleOCR not available).")
+        if not self.model_loaded:
+            logger.warning(f"Skipping visual translation ({ocr_engine} not available).")
             import shutil
             shutil.copy(video_path, output_path)
             return output_path
 
-        logger.info(f"Starting visual text translation: {video_path}")
-        logger.info(f"Source language: {source_lang}, Target language: {target_lang}")
+        logger.info(f"Starting visual text translation: {video_path} using {ocr_engine}")
         
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
@@ -208,91 +221,68 @@ class VisualTranslator:
         
         frame_count = 0
         processed_count = 0
-        text_regions_count = 0
         
-        # Cache for text detection results (to apply to intermediate frames)
+        # Cache for text detection results
         last_boxes = []
-        last_original_texts = []
-        last_translated_texts = []
         last_mask = None
-        
-        logger.info(f"Processing {total_frames} frames...")
+        last_translated_texts = []
+        last_original_texts = []
         
         while cap.isOpened():
             ret, frame = cap.read()
-            if not ret:
-                break
+            if not ret: break
             
-            # Process frame at specified interval
             if frame_count % process_interval == 0:
                 try:
-                    # Run OCR detection
-                    result = self.ocr_model.ocr(frame)
+                    boxes = []
+                    original_texts = []
                     
-                    if result and result[0]:
-                        boxes = []
-                        original_texts = []
-                        translated_texts = []
-                        
-                        for line in result[0]:
-                            box = line[0]  # Bounding box coordinates
-                            text = line[1][0]  # Detected text
-                            confidence = line[1][1]  # Confidence score
-                            
-                            # Only process high-confidence detections
-                            if confidence > 0.5 and len(text.strip()) >= 2:
-                                boxes.append(box)
+                    if ocr_engine == "PaddleOCR":
+                        result = self.ocr_model.ocr(frame)
+                        if result and result[0]:
+                             for line in result[0]:
+                                boxes.append(line[0])
+                                original_texts.append(line[1][0])
+                                
+                    elif ocr_engine == "EasyOCR":
+                        # EasyOCR returns (bbox, text, prob)
+                        # bbox is [ [x1,y1], [x2,y2], [x3,y3], [x4,y4] ]
+                        results = self.ocr_model.readtext(frame)
+                        for (bbox, text, prob) in results:
+                            if prob > 0.4:
+                                boxes.append(bbox)
                                 original_texts.append(text)
-                                
-                                # Translate the text
-                                translated = self._translate_text(text, target_lang)
-                                translated_texts.append(translated)
-                                
-                                if translated != text:
-                                    text_regions_count += 1
-                                    logger.debug(f"Translated: '{text}' -> '{translated}'")
-                        
-                        if boxes:
-                            # Create mask and inpaint
-                            last_mask = self._create_text_mask(frame, boxes)
-                            frame = self._inpaint_text_regions(frame, last_mask)
-                            
-                            # Overlay translated text
-                            frame = self._overlay_translated_text(
-                                frame, boxes, original_texts, translated_texts
-                            )
-                            
-                            # Cache for intermediate frames
-                            last_boxes = boxes
-                            last_original_texts = original_texts
-                            last_translated_texts = translated_texts
-                            
-                    processed_count += 1
                     
+                    if boxes:
+                         translated_texts = []
+                         for text in original_texts:
+                             translated_texts.append(self._translate_text(text, target_lang))
+                             
+                         last_mask = self._create_text_mask(frame, boxes)
+                         frame = self._inpaint_text_regions(frame, last_mask)
+                         frame = self._overlay_translated_text(frame, boxes, original_texts, translated_texts)
+                         
+                         last_boxes = boxes
+                         last_original_texts = original_texts
+                         last_translated_texts = translated_texts
+                    else:
+                        last_boxes = [] # clear cache if no text
+                        
+                    processed_count += 1
                 except Exception as e:
-                    logger.warning(f"Error processing frame {frame_count}: {e}")
-            
+                     logger.warning(f"Error processing frame {frame_count}: {e}")
             else:
-                # Apply cached translations to intermediate frames (if any)
-                if last_boxes and last_mask is not None:
-                    try:
-                        frame = self._inpaint_text_regions(frame, last_mask)
-                        frame = self._overlay_translated_text(
-                            frame, last_boxes, last_original_texts, last_translated_texts
-                        )
-                    except Exception as e:
-                        logger.warning(f"Error applying cached translation to frame {frame_count}: {e}")
-            
+                 # Apply cached
+                 if last_boxes and last_mask is not None:
+                      try:
+                          frame = self._inpaint_text_regions(frame, last_mask)
+                          frame = self._overlay_translated_text(frame, last_boxes, last_original_texts, last_translated_texts)
+                      except: pass
+                      
             out.write(frame)
             frame_count += 1
+            if frame_count % 100 == 0: logger.info(f"Processed {frame_count}/{total_frames}...")
             
-            # Log progress every 100 frames
-            if frame_count % 100 == 0:
-                logger.info(f"Processed {frame_count}/{total_frames} frames...")
-                
         cap.release()
         out.release()
-        
-        logger.info(f"Visual translation complete. Processed {processed_count} frames, "
-                   f"translated {text_regions_count} text regions. Saved to {output_path}")
         return output_path

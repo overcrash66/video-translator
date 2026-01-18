@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Initialize central controller
 video_translator = VideoTranslator()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, ocr_model, transcription_beam_size, tts_enable_cfg, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -84,7 +84,8 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             transcription_beam_size=transcription_beam_size,
             tts_enable_cfg=tts_enable_cfg,
             min_speakers=min_speakers,
-            max_speakers=max_speakers
+            max_speakers=max_speakers,
+            ocr_model_name=ocr_model
         )
         
         final_video_path = None
@@ -273,7 +274,21 @@ def create_ui():
                 enable_visual_translation = gr.Checkbox(
                     label="Enable Visual Text Translation (OCR + Inpainting)",
                     value=False,
-                    info="Detects and translates text in the video (e.g. signs, slides). Requires PaddleOCR."
+                    info="Detects and translates text in the video (e.g. signs, slides)."
+                )
+                
+                ocr_model = gr.Dropdown(
+                    choices=["PaddleOCR", "EasyOCR"],
+                    label="OCR Model",
+                    value="PaddleOCR",
+                    visible=False,
+                    info="Select OCR engine. EasyOCR is more robust on Windows. PaddleOCR is faster."
+                )
+                
+                enable_visual_translation.change(
+                    fn=lambda x: gr.update(visible=x),
+                    inputs=[enable_visual_translation],
+                    outputs=[ocr_model]
                 )
 
                 process_btn = gr.Button("Process Video", variant="primary")
@@ -284,7 +299,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, transcription_beam_size, tts_enable_cfg],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, ocr_model, transcription_beam_size, tts_enable_cfg],
             outputs=[video_output, logs_output]
         )
         
