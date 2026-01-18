@@ -392,6 +392,7 @@ class VideoTranslator:
              try:
                  # Pass source and target language for proper text translation
                  self.visual_translator.translate_video_text(
+                     str(video_path),
                      str(visual_out),
                      target_lang=target_code,
                      source_lang=source_code,
