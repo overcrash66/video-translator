@@ -10,7 +10,7 @@ faster-whisper
 edge-tts
 deep-translator
 python-dotenv
-numpy>=2.1
+numpy<2
 scipy
 coqui-tts
 pyannote.audio
