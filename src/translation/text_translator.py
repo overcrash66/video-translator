@@ -102,6 +102,7 @@ class LLMTranslator:
             # Reference: https://github.com/fe1ixxu/ALMA
             # NOTE: ALMA expects full English names (e.g. English, French)
             prompt = f"Translate this from {source_name} to {target_name}:\n{source_name}: {text}\n{target_name}:"
+            logger.info(f"ALMA Prompt: {repr(prompt)}")
             return prompt
             
         else:
