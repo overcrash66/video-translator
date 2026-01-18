@@ -146,43 +146,109 @@ class VisualTranslator:
                 
             pts = np.array(box, dtype=np.int32)
             
-            # Calculate text position (center of bounding box)
-            x_coords = pts[:, 0]
-            y_coords = pts[:, 1]
-            x_center = int(np.mean(x_coords))
-            y_center = int(np.mean(y_coords))
+            # Get bounding rect
+            x, y, w, h = cv2.boundingRect(pts)
             
-            # Estimate font scale based on box height
-            box_height = max(y_coords) - min(y_coords)
-            font_scale = max(0.4, box_height / 30)
-            thickness = max(1, int(font_scale))
+            # Calculate center
+            center_x = x + w // 2
+            center_y = y + h // 2
             
-            # Get text size for centering
+            # Initial font settings
             font = cv2.FONT_HERSHEY_SIMPLEX
-            (text_width, text_height), baseline = cv2.getTextSize(
-                trans_text, font, font_scale, thickness
-            )
+            thickness = max(1, int(h / 40))
             
-            # Position text centered on the original location
-            x_pos = x_center - text_width // 2
-            y_pos = y_center + text_height // 2
+            # Adaptive text fitting
+            # 1. Split into words
+            words = trans_text.split()
+            if not words: continue
             
-            # Draw background rectangle for better visibility
-            padding = 4
-            cv2.rectangle(
-                result,
-                (x_pos - padding, y_pos - text_height - padding),
-                (x_pos + text_width + padding, y_pos + padding),
-                (255, 255, 255),  # White background
-                -1
-            )
+            best_scale = 0.1
+            best_lines = []
+            best_text_height = 0
             
-            # Draw translated text
-            cv2.putText(
-                result, trans_text, (x_pos, y_pos),
-                font, font_scale, (0, 0, 0),  # Black text
-                thickness, cv2.LINE_AA
-            )
+            # Binary search-ish approach or iterative downscaling involves complexity
+            # Simpler approach: Iteratively reduce scale until it fits or hits minimum
+            
+            # Start with a scale that fits height-wise for a single line
+            # usually h * 0.8 is good coverage
+            # scale 1.0 is ~22px height in Hershy Simplex
+            initial_scale = min(2.0, (h * 0.8) / 22.0)
+            
+            current_scale = initial_scale
+            min_scale = 0.3
+            
+            # Try to wrap lines
+            while current_scale >= min_scale:
+                lines = []
+                current_line = []
+                
+                # Simple word wrap
+                for word in words:
+                    test_line = current_line + [word]
+                    (fw, fh), _ = cv2.getTextSize(" ".join(test_line), font, current_scale, thickness)
+                    if fw <= w:
+                        current_line = test_line
+                    else:
+                        if current_line:
+                            lines.append(" ".join(current_line))
+                        current_line = [word]
+                        # Check if single word is too wide
+                        (fw, fh), _ = cv2.getTextSize(word, font, current_scale, thickness)
+                        if fw > w:
+                            # If single word is too wide, we must reduce scale
+                            lines = [] # Fail this scale
+                            break
+                            
+                if current_line:
+                    lines.append(" ".join(current_line))
+                
+                if not lines:
+                    current_scale -= 0.1
+                    continue
+                    
+                # Check total height
+                total_text_h = len(lines) * fh + (len(lines)-1) * int(fh * 0.5) # line spacing
+                if total_text_h <= h:
+                    best_scale = current_scale
+                    best_lines = lines
+                    best_text_height = total_text_h
+                    break # Found a fit!
+                
+                current_scale -= 0.1
+            
+            if not best_lines:
+                # If fitting failed (words too long/box too small), force fit single line by scaling width?
+                # Or just use min scale and single line clipped
+                best_scale = min_scale
+                best_lines = [trans_text]
+                
+            # Draw text
+            (fw, fh), baseline = cv2.getTextSize("Test", font, best_scale, thickness)
+            line_height = int(fh * 1.5)
+            
+            start_y = center_y - (len(best_lines) * line_height) // 2 + fh // 2
+            
+            # Draw box background
+            # Slightly larger than bounding box to cover artifacts
+            bg_pad = 2
+            cv2.rectangle(result, (x-bg_pad, y-bg_pad), (x+w+bg_pad, y+h+bg_pad), (255, 255, 255), -1)
+            
+            curr_y = start_y
+            for line in best_lines:
+                # Center horizontally
+                (lw, lh), _ = cv2.getTextSize(line, font, best_scale, thickness)
+                line_x = center_x - lw // 2
+                
+                # Check bounds to ensure we don't draw outside image
+                if line_x < 0: line_x = 0
+                if curr_y < 0: curr_y = 0 
+                
+                cv2.putText(
+                    result, line, (line_x, curr_y),
+                    font, best_scale, (0, 0, 0),
+                    thickness, cv2.LINE_AA
+                )
+                curr_y += line_height
             
         return result
 
