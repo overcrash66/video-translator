@@ -60,7 +60,7 @@ class VisualTranslator:
             ocr_lang = paddle_lang_map.get(source_lang, 'en')
             
             # use_angle_cls=True for robust detection of rotated text
-            self.ocr_model = PaddleOCR(use_angle_cls=True, lang=ocr_lang, show_log=False)
+            self.ocr_model = PaddleOCR(use_angle_cls=True, lang=ocr_lang)
             self.model_loaded = True
             logger.info("PaddleOCR loaded successfully.")
         except Exception as e:

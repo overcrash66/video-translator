@@ -28,3 +28,9 @@ opencv-python
 paddlepaddle
 paddleocr
 peft>=0.10.0
+
+openmim
+mmengine
+mmcv>=2.0.0
+mmdet>=3.0.0
+mmpose>=1.0.0
