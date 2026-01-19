@@ -86,8 +86,14 @@ class VisualTranslator:
                  logger.error("EasyOCR not installed. Run `pip install easyocr`.")
                  raise
             except Exception as e:
-                logger.error(f"Failed to load EasyOCR: {e}")
-                raise
+                logger.warning(f"Failed to load EasyOCR with GPU: {e}. Retrying with CPU...")
+                try:
+                    self.ocr_model = easyocr.Reader([source_lang, 'en'], gpu=False)
+                    self.model_loaded = True
+                    logger.info("EasyOCR loaded successfully (CPU mode).")
+                except Exception as e_cpu:
+                    logger.error(f"Failed to load EasyOCR with CPU: {e_cpu}")
+                    raise
 
     def unload_model(self):
         """Unload OCR model to free memory."""
