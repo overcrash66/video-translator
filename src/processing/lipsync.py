@@ -173,7 +173,7 @@ class LipSyncer:
                 self.whisper.requires_grad_(False)
                 
                 # Initialize face parser (v1.5 uses default params)
-                self.face_parser = self._imports['FaceParsing']()
+                self.face_parser = self._imports['FaceParsing'](device=self.device)
                 
             finally:
                 os.chdir(original_cwd)
