@@ -21,10 +21,13 @@ class Wav2LipSyncer:
         self.img_size = 96
         self.batch_size = 32 # Default batch size
         self.model_path = Path("models/wav2lip/wav2lip.pth")
+        self.fallback_active = False
 
     def load_model(self):
         if self.model is not None:
             return
+            
+        self.fallback_active = False # Reset on new load
 
         logger.info(f"Loading Wav2Lip model from {self.model_path}")
         if not self.model_path.exists():
@@ -129,16 +132,24 @@ class Wav2LipSyncer:
             except Exception as e:
                 # check for CUDA error
                 if "CUDA" in str(e):
+                    if self.fallback_active:
+                         logger.error(f"Error persisting even after CPU fallback on frame {i}: {e}. Skipping frame detection.")
+                         results.append(None)
+                         i += 1
+                         continue
+
                     logger.warning(f"CUDA Error during face detection on frame {i}: {e}")
                     logger.warning("Switching Face Detector to CPU fallback...")
                     
                     # Switch to CPU globally for this instance
                     self.device = torch.device("cpu")
+                    self.fallback_active = True
                     
                     # Re-init detector on CPU
                     del self.detector
                     torch.cuda.empty_cache()
                     
+                    logger.info("Initializing Face Detector on CPU...")
                     self.detector = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, 
                                                      flip_input=False, device='cpu')
                                                      
