@@ -28,15 +28,17 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     *   **SpeechBrain**: ECAPA-TDNN embeddings with spectral clustering.
     *   **NVIDIA NeMo** (New): Advanced multi-scale diarization decoder (MSDD) for precise speaker turn detection.
 *   **Visual Enhancements (Experimental)**:
-    *   **Lip-Sync (MuseTalk)**: Generative video synchronization to match lips to the translated audio.
-    *   **Visual Text Translation**: Uses **PaddleOCR** to detect text in video frames and **OpenCV** inpainting to replace it with translated text.
-*   **GPU Optimized**: Custom **VideoTranslator** orchestration enforces strict "one-heavy-model-at-a-time" policy to run comfortably on 8GB-16GB VRAM GPUs.
+    *   **Lip-Sync (Wav2Lip-GAN)**: High-fidelity generative video synchronization to match lips to the translated audio. Supports **Global CPU Fallback** for stability.
+    *   **Visual Text Translation**: Uses **PaddleOCR** or **EasyOCR** to detect text in video frames and **OpenCV** inpainting to replace it with translated text.
+*   **Global CPU Fallback**: Automatically switches ANY model (Lip-Sync, Whisper, Diarization, etc.) to CPU if GPU fails or is incompatible, ensuring successful processing on all hardware.
+*   **GPU Optimized**: Custom **VideoTranslator** orchestration enforces strict "one-heavy-model-at-a-time" policy. Supports **PyTorch 2.5+** and **RTX 50-series** GPUs.
 *   **Friendly UI**: Easy-to-use **Gradio** web interface.
 
 ## 🛠️ Prerequisites
 
-*   **Python 3.10+** (Python 3.10 recommended for XTTS/NeMo/F5-TTS compatibility)
-*   **CUDA Toolkit 12+** (For GPU acceleration)
+*   **Python 3.10+** (Python 3.10 recommended)
+*   **PyTorch 2.5.1+** with **CUDA 12.4+** (Required for RTX 50-series support)
+*   **CUDA Toolkit 12.4+**
 *   **FFmpeg**: Must be installed and accessible in your system's PATH.
     *   *Windows (Option 1)*: `winget install ffmpeg` then restart terminal.
     *   *Windows (Option 2 - Manual)*: 
@@ -66,9 +68,9 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     ```
 
 3.  **Additional Requirements (Optional)**:
-    *   **NeMo**: If using NeMo diarization, ensure `nemo_toolkit[asr]` is installed (added in requirements).
-    *   **MuseTalk**: Requires downloading huge weights (~10GB) for the full experience. Use the `download_weights.bat` inside `MuseTalk/` or let the app warn you.
-    *   **F5-TTS**: Requires `f5-tts` package and GPU.
+    *   **NeMo**: If using NeMo diarization, ensure `nemo_toolkit[asr]` is installed.
+    *   **Wav2Lip**: Ensure `models/wav2lip/wav2lip_gan.pth` is present.
+    *   **F5-TTS**: Requires `f5-tts` package and GPU (supports CPU fallback).
 
 ## 🖥️ Usage
 
@@ -137,8 +139,8 @@ flowchart TD
     
     Mix --> FinalAudio[Final Audio Track]
     
-    Video --> VisualTrans{"Visual Translation<br/>(PaddleOCR)"}
-    VisualTrans --> LipSync{"Lip-Sync<br/>(MuseTalk)"}
+    Video --> VisualTrans{"Visual Translation<br/>(PaddleOCR / EasyOCR)"}
+    VisualTrans --> LipSync{"Lip-Sync<br/>(Wav2Lip-GAN)"}
     MergedSpeech -.-> LipSync
     
     LipSync --> Mux{"Merge with Video<br/>(FFmpeg)"}

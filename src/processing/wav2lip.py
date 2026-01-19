@@ -20,7 +20,7 @@ class Wav2LipSyncer:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.img_size = 96
         self.batch_size = 32 # Default batch size
-        self.model_path = Path("models/wav2lip/wav2lip.pth")
+        self.model_path = Path("models/wav2lip/wav2lip_gan.pth")
         self.fallback_active = False
 
     def load_model(self):

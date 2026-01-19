@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Initialize central controller
 video_translator = VideoTranslator()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -87,7 +87,7 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             max_speakers=max_speakers,
             ocr_model_name=ocr_model,
             tts_voice=tts_voice,
-            lipsync_model_name=lipsync_model
+            # lipsync_model_name was removed/hardcoded
         )
         
         final_video_path = None
@@ -294,22 +294,13 @@ def create_ui():
                 enable_lipsync = gr.Checkbox(
                     label="Enable Lip-Sync (Generative - Experimental)",
                     value=False,
-                    info="Synchronizes video lips to new audio using MuseTalk. computationally expensive."
+                    info="Synchronizes video lips to new audio using Wav2Lip-GAN (High Fidelity)."
                 )
                 
-                lipsync_model = gr.Dropdown(
-                    choices=["MuseTalk", "Wav2Lip"],
-                    label="Lip-Sync Model",
-                    value="MuseTalk",
-                    visible=False,
-                    info="MuseTalk: High Quality (Slower). Wav2Lip: Robust/Fast (Lower Quality)."
-                )
 
-                enable_lipsync.change(
-                    fn=lambda x: gr.update(visible=x),
-                    inputs=[enable_lipsync],
-                    outputs=[lipsync_model]
-                )
+
+                # Lip-Sync Model hidden/removed (Defaulting to Wav2Lip-GAN internal)
+                # enable_lipsync handles valid toggle
 
                 enable_visual_translation = gr.Checkbox(
                     label="Enable Visual Text Translation (OCR + Inpainting)",
@@ -339,7 +330,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg],
             outputs=[video_output, logs_output]
         )
         

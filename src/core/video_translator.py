@@ -168,8 +168,7 @@ class VideoTranslator:
                       min_speakers=1,
                       max_speakers=10,
                       ocr_model_name="PaddleOCR",
-                      tts_voice=None,
-                      lipsync_model_name="MuseTalk"):
+                      tts_voice=None):
         """
         Orchestrates the full pipeline as a generator.
         Yields: ("log", message) or ("progress", value, desc) or ("result", path)
@@ -426,7 +425,7 @@ class VideoTranslator:
                 # NOT the final mix with BG music, as that might confuse the model? 
                 # Usually purely speech audio is best for driving lips.
                 
-                self.lipsyncer.sync_lips(str(video_path), str(merged_speech), str(lipsync_out), model_name=lipsync_model_name)
+                self.lipsyncer.sync_lips(str(video_path), str(merged_speech), str(lipsync_out))
                 
                 if lipsync_out.exists():
                     # Now assume this is the source for final mixing?
