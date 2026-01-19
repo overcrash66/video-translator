@@ -135,7 +135,8 @@ class LipSyncer:
                 os.chdir(original_cwd)
             
             # Set device
-            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            if self.device is None:
+                self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
             logger.info(f"Using device: {self.device}")
             
             # Change to MuseTalk dir for model loading (paths are relative)
@@ -236,6 +237,7 @@ class LipSyncer:
             
         gc.collect()
         self.model_loaded = False
+        self.device = None
         logger.info("MuseTalk models unloaded.")
 
     def sync_lips(self, video_path: str, audio_path: str, output_path: str, model_name: str = "musetalk") -> str:
