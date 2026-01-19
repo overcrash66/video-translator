@@ -142,12 +142,18 @@ class Wav2LipSyncer:
                     logger.warning("Switching Face Detector to CPU fallback...")
                     
                     # Switch to CPU globally for this instance
+                    # Force hide GPU to prevent driver hangs if context is corrupted
+                    import os
+                    os.environ["CUDA_VISIBLE_DEVICES"] = ""
                     self.device = torch.device("cpu")
                     self.fallback_active = True
                     
                     # Re-init detector on CPU
                     del self.detector
-                    torch.cuda.empty_cache()
+                    try:
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        pass
                     
                     logger.info("Initializing Face Detector on CPU...")
                     self.detector = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, 
