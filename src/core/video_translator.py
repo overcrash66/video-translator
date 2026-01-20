@@ -168,7 +168,8 @@ class VideoTranslator:
                       min_speakers=1,
                       max_speakers=10,
                       ocr_model_name="PaddleOCR",
-                      tts_voice=None):
+                      tts_voice=None,
+                      lipsync_model_name=None):
         """
         Orchestrates the full pipeline as a generator.
         Yields: ("log", message) or ("progress", value, desc) or ("result", path)
@@ -426,7 +427,10 @@ class VideoTranslator:
                 # NOT the final mix with BG music, as that might confuse the model? 
                 # Usually purely speech audio is best for driving lips.
                 
-                self.lipsyncer.sync_lips(str(video_path), str(merged_speech), str(lipsync_out))
+                yield ("log", f"Starting Lip-Sync... (Model: {lipsync_model_name or 'Default'})")
+                enhance_face = "GFPGAN" in (lipsync_model_name or "")
+                
+                self.lipsyncer.sync_lips(str(video_path), str(merged_speech), str(lipsync_out), enhance_face=enhance_face)
                 
                 if lipsync_out.exists():
                     # Now assume this is the source for final mixing?

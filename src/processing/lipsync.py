@@ -25,8 +25,8 @@ class LipSyncer:
         # For now, just a placeholder.
         pass
 
-    def sync_lips(self, video_path: str, audio_path: str, output_path: str, model_name: str = "wav2lip") -> str:
+    def sync_lips(self, video_path: str, audio_path: str, output_path: str, model_name: str = "wav2lip", enhance_face: bool = False) -> str:
         """
         Synchronizes lips in video_path to match audio_path using Wav2Lip.
         """
-        return self.engine.sync_lips(video_path, audio_path, output_path)
+        return self.engine.sync_lips(video_path, audio_path, output_path, enhance_face=enhance_face)

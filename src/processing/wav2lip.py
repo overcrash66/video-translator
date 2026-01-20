@@ -21,9 +21,29 @@ class Wav2LipSyncer:
         self.img_size = 96
         self.batch_size = 32 # Default batch size
         self.model_path = Path("models/wav2lip/wav2lip_gan.pth")
-        self.model_path = Path("models/wav2lip/wav2lip_gan.pth")
         self.fallback_active = False
         self.sync_offset = 0 # Offset in mel steps (1 step ~ 12.5ms)
+        self.restorer = None # GFPGAN Restorer
+
+    def load_gfpgan(self):
+        try:
+            from gfpgan import GFPGANer
+            # Model path
+            gfpgan_path = Path("models/gfpgan/GFPGANv1.4.pth")
+            if not gfpgan_path.exists():
+                # Try to find it or download?
+                # gfpgan package usually handles download if path not provided, but explicit is better
+                # For now let's assume standard path or let GFPGANer download to weights dir
+                pass
+            
+            # Initialize GFPGAN
+            # upscale=1 because we just want restoration, not full image upscaling (we do resizing later)
+            self.restorer = GFPGANer(model_path='https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth', 
+                                     upscale=1, arch='clean', channel_multiplier=2, bg_upsampler=None)
+            print("GFPGAN Face Restorer Loaded.")
+        except Exception as e:
+            print(f"Failed to load GFPGAN: {e}")
+            self.restorer = None
 
     def load_model(self):
         if self.model is not None:
@@ -230,7 +250,14 @@ class Wav2LipSyncer:
                  
         return results
 
-    def sync_lips(self, video_path: str, audio_path: str, output_path: str):
+    def sync_lips(self, video_path: str, audio_path: str, output_path: str, enhance_face: bool = False):
+        """
+        Synchronizes lips.
+        enhance_face: If True, uses GFPGAN to restore the face before blending.
+        """
+        # ... existing logic ...
+        if enhance_face and self.restorer is None:
+             self.load_gfpgan()
         self.load_model()
         
         video_path = Path(video_path)
@@ -489,6 +516,19 @@ class Wav2LipSyncer:
             
             w_box = x2 - x1
             h_box = y2 - y1
+            
+            # Enhancement (GFPGAN)
+            if enhance_face and self.restorer is not None:
+                try:
+                    # g_crop is 96x96 BGR or RGB? Wav2Lip outputs BGR 0-255 uint8?
+                    # Wav2Lip usage above: cv2.imwrite... so it is BGR.
+                    # GFPGAN expect BGR.
+                    # enhance returns (cropped_faces, restored_faces, restored_img)
+                    _, restored_faces, _ = self.restorer.enhance(g_crop, has_aligned=False, only_center_face=False, paste_back=False)
+                    if restored_faces:
+                        g_crop = restored_faces[0] # This should be 512x512
+                except Exception as e:
+                    pass # Fallback to raw output
             
             try:
                 # Upscale using Lanczos for better quality
