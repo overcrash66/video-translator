@@ -483,7 +483,7 @@ class Wav2LipSyncer:
         final_video_path = str(config.TEMP_DIR / "wav2lip_out.mp4")
         out = cv2.VideoWriter(final_video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (frames[0].shape[1], frames[0].shape[0]))
         
-        for i, (g_crop, box) in enumerate(zip(gen_frames, gen_coords)):
+        for i, (g_crop, box) in enumerate(zip(tqdm(gen_frames, desc="Blending"), gen_coords)):
             frame = frames[i]
             x1, y1, x2, y2 = box
             
