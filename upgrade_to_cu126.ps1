@@ -10,7 +10,7 @@ Write-Host "Installing Torch+Vision+Audio (CU130)..." -ForegroundColor Yellow
 .\venv\Scripts\python.exe -m pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu130 --no-cache-dir
 
 Write-Host "Installing nvidia-cublas-cu12..." -ForegroundColor Yellow
-.\venv\Scripts\pip.exe install nvidia-cublas-cu12
+pip install nvidia-cublas-cu12
 
 Write-Host "Done!" -ForegroundColor Cyan
 
