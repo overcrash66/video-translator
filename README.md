@@ -145,7 +145,7 @@ flowchart TD
     Mix --> FinalAudio[Final Audio Track]
     
     Video --> VisualTrans{"Visual Translation<br/>(PaddleOCR / EasyOCR)"}
-    VisualTrans --> LipSync{"Lip-Sync<br/>(Wav2Lip-GAN)"}
+    VisualTrans --> LipSync{"Lip-Sync<br/>(Wav2Lip / GFPGAN)"}
     MergedSpeech -.-> LipSync
     
     LipSync --> Mux{"Merge with Video<br/>(FFmpeg)"}
