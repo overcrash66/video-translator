@@ -190,3 +190,4 @@ cython_debug/
 /debug_download
 .agent/skills/project_guardian/SKILL.md
 /.agent
+/gfpgan
