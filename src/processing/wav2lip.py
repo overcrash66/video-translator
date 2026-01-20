@@ -21,7 +21,9 @@ class Wav2LipSyncer:
         self.img_size = 96
         self.batch_size = 32 # Default batch size
         self.model_path = Path("models/wav2lip/wav2lip_gan.pth")
+        self.model_path = Path("models/wav2lip/wav2lip_gan.pth")
         self.fallback_active = False
+        self.sync_offset = 0 # Offset in mel steps (1 step ~ 12.5ms)
 
     def load_model(self):
         if self.model is not None:
@@ -50,12 +52,54 @@ class Wav2LipSyncer:
         self.detector = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, 
                                                      flip_input=False, device=str(self.device).split(":")[0])
                                                      
-    def get_smoth_box(self, boxes, window_size=5):
-        # Smoothing logic for simple boxes
-        # Assume boxes is (N, 4)
-        pass 
-        # For now, simplistic approach: use detections frame-by-frame or interpolate
-        # We'll stick to frame-by-frame for robustness in v1
+    def get_smooth_box(self, boxes, window_size=5):
+        """
+        Smooths face bounding boxes over time using a moving average window.
+        boxes: List of [x1, y1, x2, y2] or None
+        """
+        if not boxes:
+            return boxes
+            
+        # 1. Fill None (Forward Fill)
+        filled_boxes = []
+        last_valid = None
+        for box in boxes:
+            if box is not None:
+                last_valid = box
+            filled_boxes.append(last_valid)
+            
+        # 2. Backward fill for start
+        first_valid = None
+        for box in filled_boxes:
+            if box is not None:
+                first_valid = box
+                break
+        
+        if first_valid is None: 
+            return boxes # All None - handled by caller
+            
+        final_filled = []
+        for box in filled_boxes:
+            if box is None:
+                final_filled.append(first_valid)
+            else:
+                final_filled.append(box)
+                
+        # 3. Apply Smoothing
+        smoothed_boxes = []
+        half_window = window_size // 2
+        
+        current_boxes_np = np.array(final_filled) # (N, 4)
+        
+        for i in range(len(final_filled)):
+            start_idx = max(0, i - half_window)
+            end_idx = min(len(final_filled), i + half_window + 1)
+            
+            window = current_boxes_np[start_idx:end_idx]
+            avg_box = np.mean(window, axis=0).astype(int)
+            smoothed_boxes.append(avg_box.tolist())
+            
+        return smoothed_boxes
 
     def detect_faces(self, frames):
         """
@@ -213,7 +257,10 @@ class Wav2LipSyncer:
         mel_idx_multiplier = 80.0 / fps 
         
         # 3. Detect Faces
-        face_boxes = self.detect_faces(frames)
+        raw_face_boxes = self.detect_faces(frames)
+        
+        # Apply smoothing
+        face_boxes = self.get_smooth_box(raw_face_boxes, window_size=5)
         
         # Fill missing boxes (Interpolation / Forward-Backward Fill)
         # Avoid defaulting to center unless absolutely no faces are found anywhere
@@ -286,7 +333,7 @@ class Wav2LipSyncer:
             # Mel index = (i / fps) * 80? No, mel is 80Hz resolution?
             # Standard Wav2Lip:
             # mel_idx_multiplier = 80. / fps
-            start_idx = int(i * mel_idx_multiplier)
+            start_idx = int(i * mel_idx_multiplier) + self.sync_offset
             end_idx = start_idx + mel_step_size # 16 steps = ? ms
             
             # Pad Mel if needed
@@ -440,13 +487,43 @@ class Wav2LipSyncer:
             frame = frames[i]
             x1, y1, x2, y2 = box
             
-            # Simple Paste
-            # Ideally use mask blending, but direct paste is standard Wav2Lip level
+            w_box = x2 - x1
+            h_box = y2 - y1
+            
             try:
-                g_crop_resized = cv2.resize(g_crop, (x2 - x1, y2 - y1))
-                frame[y1:y2, x1:x2] = g_crop_resized
-            except Exception:
-                pass
+                # Upscale using Lanczos for better quality
+                g_crop_resized = cv2.resize(g_crop, (w_box, h_box), interpolation=cv2.INTER_LANCZOS4)
+                
+                # Seamless Clone (Poisson Blending)
+                # This requires center point in destination
+                center = (x1 + w_box//2, y1 + h_box//2)
+                
+                # Create a mask for seamless clone (all white)
+                mask = 255 * np.ones(g_crop_resized.shape, g_crop_resized.dtype)
+                
+                # Use MIXED_CLONE for better texture preservation or NORMAL_CLONE
+                try:
+                    # Seamless clone can fail if box is on edge of image
+                    frame = cv2.seamlessClone(g_crop_resized, frame, mask, center, cv2.NORMAL_CLONE)
+                except Exception:
+                    # Fallback to Feathered Mask
+                    mask = np.zeros((h_box, w_box), dtype=np.float32)
+                    cv2.ellipse(mask, (w_box//2, h_box//2), (w_box//2 - 5, h_box//2 - 5), 0, 0, 360, 1.0, -1)
+                    mask = cv2.GaussianBlur(mask, (21, 21), 0)
+                    mask = mask[..., np.newaxis] # (H, W, 1)
+                    
+                    roi = frame[y1:y2, x1:x2].astype(np.float32)
+                    fg = g_crop_resized.astype(np.float32)
+                    
+                    blended = (fg * mask + roi * (1.0 - mask)).astype(np.uint8)
+                    frame[y1:y2, x1:x2] = blended
+
+            except Exception as e:
+                # Ultimate fallback
+                try:
+                    frame[y1:y2, x1:x2] = cv2.resize(g_crop, (w_box, h_box))
+                except:
+                    pass
                 
             out.write(frame)
             
