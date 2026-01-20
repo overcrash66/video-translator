@@ -83,6 +83,18 @@ class Wav2LipSyncer:
             try:
                 # Face Alignment expects RGB
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                
+                # Optimization: Downscale if image is too large (speeds up CPU detection significantly)
+                h, w = rgb_frame.shape[:2]
+                max_dim = 640 # Sufficient for face detection
+                scale_factor = 1.0
+                
+                if max(h, w) > max_dim:
+                    scale_factor = max_dim / float(max(h, w))
+                    new_w = int(w * scale_factor)
+                    new_h = int(h * scale_factor)
+                    rgb_frame = cv2.resize(rgb_frame, (new_w, new_h))
+                    
                 preds = self.detector.get_landmarks(rgb_frame)
                 
                 if preds:
@@ -91,12 +103,16 @@ class Wav2LipSyncer:
                     max_area = -1
                     
                     for lm in preds:
+                        # Rescale landmarks back to original resolution
+                        if scale_factor != 1.0:
+                            lm = lm / scale_factor
+                            
                         x_min, y_min = np.min(lm, axis=0)
                         x_max, y_max = np.max(lm, axis=0)
                         
-                        w = x_max - x_min
-                        h = y_max - y_min
-                        area = w * h
+                        w_box = x_max - x_min
+                        h_box = y_max - y_min
+                        area = w_box * h_box
                         
                         if area > max_area:
                             max_area = area
@@ -107,8 +123,8 @@ class Wav2LipSyncer:
                             cx = (x_min + x_max) / 2
                             cy = (y_min + y_max) / 2
                             
-                            nw = w * scale
-                            nh = h * scale
+                            nw = w_box * scale
+                            nh = h_box * scale
                             
                             x1 = int(cx - nw / 2)
                             y1 = int(cy - nh / 2)
