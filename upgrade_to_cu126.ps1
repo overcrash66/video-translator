@@ -9,8 +9,13 @@ Write-Host "Uninstalling OLD versions..." -ForegroundColor Yellow
 Write-Host "Installing Torch+Vision+Audio (CU130)..." -ForegroundColor Yellow
 .\venv\Scripts\python.exe -m pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu130 --no-cache-dir
 
+Write-Host "Installing nvidia-cublas-cu12..." -ForegroundColor Yellow
+.\venv\Scripts\pip.exe install nvidia-cublas-cu12
+
+Write-Host "Done!" -ForegroundColor Cyan
+
 # 3. Verification
 Write-Host "Verifying..." -ForegroundColor Yellow
 .\venv\Scripts\python.exe -c "import torch; print(f'Torch: {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}'); import torchvision; print(f'Vision: {torchvision.__version__}'); import torchaudio; print(f'Audio: {torchaudio.__version__}')"
 
-Write-Host "Done!" -ForegroundColor Cyan
+
