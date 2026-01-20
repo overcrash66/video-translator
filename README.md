@@ -28,7 +28,9 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     *   **SpeechBrain**: ECAPA-TDNN embeddings with spectral clustering.
     *   **NVIDIA NeMo** (New): Advanced multi-scale diarization decoder (MSDD) for precise speaker turn detection.
 *   **Visual Enhancements (Experimental)**:
-    *   **Lip-Sync (Wav2Lip-GAN)**: High-fidelity generative video synchronization to match lips to the translated audio. Supports **Global CPU Fallback** for stability.
+    *   **Lip-Sync (Wav2Lip-GAN)**: High-fidelity generative video synchronization.
+        *   **Standard**: Fast, smoothed, and blended (Poisson Blending) validation.
+        *   **Enhanced (New)**: Integrates **GFPGAN** for high-resolution face restoration (eliminates blurriness).
     *   **Visual Text Translation**: Uses **PaddleOCR** or **EasyOCR** to detect text in video frames and **OpenCV** inpainting to replace it with translated text.
 *   **Global CPU Fallback**: Automatically switches ANY model (Lip-Sync, Whisper, Diarization, etc.) to CPU if GPU fails or is incompatible, ensuring successful processing on all hardware.
 *   **GPU Optimized**: Custom **VideoTranslator** orchestration enforces strict "one-heavy-model-at-a-time" policy. Supports **PyTorch 2.5+** and **RTX 50-series** GPUs.
@@ -50,7 +52,7 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     *   *macOS*: `brew install ffmpeg`
 *   **Rubberband** (Recommended): For high-quality audio time-stretching.
     *   *Windows*: Download from [Rubberband Releases](https://breakfastquay.com/rubberband/). Extract and add to PATH, or place `rubberband-program.exe` in project folder.
-*   **NVIDIA GPU** (Recommended): For faster HDemucs, Whisper, and LLM inference. Required for MuseTalk/F5-TTS.
+*   **NVIDIA GPU** (Recommended): For faster HDemucs, Whisper, and LLM inference. Required for F5-TTS and Enhanced Lip-Sync.
 
 ## 📦 Installation
 
@@ -71,6 +73,7 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     *   **NeMo**: If using NeMo diarization, ensure `nemo_toolkit[asr]` is installed.
     *   **Wav2Lip**: Ensure `models/wav2lip/wav2lip_gan.pth` is present.
     *   **F5-TTS**: Requires `f5-tts` package and GPU (supports CPU fallback).
+    *   **Enhanced Lip-Sync**: Requires `gfpgan` and `basicsr` (installed via pip).
 
 ## 🖥️ Usage
 
@@ -96,7 +99,9 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
         *   `f5`: Fast voice cloning.
     *   **Enable Features**:
         *   **Speaker Diarization**: Detects speakers.
-        *   **Lip-Sync**: (Experimental) Syncs lips to new audio.
+        *   **Lip-Sync**: Enable, then select **Model**:
+            *   `Wav2Lip-GAN`: Fast.
+            *   `Wav2Lip + GFPGAN`: Enhanced quality (slower).
         *   **Visual Text Translation**: (Experimental) Translates on-screen text.
     *   **Click Process Video**.
 
