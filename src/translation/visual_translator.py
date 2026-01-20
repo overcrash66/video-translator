@@ -2,7 +2,7 @@
 Visual Text Translation module.
 
 Detects text in video frames using PaddleOCR, translates it, 
-and overlays the translated text using OpenCV inpainting.
+and overlays the translated text using OpenCV inpainting and PIL for text rendering.
 """
 
 import logging
@@ -11,12 +11,21 @@ import numpy as np
 from pathlib import Path
 from src.utils import config
 from deep_translator import GoogleTranslator
+from functools import lru_cache
+from PIL import Image, ImageDraw, ImageFont
 
 try:
     from paddleocr import PaddleOCR
     PADDLE_AVAILABLE = True
 except ImportError:
     PADDLE_AVAILABLE = False
+
+try:
+    from langdetect import detect, DetectorFactory
+    DetectorFactory.seed = 0
+    LANGDETECT_AVAILABLE = True
+except ImportError:
+    LANGDETECT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +34,7 @@ class VisualTranslator:
     """
     Handles visual text translation in video frames.
     Uses PaddleOCR for detection and OpenCV for simple inpainting.
+    Uses PIL for high-quality text rendering (Unicode support).
     """
     
     def __init__(self):
@@ -32,7 +42,20 @@ class VisualTranslator:
         self.model_loaded = False
         self.translator_cache = {}
         self.current_engine = None
+        self.font_path = self._find_font()
         
+    def _find_font(self):
+        """Find a suitable Unicode font on Windows."""
+        # Common Windows fonts with good Unicode support
+        candidates = ["arial.ttf", "segoeui.ttf", "tahoma.ttf", "msgothic.ttc"]
+        for font in candidates:
+             try:
+                 # Check if loadable (PIL searches system path on Windows)
+                 ImageFont.truetype(font, 10)
+                 return font
+             except:
+                 continue
+        return "arial.ttf" # Fallback
 
     def load_model(self, source_lang: str = 'en', ocr_engine: str = "PaddleOCR"):
         """
@@ -64,7 +87,7 @@ class VisualTranslator:
                 
                 # use_angle_cls=True for robust detection of rotated text
                 # enable_mkldnn=False to fix oneDNN crash on Windows
-                self.ocr_model = PaddleOCR(use_angle_cls=True, lang=ocr_lang, enable_mkldnn=False)
+                self.ocr_model = PaddleOCR(use_angle_cls=True, lang=ocr_lang, enable_mkldnn=False, show_log=False)
                 self.model_loaded = True
                 logger.info("PaddleOCR loaded successfully.")
             except Exception as e:
@@ -76,10 +99,9 @@ class VisualTranslator:
             try:
                 import easyocr
                 # Map common language codes to EasyOCR
-                # EasyOCR uses standard codes mostly, but let's be safe
                 if source_lang == 'zh': source_lang = 'ch_sim'
                 
-                self.ocr_model = easyocr.Reader([source_lang, 'en']) # Always include English for robustness
+                self.ocr_model = easyocr.Reader([source_lang, 'en'], gpu=True) 
                 self.model_loaded = True
                 logger.info("EasyOCR loaded successfully.")
             except ImportError:
@@ -103,6 +125,8 @@ class VisualTranslator:
         self.model_loaded = False
         self.current_engine = None
         self.translator_cache = {}
+        # Clear LRU cache
+        self._cached_translate.cache_clear()
         logger.info("VisualTranslator model unloaded.")
 
     def _get_translator(self, target_lang: str) -> GoogleTranslator:
@@ -111,17 +135,59 @@ class VisualTranslator:
             self.translator_cache[target_lang] = GoogleTranslator(source='auto', target=target_lang)
         return self.translator_cache[target_lang]
 
-    def _translate_text(self, text: str, target_lang: str) -> str:
-        """Translate text to target language using Google Translate."""
-        if not text or len(text.strip()) < 2:
-            return text
+    @lru_cache(maxsize=2000)
+    def _cached_translate(self, text: str, target_lang: str) -> str:
+        """Cached translation."""
         try:
             translator = self._get_translator(target_lang)
-            translated = translator.translate(text)
-            return translated if translated else text
+            return translator.translate(text)
         except Exception as e:
             logger.warning(f"Translation failed for '{text}': {e}")
             return text
+
+    def _detect_language(self, text: str) -> str:
+        """Detect language of text using langdetect."""
+        if not LANGDETECT_AVAILABLE: 
+            return "unknown"
+        
+        # Clean text for detection
+        clean = ''.join([c for c in text if c.isalpha() or c.isspace()])
+        if len(clean.strip()) < 3:
+            return "unknown"
+            
+        try:
+            return detect(clean)
+        except:
+            return "unknown"
+
+    def _translate_text(self, text: str, target_lang: str, source_lang: str = None) -> str:
+        """Translate text if it matches source language or if source is unknown."""
+        if not text or len(text.strip()) < 2:
+            return text
+            
+        # Language filtering
+        detected = self._detect_language(text)
+        
+        # If source_lang is specified, only translate if detected matches source
+        # But 'unknown' should probably pass through or be skipped depending on strictness
+        # Here we translate if detected matches source OR detected is 'unknown' 
+        # (to avoid missing short text) OR if source_lang is not strictly enforced.
+        
+        # Simplification: If detected is explicitly the TARGET language, skip it.
+        # This prevents translating French back to French (glitch).
+        if detected == target_lang:
+            return text
+            
+        # If source_lang provided, and detected is a DIFFERENT known language, skip
+        if source_lang and detected != "unknown" and detected != source_lang and detected != 'en': 
+            # Allow EN as universal fallback or if user said source=EN?
+            # If user said source=EN, and we detect AR, we should skip? Yes.
+            if detected != source_lang:
+                 # Special case: 'en' often detects as other latins if short, but let's trust detector
+                 return text
+        
+        translated = self._cached_translate(text, target_lang)
+        return translated if translated else text
 
     def _create_text_mask(self, frame: np.ndarray, boxes: list) -> np.ndarray:
         """Create a binary mask for detected text regions."""
@@ -138,132 +204,82 @@ class VisualTranslator:
         dilated_mask = cv2.dilate(mask, kernel, iterations=2)
         
         # Use TELEA inpainting algorithm
-        inpainted = cv2.inpaint(frame, dilated_mask, inpaintRadius=7, flags=cv2.INPAINT_TELEA)
+        inpainted = cv2.inpaint(frame, dilated_mask, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
         return inpainted
 
-    def _overlay_translated_text(self, frame: np.ndarray, boxes: list, 
-                                  original_texts: list, translated_texts: list) -> np.ndarray:
-        """Overlay translated text on the frame at detected positions."""
-        result = frame.copy()
+    def _overlay_translated_text_pil(self, frame: np.ndarray, boxes: list, 
+                                  translated_texts: list) -> np.ndarray:
+        """Overlay translated text using PIL for Unicode support."""
         
-        for box, orig_text, trans_text in zip(boxes, original_texts, translated_texts):
-            if not trans_text or trans_text == orig_text:
-                continue
-                
-            pts = np.array(box, dtype=np.int32)
-            
-            # Get bounding rect
-            x, y, w, h = cv2.boundingRect(pts)
-            
-            # Calculate center
-            center_x = x + w // 2
-            center_y = y + h // 2
-            
-            # Initial font settings
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            thickness = max(1, int(h / 40))
-            
-            # Adaptive text fitting
-            # 1. Split into words
-            words = trans_text.split()
-            if not words: continue
-            
-            best_scale = 0.1
-            best_lines = []
-            best_text_height = 0
-            
-            # Binary search-ish approach or iterative downscaling involves complexity
-            # Simpler approach: Iteratively reduce scale until it fits or hits minimum
-            
-            # Start with a scale that fits height-wise for a single line
-            # usually h * 0.8 is good coverage
-            # scale 1.0 is ~22px height in Hershy Simplex
-            initial_scale = min(2.0, (h * 0.8) / 22.0)
-            
-            current_scale = initial_scale
-            min_scale = 0.3
-            
-            # Try to wrap lines
-            while current_scale >= min_scale:
-                lines = []
-                current_line = []
-                
-                # Simple word wrap
-                for word in words:
-                    test_line = current_line + [word]
-                    (fw, fh), _ = cv2.getTextSize(" ".join(test_line), font, current_scale, thickness)
-                    if fw <= w:
-                        current_line = test_line
-                    else:
-                        if current_line:
-                            lines.append(" ".join(current_line))
-                        current_line = [word]
-                        # Check if single word is too wide
-                        (fw, fh), _ = cv2.getTextSize(word, font, current_scale, thickness)
-                        if fw > w:
-                            # If single word is too wide, we must reduce scale
-                            lines = [] # Fail this scale
-                            break
-                            
-                if current_line:
-                    lines.append(" ".join(current_line))
-                
-                if not lines:
-                    current_scale -= 0.1
-                    continue
-                    
-                # Check total height
-                total_text_h = len(lines) * fh + (len(lines)-1) * int(fh * 0.5) # line spacing
-                if total_text_h <= h:
-                    best_scale = current_scale
-                    best_lines = lines
-                    best_text_height = total_text_h
-                    break # Found a fit!
-                
-                current_scale -= 0.1
-            
-            if not best_lines:
-                # If fitting failed (words too long/box too small), force fit single line by scaling width?
-                # Or just use min scale and single line clipped
-                best_scale = min_scale
-                best_lines = [trans_text]
-                
-            # Draw text
-            (fw, fh), baseline = cv2.getTextSize("Test", font, best_scale, thickness)
-            line_height = int(fh * 1.5)
-            
-            start_y = center_y - (len(best_lines) * line_height) // 2 + fh // 2
-            
-            # Draw box background
-            # Slightly larger than bounding box to cover artifacts
-            bg_pad = 2
-            cv2.rectangle(result, (x-bg_pad, y-bg_pad), (x+w+bg_pad, y+h+bg_pad), (255, 255, 255), -1)
-            
-            curr_y = start_y
-            for line in best_lines:
-                # Center horizontally
-                (lw, lh), _ = cv2.getTextSize(line, font, best_scale, thickness)
-                line_x = center_x - lw // 2
-                
-                # Check bounds to ensure we don't draw outside image
-                if line_x < 0: line_x = 0
-                if curr_y < 0: curr_y = 0 
-                
-                cv2.putText(
-                    result, line, (line_x, curr_y),
-                    font, best_scale, (0, 0, 0),
-                    thickness, cv2.LINE_AA
-                )
-                curr_y += line_height
-            
-        return result
+        # Convert to PIL Image
+        img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(img_pil, 'RGBA')
+        
+        for box, text in zip(boxes, translated_texts):
+             if not text: continue
+             
+             pts = np.array(box, dtype=np.int32)
+             x, y, w, h = cv2.boundingRect(pts)
+             
+             # Calculate font size
+             # Heuristic: Start with height-based size
+             # Aprox: 1pt ~= 1.33px. 
+             target_height = h * 0.8
+             font_size = int(target_height) 
+             if font_size < 8: font_size = 8
+             
+             try:
+                font = ImageFont.truetype(self.font_path, font_size)
+             except:
+                font = ImageFont.load_default()
+
+             # Measure text
+             # getbbox returns (left, top, right, bottom)
+             left, top, right, bottom = font.getbbox(text)
+             text_w = right - left
+             text_h = bottom - top
+             
+             # Auto-scaling: Reduce font size if text is too wide
+             while text_w > w and font_size > 8:
+                 font_size -= 2
+                 try:
+                    font = ImageFont.truetype(self.font_path, font_size)
+                 except: break # generic default font doesn't scale
+                 left, top, right, bottom = font.getbbox(text)
+                 text_w = right - left
+                 text_h = bottom - top
+                 
+             # Center text
+             center_x = x + w // 2
+             center_y = y + h // 2
+             
+             text_x = center_x - text_w // 2
+             text_y = center_y - text_h // 2 - top # Adjust for baseline
+             
+             # Draw text with outline for better visibility
+             shadow_color = (0, 0, 0, 200)
+             text_color = (255, 255, 255, 255)
+             
+             # Draw shadow/outline
+             outline_width = max(1, font_size // 15)
+             for dx in range(-outline_width, outline_width + 1):
+                for dy in range(-outline_width, outline_width + 1):
+                    draw.text((text_x + dx, text_y + dy), text, font=font, fill=shadow_color)
+             
+             # Main text
+             draw.text((text_x, text_y), text, font=font, fill=text_color)
+        
+        # Convert back to OpenCV
+        return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+        
 
     def translate_video_text(self, video_path: str, output_path: str, 
                               target_lang: str = 'fr', source_lang: str = 'en',
                               ocr_engine: str = "PaddleOCR",
-                              process_interval: int = 1) -> str:
+                              ocr_interval_sec: float = 1.0) -> str: # DEFAULT interval 1.0s or user defined
         """
         Process video to detect and translate text.
+        ocr_interval_sec: Run OCR every N seconds. In between, reuse last detection.
         """
         if not self.model_loaded or self.current_engine != ocr_engine:
             self.load_model(source_lang, ocr_engine)
@@ -287,24 +303,28 @@ class VisualTranslator:
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        if fps <= 0: fps = 30.0
         
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
         
+        # Calculate frame interval
+        interval_frames = max(1, int(fps * ocr_interval_sec))
+        
         frame_count = 0
-        processed_count = 0
         
         # Cache for text detection results
         last_boxes = []
         last_mask = None
-        last_translated_texts = []
-        last_original_texts = []
+        last_translated_valid = [] # Subset of texts that were valid for translation
+        last_boxes_valid = []      # Subset of boxes corresponding to valid texts
         
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret: break
             
-            if frame_count % process_interval == 0:
+            # Run OCR at interval
+            if frame_count % interval_frames == 0:
                 try:
                     boxes = []
                     original_texts = []
@@ -314,43 +334,69 @@ class VisualTranslator:
                         if result and result[0]:
                              for line in result[0]:
                                 boxes.append(line[0])
+                                # line[1][0] is text, line[1][1] is confidence
                                 original_texts.append(line[1][0])
                                 
                     elif ocr_engine == "EasyOCR":
-                        # EasyOCR returns (bbox, text, prob)
-                        # bbox is [ [x1,y1], [x2,y2], [x3,y3], [x4,y4] ]
                         results = self.ocr_model.readtext(frame)
                         for (bbox, text, prob) in results:
                             if prob > 0.4:
                                 boxes.append(bbox)
                                 original_texts.append(text)
                     
+                    # Filter and Translate
+                    valid_translations = []
+                    valid_boxes = []
+                    
                     if boxes:
-                         translated_texts = []
-                         for text in original_texts:
-                             translated_texts.append(self._translate_text(text, target_lang))
+                         for box, text in zip(boxes, original_texts):
+                             # Translate with language checking
+                             translated = self._translate_text(text, target_lang, source_lang)
                              
-                         last_mask = self._create_text_mask(frame, boxes)
-                         frame = self._inpaint_text_regions(frame, last_mask)
-                         frame = self._overlay_translated_text(frame, boxes, original_texts, translated_texts)
+                             # Only keep if translation occurred (and isn't same as original) 
+                             # OR if we want to overwrite even identical text (to fix style)?
+                             # Usually we overwrite to ensure consistent look.
+                             
+                             # Filter: If translated == original, it might be a name or untranslated.
+                             # If we detected it was NOT source language, _translate_text returns original.
+                             # We should check if we want to overlay original text? 
+                             # Probably NOT. We only want to overlay TRANSLATED text.
+                             # If text was skipped due to language mismatch, we shouldn't draw over it.
+                             
+                             if translated != text:
+                                  valid_translations.append(translated)
+                                  valid_boxes.append(box)
+                    
+                    if valid_boxes:
+                         # Create mask from ALL boxes (to remove original text)
+                         # Wait, if we only translate SOME text, we should only inpaint SOME text?
+                         # Ideally yes. If we have English and French on screen, and we translate EN->FR.
+                         # We should Inpaint EN, write FR. Leave original FR alone.
+                         # So we should use 'valid_boxes' for mask too?
+                         # Yes, otherwise we delete the FR text and don't write anything back.
                          
-                         last_boxes = boxes
-                         last_original_texts = original_texts
-                         last_translated_texts = translated_texts
+                         last_mask = self._create_text_mask(frame, valid_boxes)
+                         last_boxes_valid = valid_boxes
+                         last_translated_valid = valid_translations
+                         
+                         frame = self._inpaint_text_regions(frame, last_mask)
+                         frame = self._overlay_translated_text_pil(frame, last_boxes_valid, last_translated_valid)
                     else:
-                        last_boxes = [] # clear cache if no text
+                        last_mask = None # Clear mask if no text to translate
+                        last_boxes_valid = []
+                        last_translated_valid = []
                         
-                    processed_count += 1
                 except Exception as e:
                      logger.warning(f"Error processing frame {frame_count}: {e}")
             else:
-                 # Apply cached
-                 if last_boxes and last_mask is not None:
+                 # Apply cached (hold the translation)
+                 if last_mask is not None and last_boxes_valid:
                       try:
                           frame = self._inpaint_text_regions(frame, last_mask)
-                          frame = self._overlay_translated_text(frame, last_boxes, last_original_texts, last_translated_texts)
-                      except: pass
-                      
+                          frame = self._overlay_translated_text_pil(frame, last_boxes_valid, last_translated_valid)
+                      except Exception as e:
+                          pass # If painting fails, just output original frame
+                       
             out.write(frame)
             frame_count += 1
             if frame_count % 100 == 0: logger.info(f"Processed {frame_count}/{total_frames}...")

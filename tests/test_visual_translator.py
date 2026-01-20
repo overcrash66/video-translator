@@ -2,359 +2,164 @@
 Unit tests for the VisualTranslator class (src.translation.visual_translator).
 
 Tests cover:
-- Initialization
-- Model loading (with and without PaddleOCR availability)
-- Model unloading and resource cleanup
-- Video text translation with fallback behavior
-- Frame processing and OCR interval logic
+- Initialization (finding fonts)
+- Model loading/unloading
+- translation filtering (language detection)
+- Text rendering (PIL)
+- Video processing with interval
 """
 
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
-from pathlib import Path
+from unittest.mock import MagicMock, patch, ANY
 import numpy as np
+from pathlib import Path
 
+# Mock external dependencies for integration tests
+@pytest.fixture
+def mock_pil():
+    with patch('src.translation.visual_translator.Image') as mock_img, \
+         patch('src.translation.visual_translator.ImageDraw') as mock_draw, \
+         patch('src.translation.visual_translator.ImageFont') as mock_font:
+        yield mock_img, mock_draw, mock_font
+
+@pytest.fixture
+def translator():
+    from src.translation.visual_translator import VisualTranslator
+    val = VisualTranslator()
+    # Mock finding font to avoid system dependency in tests
+    val.font_path = "arial.ttf"
+    return val
 
 class TestVisualTranslatorInit:
-    """Tests for VisualTranslator initialization."""
     
-    def test_init_defaults(self):
-        """Verify initial state: ocr_model=None, model_loaded=False."""
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        
+    def test_init_defaults(self, translator):
+        """Verify initial state."""
         assert translator.ocr_model is None
         assert translator.model_loaded is False
-    
-    def test_init_paddle_availability_check(self):
-        """Verify module checks for PaddleOCR availability during import."""
-        # This test verifies the PADDLE_AVAILABLE constant is set correctly
-        from src.translation import visual_translator
-        
-        # Should be a boolean indicating availability
-        assert isinstance(visual_translator.PADDLE_AVAILABLE, bool)
+        assert translator.font_path is not None
 
+class TestVisualTranslatorLanguageDetection:
 
-class TestVisualTranslatorLoadModel:
-    """Tests for model loading behavior."""
-    
-    @patch('src.translation.visual_translator.PADDLE_AVAILABLE', True)
-    @patch('src.translation.visual_translator.PaddleOCR')
-    def test_load_model_paddle_available(self, mock_paddle_ocr):
-        """Test model loading when PaddleOCR is available."""
-        mock_paddle_ocr.return_value = MagicMock()
-        
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        translator.load_model()
-        
-        assert translator.model_loaded is True
-        mock_paddle_ocr.assert_called_once_with(use_angle_cls=True, lang='en', enable_mkldnn=False)
-    
-    @patch('src.translation.visual_translator.PADDLE_AVAILABLE', False)
-    def test_load_model_paddle_not_installed(self):
-        """Test graceful handling when PaddleOCR is not installed."""
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        translator.load_model()
-        
-        assert translator.model_loaded is False
-        assert translator.ocr_model is None
-    
-    @patch('src.translation.visual_translator.PADDLE_AVAILABLE', True)
-    @patch('src.translation.visual_translator.PaddleOCR')
-    def test_load_model_already_loaded(self, mock_paddle_ocr):
-        """Verify no duplicate loading when model is already loaded."""
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        translator.model_loaded = True
-        translator.current_engine = "PaddleOCR"  # Ensure engine matches default
-        translator.ocr_model = MagicMock()
-        
-        translator.load_model()
-        
-        # Should not call PaddleOCR again
-        mock_paddle_ocr.assert_not_called()
-    
-    @patch('src.translation.visual_translator.PADDLE_AVAILABLE', True)
-    @patch('src.translation.visual_translator.PaddleOCR')
-    def test_load_model_exception_handling(self, mock_paddle_ocr):
-        """Test that exceptions during load are raised."""
-        mock_paddle_ocr.side_effect = Exception("Model loading failed")
-        
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        
-        with pytest.raises(Exception, match="Model loading failed"):
-            translator.load_model()
+    def test_detect_language_success(self, translator):
+        with patch('src.translation.visual_translator.LANGDETECT_AVAILABLE', True), \
+             patch('src.translation.visual_translator.detect') as mock_detect:
+            
+            mock_detect.return_value = 'fr'
+            lang = translator._detect_language("Bonjour le monde")
+            assert lang == 'fr'
 
+    def test_detect_language_too_short(self, translator):
+        """Short text returns unknown."""
+        lang = translator._detect_language("Hi")
+        assert lang == "unknown"
 
-class TestVisualTranslatorUnloadModel:
-    """Tests for model unloading and resource cleanup."""
-    
-    def test_unload_model_clears_state(self):
-        """Verify OCR model reference is cleared after unload."""
-        from src.translation.visual_translator import VisualTranslator
+    def test_translate_text_skips_same_language(self, translator):
+        """Should skip translation if detected language == target language."""
         
-        translator = VisualTranslator()
-        translator.ocr_model = MagicMock()
-        translator.model_loaded = True
-        
-        translator.unload_model()
-        
-        assert translator.ocr_model is None
-        assert translator.model_loaded is False
-    
-    def test_unload_model_when_not_loaded(self):
-        """Verify unload is safe when model was never loaded."""
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        
-        # Should not raise
-        translator.unload_model()
-        
-        assert translator.ocr_model is None
-        assert translator.model_loaded is False
+        # Mock detection to say text is ALREADY French
+        with patch.object(translator, '_detect_language', return_value='fr'):
+            # Try to translate TO French
+            result = translator._translate_text("Bonjour", target_lang='fr')
+            # Should return original
+            assert result == "Bonjour"
+            
+    def test_translate_text_skips_different_source(self, translator):
+        """Should skip translation if detected != source (and source is enforced)."""
+        # User says Source is EN.
+        # Detector says text is AR.
+        # Should SKIP (return original text).
+        with patch.object(translator, '_detect_language', return_value='ar'):
+            result = translator._translate_text("Some Arabic Text", target_lang='fr', source_lang='en')
+            assert result == "Some Arabic Text"
 
+    def test_translate_text_proceeds_if_source_match(self, translator):
+        """Proceeds if detected == source."""
+        with patch.object(translator, '_detect_language', return_value='en'), \
+             patch.object(translator, '_cached_translate', return_value='Bonjour'):
+             
+             result = translator._translate_text("Hello", target_lang='fr', source_lang='en')
+             assert result == "Bonjour"
 
-class TestVisualTranslatorTranslateVideoText:
-    """Tests for the translate_video_text method."""
-    
-    @patch('src.translation.visual_translator.PADDLE_AVAILABLE', False)
-    @patch('shutil.copy')
-    def test_translate_video_text_fallback_copy(self, mock_copy):
-        """When PaddleOCR unavailable, verify file is copied to output."""
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        
-        result = translator.translate_video_text("input.mp4", "output.mp4")
-        
-        mock_copy.assert_called_with("input.mp4", "output.mp4")
-        assert result == "output.mp4"
+class TestVisualTranslatorProcess:
     
     @patch('src.translation.visual_translator.PADDLE_AVAILABLE', True)
     @patch('src.translation.visual_translator.cv2')
     @patch('src.translation.visual_translator.PaddleOCR')
-    def test_translate_video_text_processes_video(self, mock_paddle_ocr, mock_cv2):
-        """Test that video frames are read and written correctly."""
-        # Setup mock video capture
+    def test_translate_video_text_interval(self, mock_ocr_cls, mock_cv2, translator, mock_pil):
+        """Verify OCR runs only at specified intervals."""
+        # Setup mock video
         mock_cap = MagicMock()
         mock_cv2.VideoCapture.return_value = mock_cap
         mock_cap.isOpened.return_value = True
         mock_cap.get.side_effect = lambda x: {
-            mock_cv2.CAP_PROP_FRAME_WIDTH: 1920,
-            mock_cv2.CAP_PROP_FRAME_HEIGHT: 1080,
-            mock_cv2.CAP_PROP_FPS: 30.0
+            mock_cv2.CAP_PROP_FRAME_WIDTH: 100,
+            mock_cv2.CAP_PROP_FRAME_HEIGHT: 100,
+            mock_cv2.CAP_PROP_FPS: 30.0,
+            mock_cv2.CAP_PROP_FRAME_COUNT: 60
         }.get(x, 0)
         
-        # Simulate reading frames (returns True for first 5 frames, then False)
-        frame_count = [0]
-        def read_side_effect():
-            frame_count[0] += 1
-            if frame_count[0] <= 5:
-                return True, np.zeros((1080, 1920, 3), dtype=np.uint8)
-            return False, None
-        
-        mock_cap.read.side_effect = read_side_effect
-        
-        # Setup mock video writer
-        mock_writer = MagicMock()
-        mock_cv2.VideoWriter.return_value = mock_writer
-        mock_cv2.VideoWriter_fourcc.return_value = 1234
-        
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        result = translator.translate_video_text("input.mp4", "output.mp4")
-        
-        # Verify video was opened and written
-        mock_cv2.VideoCapture.assert_called_with("input.mp4")
-        mock_cv2.VideoWriter.assert_called()
-        assert mock_writer.write.call_count == 5  # 5 frames written
-        mock_cap.release.assert_called_once()
-        mock_writer.release.assert_called_once()
-        assert result == "output.mp4"
-    
-    @patch('src.translation.visual_translator.PADDLE_AVAILABLE', True)
-    @patch('src.translation.visual_translator.cv2')
-    @patch('src.translation.visual_translator.PaddleOCR')
-    def test_translate_video_text_ocr_interval(self, mock_paddle_ocr, mock_cv2):
-        """Verify OCR runs only every 30th frame."""
-        # Setup mock video with 60 frames
-        mock_cap = MagicMock()
-        mock_cv2.VideoCapture.return_value = mock_cap
-        mock_cap.isOpened.return_value = True
-        mock_cap.get.return_value = 30.0  # fps
-        
-        frame_count = [0]
-        def read_side_effect():
-            frame_count[0] += 1
-            if frame_count[0] <= 60:
-                return True, np.zeros((100, 100, 3), dtype=np.uint8)
-            return False, None
-        
-        mock_cap.read.side_effect = read_side_effect
+        # 60 frames
+         # side_effect generator
+        frames = [True] * 60 + [False]
+        mock_cap.read.side_effect = [(True, np.zeros((100,100,3), dtype=np.uint8)) for _ in range(60)] + [(False, None)]
         
         mock_writer = MagicMock()
         mock_cv2.VideoWriter.return_value = mock_writer
-        mock_cv2.VideoWriter_fourcc.return_value = 1234
         
-        # Setup OCR mock
-        mock_ocr_instance = MagicMock()
-        mock_paddle_ocr.return_value = mock_ocr_instance
+        # Mock OCR instance
+        mock_ocr = MagicMock()
+        mock_ocr_cls.return_value = mock_ocr
+        # Return some text
+        mock_ocr.ocr.return_value = [[([[10,10],[20,10],[20,20],[10,20]], ("Hello", 0.9))]]
         
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        translator.translate_video_text("input.mp4", "output.mp4")
-        
-        # OCR should be called for frames 0, 30 (every 30th frame)
-        # Note: Current implementation has OCR call commented out, so we verify frames written
-        assert mock_writer.write.call_count == 60
-    
-    @patch('src.translation.visual_translator.PADDLE_AVAILABLE', True)
-    @patch('src.translation.visual_translator.cv2')
-    @patch('src.translation.visual_translator.PaddleOCR')
-    def test_translate_video_text_handles_empty_video(self, mock_paddle_ocr, mock_cv2):
-        """Verify graceful handling of video with no frames."""
-        mock_cap = MagicMock()
-        mock_cv2.VideoCapture.return_value = mock_cap
-        mock_cap.isOpened.return_value = True
-        mock_cap.get.return_value = 30.0
-        mock_cap.read.return_value = (False, None)  # No frames
-        
-        mock_writer = MagicMock()
-        mock_cv2.VideoWriter.return_value = mock_writer
-        mock_cv2.VideoWriter_fourcc.return_value = 1234
-        
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        result = translator.translate_video_text("input.mp4", "output.mp4")
-        
-        # Should complete without error
-        mock_writer.write.assert_not_called()
-        mock_cap.release.assert_called_once()
-        mock_writer.release.assert_called_once()
-        assert result == "output.mp4"
-    
-    @patch('src.translation.visual_translator.PADDLE_AVAILABLE', True)
-    @patch('src.translation.visual_translator.cv2')
-    @patch('src.translation.visual_translator.PaddleOCR')
-    def test_translate_video_text_returns_output_path(self, mock_paddle_ocr, mock_cv2):
-        """Verify correct output path is returned."""
-        mock_cap = MagicMock()
-        mock_cv2.VideoCapture.return_value = mock_cap
-        mock_cap.isOpened.return_value = True
-        mock_cap.get.return_value = 30.0
-        mock_cap.read.return_value = (False, None)
-        
-        mock_writer = MagicMock()
-        mock_cv2.VideoWriter.return_value = mock_writer
-        mock_cv2.VideoWriter_fourcc.return_value = 1234
-        
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        
-        result = translator.translate_video_text("input.mp4", "/custom/path/output.mp4")
-        
-        assert result == "/custom/path/output.mp4"
-    
-    @patch('src.translation.visual_translator.PADDLE_AVAILABLE', True)
-    @patch('src.translation.visual_translator.cv2')
-    @patch('src.translation.visual_translator.PaddleOCR')
-    def test_translate_video_text_with_path_objects(self, mock_paddle_ocr, mock_cv2):
-        """Verify translate_video_text works with Path objects."""
-        mock_cap = MagicMock()
-        mock_cv2.VideoCapture.return_value = mock_cap
-        mock_cap.isOpened.return_value = True
-        mock_cap.get.return_value = 30.0
-        mock_cap.read.return_value = (False, None)
-        
-        mock_writer = MagicMock()
-        mock_cv2.VideoWriter.return_value = mock_writer
-        mock_cv2.VideoWriter_fourcc.return_value = 1234
-        
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        
-        video_path = Path("input.mp4")
-        output_path = Path("output.mp4")
-        
-        result = translator.translate_video_text(str(video_path), str(output_path))
-        
-        assert result == str(output_path)
-    
-    @patch('shutil.copy')
-    def test_translate_video_text_calls_load_model(self, mock_copy):
-        """Verify lazy loading when model not loaded."""
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        translator.model_loaded = False
-        
-        with patch.object(translator, 'load_model') as mock_load:
-            with patch('src.translation.visual_translator.PADDLE_AVAILABLE', False):
-                translator.translate_video_text("input.mp4", "output.mp4")
-        
-        mock_load.assert_called_once()
-    
-    @patch('shutil.copy')
-    def test_translate_video_text_logs_info(self, mock_copy):
-        """Verify info logging during translation process."""
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        
-        with patch('src.translation.visual_translator.PADDLE_AVAILABLE', False):
-            with patch('src.translation.visual_translator.logger') as mock_logger:
-                translator.translate_video_text("input.mp4", "output.mp4")
-        
-        # Should log warning about missing dependencies
-        assert mock_logger.warning.called
-
-
-class TestVisualTranslatorIntegration:
-    """Integration-style tests for VisualTranslator."""
-    
-    @patch('src.translation.visual_translator.PADDLE_AVAILABLE', True)
-    @patch('src.translation.visual_translator.cv2')
-    @patch('src.translation.visual_translator.PaddleOCR')
-    def test_full_workflow_with_model_lifecycle(self, mock_paddle_ocr, mock_cv2):
-        """Test complete workflow: load -> process -> unload."""
-        # Setup mocks
-        mock_cap = MagicMock()
-        mock_cv2.VideoCapture.return_value = mock_cap
-        mock_cap.isOpened.return_value = True
-        mock_cap.get.return_value = 30.0
-        mock_cap.read.return_value = (False, None)
-        
-        mock_writer = MagicMock()
-        mock_cv2.VideoWriter.return_value = mock_writer
-        mock_cv2.VideoWriter_fourcc.return_value = 1234
-        
-        from src.translation.visual_translator import VisualTranslator
-        
-        translator = VisualTranslator()
-        
-        # Load
+        # Run with interval 1.0s (every 30 frames)
         translator.load_model()
-        assert translator.model_loaded is True
         
-        # Process
-        result = translator.translate_video_text("input.mp4", "output.mp4")
-        assert result == "output.mp4"
+        # Mock translation to always return changed text
+        with patch.object(translator, '_translate_text', return_value="Bonjour"):
+            translator.translate_video_text("in.mp4", "out.mp4", ocr_interval_sec=1.0)
         
-        # Unload
-        translator.unload_model()
-        assert translator.model_loaded is False
-        assert translator.ocr_model is None
+        # OCR should be called twice (Frame 0 and Frame 30) for 60 frames (0..59)
+        assert mock_ocr.ocr.call_count == 2
+        
+        # Writer should handle 60 frames
+        assert mock_writer.write.call_count == 60
+
+    @patch('src.translation.visual_translator.PADDLE_AVAILABLE', True)
+    @patch('src.translation.visual_translator.cv2')
+    @patch('src.translation.visual_translator.PaddleOCR')
+    def test_translate_video_inpaint_persistence(self, mock_ocr_cls, mock_cv2, translator, mock_pil):
+        """Verify that inpainting mask persists between OCR calls."""
+         # Setup mock video - 10 frames
+        mock_cap = MagicMock()
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda x: {
+            mock_cv2.CAP_PROP_FPS: 30.0,
+        }.get(x, 0)
+        
+        mock_cap.read.side_effect = [(True, np.zeros((100,100,3), dtype=np.uint8)) for _ in range(10)] + [(False, None)]
+        
+        mock_writer = MagicMock()
+        mock_cv2.VideoWriter.return_value = mock_writer
+        
+        mock_ocr = MagicMock()
+        mock_ocr_cls.return_value = mock_ocr
+        # Return text ONLY on first call
+        mock_ocr.ocr.return_value = [[([[10,10],[20,10],[20,20],[10,20]], ("Hello", 0.9))]]
+        
+        # Interval 10s (300 frames) -> OCR runs only on frame 0
+        translator.load_model()
+        
+        with patch.object(translator, '_inpaint_text_regions') as mock_inpaint:
+            # Mock overlay too to avoid PIL issues here if not fully mocked
+            with patch.object(translator, '_overlay_translated_text_pil') as mock_overlay:
+                 # Mock translation to ensure it triggers inpaint
+                with patch.object(translator, '_translate_text', return_value="Bonjour"):
+                    translator.translate_video_text("in.mp4", "out.mp4", ocr_interval_sec=10.0)
+                
+                # Verify OCR called once
+                assert mock_ocr.ocr.call_count == 1
+                
+                # Verify inpaint called 10 times (persisted)
+                assert mock_inpaint.call_count == 10

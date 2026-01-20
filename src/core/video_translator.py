@@ -396,7 +396,8 @@ class VideoTranslator:
                      str(visual_out),
                      target_lang=target_code,
                      source_lang=source_code,
-                     ocr_engine=ocr_model_name
+                     ocr_engine=ocr_model_name,
+                     ocr_interval_sec=10.0
                  )
                  if visual_out.exists():
                      video_path = visual_out
