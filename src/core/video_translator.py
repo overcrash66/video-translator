@@ -17,6 +17,7 @@ from src.audio.diarization import Diarizer
 # Optional imports for new features (Placeholder for now until implemented)
 from src.processing.lipsync import LipSyncer
 from src.translation.visual_translator import VisualTranslator
+from src.processing.voice_enhancement import VoiceEnhancer
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class VideoTranslator:
         self.diarizer = Diarizer()
         self.lipsyncer = LipSyncer()
         self.visual_translator = VisualTranslator()
+        self.voice_enhancer = VoiceEnhancer()
         
         # Track currently loaded model to avoid redundant unloads/loads
         self.current_model = None
@@ -111,6 +113,9 @@ class VideoTranslator:
             
         if hasattr(self.visual_translator, 'unload_model'):
             self.visual_translator.unload_model()
+            
+        if hasattr(self.voice_enhancer, 'unload_model'):
+            self.voice_enhancer.unload_model()
         
         self.current_model = None
         
@@ -161,6 +166,7 @@ class VideoTranslator:
                       enable_vad,
                       enable_lipsync,
                       enable_visual_translation,
+                      enable_audio_enhancement=False,
                       vad_min_silence_duration_ms=1000,
                       transcription_beam_size=5,
                       tts_enable_cfg=False,
@@ -383,6 +389,22 @@ class VideoTranslator:
         if not self.synchronizer.merge_segments(tts_segments, total_duration=duration_sec, output_path=str(merged_speech), enable_time_stretch=enable_time_stretch):
             raise Exception("Merging speech segments failed")
             
+        # 7.5. Audio Enhancement (VoiceFixer)
+        if enable_audio_enhancement:
+             yield ("progress", 0.75, "Enhancing Audio (VoiceFixer)...")
+             self.load_model("voice_enhancer")
+             enhanced_speech = config.TEMP_DIR / f"{video_path.stem}_enhanced_speech.wav"
+             
+             try:
+                 yield ("log", "Enhancing audio with VoiceFixer...")
+                 self.voice_enhancer.enhance_audio(merged_speech, enhanced_speech)
+                 if enhanced_speech.exists():
+                     merged_speech = enhanced_speech
+                     yield ("log", "Audio enhancement complete.")
+             except Exception as e:
+                 logger.error(f"VoiceFixer failed: {e}. using non-enhanced audio.")
+                 yield ("log", f"VoiceFixer failed: {e}. Skipping.")
+        
         final_mix = config.TEMP_DIR / f"{video_path.stem}_final_mix.wav"
         self.processor.mix_tracks(str(merged_speech), bg_path, str(final_mix))
         

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Initialize central controller
 video_translator = VideoTranslator()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -88,6 +88,7 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             ocr_model_name=ocr_model,
             tts_voice=tts_voice,
             lipsync_model_name=lipsync_model,
+            enable_audio_enhancement=enable_audio_enhancement
         )
         
         final_video_path = None
@@ -237,6 +238,12 @@ def create_ui():
                     value=False,
                     info="Applies Classifier-Free Guidance (scale 1.3) to f5-TTS for more natural speech."
                 )
+
+                enable_audio_enhancement = gr.Checkbox(
+                    label="Enhance Audio (VoiceFixer)",
+                    value=False,
+                    info="Uses VoiceFixer to remove noise and restore speech quality in the finale output. (Recommended for Piper/Edge)"
+                )
                 
                 tts_voice = gr.Dropdown(
                     choices=["Auto"],
@@ -344,7 +351,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement],
             outputs=[video_output, logs_output]
         )
         

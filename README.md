@@ -27,6 +27,8 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 *   **Speaker Diarization**: 
     *   **SpeechBrain**: ECAPA-TDNN embeddings with spectral clustering.
     *   **NVIDIA NeMo** (New): Advanced multi-scale diarization decoder (MSDD) for precise speaker turn detection.
+*   **Audio Enhancement**:
+    *   **VoiceFixer**: Restores degraded speech and removes noise (Optional).
 *   **Visual Enhancements (Experimental)**:
     *   **Lip-Sync (Wav2Lip-GAN)**: High-fidelity generative video synchronization.
         *   **Standard**: Fast, smoothed, and blended (Poisson Blending) validation.
@@ -139,6 +141,8 @@ flowchart TD
     TTSAudio --> Sync{"Synchronize<br/>(PyRubberband)"}
     Sync --> MergedSpeech[Merged Speech Track]
     
+    MergedSpeech -.-> VoiceFixer{"Voice Enhancement<br/>(VoiceFixer)"}
+    VoiceFixer -.-> Mix
     MergedSpeech --> Mix{Mix Audio}
     Background --> Mix
     

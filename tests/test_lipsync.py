@@ -38,4 +38,4 @@ class TestLipSyncer:
         output_path = "out.mp4"
         
         syncer.sync_lips(video_path, audio_path, output_path)
-        mock_engine.sync_lips.assert_called_with(video_path, audio_path, output_path)
+        mock_engine.sync_lips.assert_called_with(video_path, audio_path, output_path, enhance_face=False)
