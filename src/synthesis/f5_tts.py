@@ -65,13 +65,14 @@ class F5TTSWrapper:
         self.model_loaded = False
         logger.info("F5-TTS unloaded.")
 
-    def generate_voice_clone(self, text, ref_audio_path, ref_text="", output_path=None, cfg_strength=2.0):
+    def generate_voice_clone(self, text, ref_audio_path, ref_text="", output_path=None, cfg_strength=2.0, language="en"):
         """
         Generates speech using F5-TTS with voice cloning.
         Supports long-form text by segmenting and merging.
         
         Args:
             cfg_strength: Classifier-free guidance strength (default 2.0)
+            language: Language code for segmentation (default "en")
         """
         if not self.model_loaded:
             self.load_model()
@@ -87,10 +88,15 @@ class F5TTSWrapper:
             from pydub import AudioSegment
             
             # Segment text
-            seg = pysbd.Segmenter(language="en", clean=False)
+            # Use provided language for segmenter if supported, else default to 'en'
+            try:
+                seg = pysbd.Segmenter(language=language if language in pysbd.languages.LANGUAGE_CODES else "en", clean=False)
+            except:
+                seg = pysbd.Segmenter(language="en", clean=False)
+                
             sentences = seg.segment(text)
             
-            logger.info(f"F5-TTS: Segmented text into {len(sentences)} parts (cfg={cfg_strength})")
+            logger.info(f"F5-TTS: Segmented text into {len(sentences)} parts (cfg={cfg_strength}, lang={language})")
             
             audio_segments = []
             
@@ -99,29 +105,17 @@ class F5TTSWrapper:
                 
                 logger.info(f"Generating segment {i+1}/{len(sentences)}: '{sentence[:20]}...'")
                 
-                # [Fix] Patch torchaudio.load to use soundfile directly, preventing TorchCodec errors on Windows
-                from unittest.mock import patch
-                
-                def _safe_load(path, **kwargs):
-                    data, rate = sf.read(path, dtype='float32')
-                    # Convert to (C, T) tensor
-                    if data.ndim == 1:
-                        tensor = torch.from_numpy(data).unsqueeze(0)
-                    else:
-                        tensor = torch.from_numpy(data.T)
-                    return tensor, rate
-
-                with patch("torchaudio.load", side_effect=_safe_load):
-                    # Infer single segment with CFG
-                    wav, sr, _ = self.pipeline.infer(
-                        ref_file=str(ref_audio_path),
-                        ref_text=ref_text,
-                        gen_text=sentence,
-                        file_wave=None,
-                        file_spec=None,
-                        seed=-1,
-                        cfg_strength=cfg_strength
-                    )
+                # Infer single segment with CFG
+                # Note: Global torchaudio patch in tts.py handles Windows compatibility
+                wav, sr, _ = self.pipeline.infer(
+                    ref_file=str(ref_audio_path),
+                    ref_text=ref_text,
+                    gen_text=sentence,
+                    file_wave=None,
+                    file_spec=None,
+                    seed=-1,
+                    cfg_strength=cfg_strength
+                )
                 
                 # Convert to pydub AudioSegment
                 if hasattr(wav, 'cpu'): wav = wav.squeeze().cpu().numpy()

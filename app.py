@@ -285,7 +285,7 @@ def create_ui():
 
                 vad_min_silence = gr.Number(
                     label="VAD Min Silence Duration (ms)",
-                    value=1000,
+                    value=120000,
                     minimum=0,
                     step=50,
                     visible=False,

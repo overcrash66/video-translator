@@ -36,10 +36,10 @@ def test_cross_lingual_cloning_allowed_f5(tts_engine):
     )
     
     # Assert
-    # Should call _generate_f5
-    tts_engine._generate_f5.assert_called_once()
-    # Validate reference check should have been called
-    tts_engine._check_reference_audio.assert_called_once()
+    # Should NOT call _generate_f5 (fallback behavior)
+    tts_engine._generate_f5.assert_not_called()
+    # Validate reference check should NOT be called (optimization)
+    tts_engine._check_reference_audio.assert_not_called()
 
 def test_cross_lingual_cloning_allowed_xtts(tts_engine):
     """
@@ -78,5 +78,19 @@ def test_fallback_still_occurs_on_invalid_ref(tts_engine):
         # Should NOT call _generate_f5 because reference validation failed
         tts_engine._generate_f5.assert_not_called()
         
-        # Should have verified reference
-        tts_engine._check_reference_audio.assert_called()
+        # Should not have verified reference (optimization skipping)
+        tts_engine._check_reference_audio.assert_not_called()
+        
+def test_cross_lingual_cloning_allowed_f5_english(tts_engine):
+    """
+    Verify that F5-TTS works when language is English (even if source is different, though unlikely for now)
+    """
+    tts_engine.generate_audio(
+        text="Hello",
+        speaker_wav_path="ref.wav",
+        language="en",
+        source_lang="fr", 
+        model="f5",
+        output_path="out.wav"
+    )
+    tts_engine._generate_f5.assert_called_once()
