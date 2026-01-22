@@ -86,6 +86,55 @@ class VideoTranslator:
         logger.warning(f"No clean profile for {speaker_id}. Fallback to generic voice.")
         return None, False  # Return None to signal use of generic voice, NOT full vocals
 
+    def _extract_fallback_reference(self, vocals_path):
+        """
+        Extracts a valid speech clip from the first 30 seconds of the audio
+        to use as a desperate fallback when no other reference is found.
+        """
+        fallback_path = config.TEMP_DIR / f"fallback_ref_0_30_{Path(vocals_path).stem}.wav"
+        if fallback_path.exists():
+            return str(fallback_path)
+            
+        try:
+            logger.info("Comparing audio... Attempting to extract fallback reference from first 30s...")
+            # We can use VAD or just simple slicing if VAD isn't desired/loaded.
+            # But we have 'self.transcriber.vad' usually if initialized.
+            
+            # Simple approach: Slice 0-30s
+            import soundfile as sf
+            data, sr = sf.read(str(vocals_path))
+            
+            # Limit to 30s
+            max_samples = 30 * sr
+            if len(data) > max_samples:
+                data = data[:max_samples]
+                
+            # If we have VAD loaded, try to find a speech segment
+            # But 'self.transcriber' might not be loaded if we are in a different stage?
+            # Actually process_video controls the flow, so Transcriber is initialized but maybe 'model' unloaded.
+            # VAD is lightweight.
+            
+            # For robustness, let's just use the first 5-10 seconds of NON-SILENCE if possible.
+            # Or just save the cropped 30s if it's long enough.
+            
+            if len(data) < 2 * sr: # Less than 2s
+                logger.warning("First 30s too short for fallback.")
+                return None
+                
+            sf.write(str(fallback_path), data, sr)
+            
+            # Check if valid (using TTS engine's validator)
+            if self.tts_engine._check_reference_audio(str(fallback_path), min_duration=2.0):
+                 logger.info(f"Created fallback reference: {fallback_path.name}")
+                 return str(fallback_path)
+            else:
+                 logger.warning("Extracted fallback 30s failed validation.")
+                 return None
+                 
+        except Exception as e:
+            logger.error(f"Failed to extract fallback reference: {e}")
+            return None
+
     def unload_all_models(self):
         """
         Force unloads all known models and clears CUDA cache.
@@ -206,6 +255,7 @@ class VideoTranslator:
         # Reset voice map for new video
         self.speaker_voice_map = {}
         self.used_voices = set()
+        self._last_valid_reference_wav = None # Track last valid ref for fallback
         
         if enable_diarization:
             self.load_model("diarization")
@@ -276,6 +326,12 @@ class VideoTranslator:
             source_code = detected_lang
             if target_code == "auto": # Corner case
                  target_code = "en"
+        
+        # [NEW] Merge short segments for smoother TTS
+        logger.info(f"Merging short segments (min_dur=2.0s, max_gap=0.5s)...")
+        before_count = len(segments)
+        segments = self.transcriber.merge_short_segments(segments, min_duration=2.0, max_gap=0.5)
+        logger.info(f"Merged segments: {before_count} -> {len(segments)}")
 
         yield ("progress", 0.4, "Translating...")
         
@@ -287,6 +343,19 @@ class VideoTranslator:
             optimize=optimize_translation
         )
         yield ("log", f"Translation complete for {target_lang}.")
+        
+        # [NEW] Export Subtitles (SRT)
+        try:
+            from src.utils.srt_generator import generate_srt
+            srt_path = config.OUTPUT_DIR / f"{video_path.stem}.srt"
+            # Ensure output dir exists (it should, but safety first)
+            config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            
+            generate_srt(translated_segments, str(srt_path))
+            yield ("log", f"Subtitles exported to {srt_path.name}")
+        except Exception as e:
+            logger.error(f"Failed to export subtitles: {e}")
+            yield ("log", f"Subtitle export failed: {e}")
         
         # 6. TTS
         self.load_model("tts")
@@ -335,11 +404,43 @@ class VideoTranslator:
                              best_speaker, speaker_profiles, vocals_path, tts_model_name
                          )
                      else:
-                         # No overlap logic - likely just background noise or briefly spoken word
-                         # We still try to find closest speaker... but for now, Generic.
-                         use_force_cloning = False # Do NOT force clone full track
-                         speaker_wav = None # Signal generic
-                         logger.warning(f"No specific speaker detected for segment {i}. Using generic voice.")
+                         # No overlap logic
+                         use_force_cloning = False
+                         speaker_wav = None
+                         logger.warning(f"No specific speaker detected for segment {i}.")
+             
+             # --- [NEW] Reference Voice Fallback Logic ---
+             
+             # 1. Update tracking if we have a valid speaker_wav
+             if speaker_wav:
+                 # We assume _resolve_speaker_reference returns None if invalid, 
+                 # but double check validation if needed? 
+                 # _resolve_speaker_reference already validates against profiles.
+                 # If it returned something, it's likely good.
+                 if self.tts_engine.validate_reference(speaker_wav, model_name=tts_model_name):
+                     self._last_valid_reference_wav = speaker_wav
+                 else:
+                     speaker_wav = None # It was invalid
+             
+             # 2. If no valid speaker_wav, try Last Valid
+             if not speaker_wav and getattr(self, '_last_valid_reference_wav', None):
+                 logger.info(f"Segment {i}: Using LAST VALID reference: {Path(self._last_valid_reference_wav).name}")
+                 speaker_wav = self._last_valid_reference_wav
+                 # We don't force clone fallbacks, usually partial matches
+                 use_force_cloning = False 
+
+             # 3. If still no valid reference, try 0-30s Fallback
+             if not speaker_wav:
+                 # Try to get or create the 0-30s fallback
+                 fallback_30s = self._extract_fallback_reference(vocals_path)
+                 if fallback_30s:
+                      logger.info(f"Segment {i}: Using 0-30s FALLBACK reference.")
+                      speaker_wav = fallback_30s
+                      self._last_valid_reference_wav = fallback_30s # Set as new valid
+                 else:
+                      logger.warning(f"Segment {i}: No reference found (Last or 30s). Will fallback to Edge-TTS.")
+                      
+             # --------------------------------------------
                      
              generated_path = self.tts_engine.generate_audio(
                 text, speaker_wav, 
@@ -369,6 +470,37 @@ class VideoTranslator:
         
         if not tts_segments:
             raise Exception("TTS Generation failed: No valid segments produced")
+            
+        # [NEW] EQ Matching
+        if enable_audio_enhancement:
+             # We use the 'enable_audio_enhancement' flag for this, or should it be a separate flag?
+             # The user request said "EQ Matching (Spectral Matching)". 
+             # The plan didn't specify a new flag, but we should probably use one or just do it.
+             # "The Fix: Capture the "EQ Curve"... and apply it".
+             # Let's apply it by default if vocals exist, or maybe check a new arg?
+             # For now, let's tie it to 'enable_audio_enhancement' OR just do it always if we want "Zero computing power" cost?
+             # Actually, EQ matching changes the sound character significantly.
+             # The prompt implied it's to fix the "studio clean" vs "hall" disconnect.
+             # Let's apply it. 
+             pass
+
+        # Apply EQ Matching if we have reference vocals
+        if vocals_path and Path(vocals_path).exists():
+             yield ("log", "Applying EQ matching to match original vocal tone...")
+             from src.audio.eq_matching import apply_eq_matching
+             
+             count = 0
+             for tts_seg in tts_segments:
+                 out_path = str(tts_seg['audio_path']).replace('.wav', '_eq.wav').replace('.mp3', '_eq.wav')
+                 # Use 0.7 strength as a safe default
+                 apply_eq_matching(str(vocals_path), str(tts_seg['audio_path']), out_path, strength=0.7)
+                 
+                 # Update path if success
+                 if Path(out_path).exists():
+                     tts_seg['audio_path'] = out_path
+                     count += 1
+             yield ("log", f"Applied EQ matching to {count} segments.")
+
         yield ("log", "TTS Generation complete.")
 
         # 7. Sync & Mix

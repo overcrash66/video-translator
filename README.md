@@ -21,6 +21,9 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     *   **Piper TTS** (Local): Robust offline neural TTS using the official Piper binary (automatically downloaded).
     *   **XTTS-v2** (Local): High-fidelity voice cloning with **Emotion Control** (Happy, Sad, Angry, etc.). Requires ~2GB VRAM.
     *   **F5-TTS** (Local): Fast, zero-shot voice cloning with Sway Sampling.
+    *   **Smart Segment Merging**: Automatically merges short, choppy transcription segments into fluid sentences for natural TTS output.
+    *   **Auto-Generated Subtitles**: Exports `.srt` subtitle files alongside translated videos as a fallback for unclear audio.
+    *   **EQ Spectral Matching**: Applies the tonal characteristics (EQ curve) of the original voice to TTS output for seamless audio blending.
 *   **Smart Synchronization**: 
     *   High-quality **PyRubberband** time-stretching with formant preservation (Toggleable).
     *   **Cross-fade blending** for smooth transitions between audio segments.
@@ -128,17 +131,20 @@ flowchart TD
     Vocals --> VAD{"VAD Preprocessing<br/>(Silero VAD)"}
     VAD --> Transcribe{"Transcribe<br/>(Faster-Whisper Turbo)"}
     Transcribe --> Segments[Text Segments]
+    Segments --> Merge{Smart Segment Merging}
     
     Vocals -.-> Diarize{"Diarize<br/>(NeMo / SpeechBrain)"}
     Diarize -.-> SpeakerProfiling[Speaker Profiling]
     
-    Segments --> Translate{"Translate<br/>(Llama 3.1 / ALMA / HY-MT)"}
+    Merge --> Translate{"Translate<br/>(Llama 3.1 / ALMA / HY-MT)"}
+    Translate --> SRT[Export .SRT Subtitles]
     
     Translate --> TTS{"Neural TTS<br/>(F5-TTS / XTTS / Edge)"}
     SpeakerProfiling -.-> TTS
     TTS --> TTSAudio[Generated Speech Clips]
     
-    TTSAudio --> Sync{"Synchronize<br/>(PyRubberband)"}
+    TTSAudio --> EQ{EQ Spectral Matching}
+    EQ --> Sync{"Synchronize<br/>(PyRubberband)"}
     Sync --> MergedSpeech[Merged Speech Track]
     
     MergedSpeech -.-> VoiceFixer{"Voice Enhancement<br/>(VoiceFixer)"}

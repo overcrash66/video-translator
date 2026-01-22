@@ -345,6 +345,69 @@ class Transcriber:
             
         return cleaned
 
+    def merge_short_segments(self, segments: list, min_duration: float = 2.0, max_gap: float = 0.5) -> list:
+        """
+        Merges short segments into longer, coherent sentences.
+        
+        Args:
+            segments: List of segments {start, end, text, words}
+            min_duration: Threshold - merge if segment duration < this (seconds)
+            max_gap: Maximum gap to next segment to allow merging (seconds)
+            
+        Returns:
+            List of merged segments
+        """
+        if not segments:
+            return []
+            
+        merged = []
+        current_seg = segments[0].copy()
+        
+        for next_seg in segments[1:]:
+            # Calculate properties
+            current_duration = current_seg['end'] - current_seg['start']
+            gap = next_seg['start'] - current_seg['end']
+            
+            # Check merge conditions:
+            # 1. Current segment is short
+            # 2. Gap is small (part of same flow)
+            # 3. (Optional) Check punctuation? For now, we assume short segments usually need merging.
+            #    Ideally we wouldn't merge if current ends in specific punctuation like '?' or '!', 
+            #    but often Whisper breaks sentences mid-phrase.
+            
+            should_merge = (current_duration < min_duration) and (gap < max_gap)
+            
+            if should_merge:
+                # Merge into current_seg
+                current_seg['end'] = next_seg['end']
+                
+                # Intelligent text merging
+                curr_text = current_seg['text'].strip()
+                next_text = next_seg['text'].strip()
+                
+                # Avoid double spacing or missing spacing
+                if curr_text.endswith('-') or next_text.startswith('-'):
+                     # Hyphenated break
+                     current_seg['text'] = curr_text + next_text
+                else:
+                     current_seg['text'] = f"{curr_text} {next_text}"
+                     
+                # Merge words list if available
+                if 'words' in current_seg and 'words' in next_seg:
+                    current_seg['words'] = current_seg['words'] + next_seg['words']
+                    
+                logger.debug(f"Merged segment: '{current_seg['text']}' (New duration: {current_seg['end'] - current_seg['start']:.2f}s)")
+                
+            else:
+                # Push current and promote next
+                merged.append(current_seg)
+                current_seg = next_seg.copy()
+                
+        # Append the final segment
+        merged.append(current_seg)
+        
+        return merged
+
 if __name__ == "__main__":
     t = Transcriber()
     # Dummy test
