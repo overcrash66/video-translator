@@ -239,15 +239,15 @@ class TTSEngine:
              should_attempt_clone = force_cloning
              
              if not force_cloning:
-                 # Cross-lingual check: F5/XTTS cannot handle cloning across languages
+                 # [Relaxed] F5 and XTTS support zero-shot cross-lingual cloning.
+                 # We only warn/info, but do NOT disable cloning just because languages differ.
                  if source_lang and source_lang != language:
-                     logger.warning(f"Cross-lingual synthesis (source='{source_lang}', target='{language}'). Falling back to Edge-TTS.")
-                     should_attempt_clone = False
-                 else:
-                     # Strict validation for cloning models
-                     # [Fix] F5-TTS is robust to shorter audio (1.0s), XTTS needs 2.0s to avoid crashing
-                     min_dur = 1.0 if model == "f5" else 2.0
-                     should_attempt_clone = self._check_reference_audio(speaker_wav_path, min_duration=min_dur)
+                     logger.info(f"Cross-lingual synthesis (source='{source_lang}', target='{language}'). Proceeding with {model} cloning.")
+                 
+                 # Strict validation for cloning models
+                 # [Fix] F5-TTS is robust to shorter audio (1.0s), XTTS needs 2.0s to avoid crashing
+                 min_dur = 1.0 if model == "f5" else 2.0
+                 should_attempt_clone = self._check_reference_audio(speaker_wav_path, min_duration=min_dur)
              
              if should_attempt_clone:
                  if model == "xtts":

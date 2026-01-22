@@ -87,7 +87,7 @@ class VisualTranslator:
                 
                 # use_angle_cls=True for robust detection of rotated text
                 # enable_mkldnn=False to fix oneDNN crash on Windows
-                self.ocr_model = PaddleOCR(use_angle_cls=True, lang=ocr_lang, enable_mkldnn=False, show_log=False)
+                self.ocr_model = PaddleOCR(use_angle_cls=True, lang=ocr_lang, enable_mkldnn=False)
                 self.model_loaded = True
                 logger.info("PaddleOCR loaded successfully.")
             except Exception as e:
