@@ -60,6 +60,8 @@ class TTSEngine:
         self.f5_model = None
         
         # Mapping for Piper (language code -> model name)
+        self.piper_map = languages.PIPER_MODEL_MAP
+
     def get_available_voices(self, model_name: str, language_code: str) -> list:
         """
         Returns a list of available voices for the given model and language.
