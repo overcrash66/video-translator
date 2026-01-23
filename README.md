@@ -33,9 +33,10 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
 *   **Audio Enhancement**:
     *   **VoiceFixer**: Restores degraded speech and removes noise (Optional).
 *   **Visual Enhancements (Experimental)**:
-    *   **Lip-Sync (Wav2Lip-GAN)**: High-fidelity generative video synchronization.
-        *   **Standard**: Fast, smoothed, and blended (Poisson Blending) validation.
-        *   **Enhanced (New)**: Integrates **GFPGAN** for high-resolution face restoration (eliminates blurriness).
+    *   **Lip-Sync (Generative)**:
+        *   **Wav2Lip-GAN**: Fast, smoothed, and blended (Poisson Blending) validation.
+        *   **Enhanced (Wav2Lip + GFPGAN)**: Integrates **GFPGAN** for high-resolution face restoration (eliminates blurriness).
+        *   **LivePortrait (High Quality) (New)**: Uses **LivePortrait** for state-of-the-art cinematic lip synchronization and natural facial animation.
     *   **Visual Text Translation**: Uses **PaddleOCR** or **EasyOCR** to detect text in video frames and **OpenCV** inpainting to replace it with translated text.
 *   **Global CPU Fallback**: Automatically switches ANY model (Lip-Sync, Whisper, Diarization, etc.) to CPU if GPU fails or is incompatible, ensuring successful processing on all hardware.
 *   **GPU Optimized**: Custom **VideoTranslator** orchestration enforces strict "one-heavy-model-at-a-time" policy. Supports **PyTorch 2.5+** and **RTX 50-series** GPUs.
@@ -79,6 +80,7 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
     *   **Wav2Lip**: Ensure `models/wav2lip/wav2lip_gan.pth` is present.
     *   **F5-TTS**: Requires `f5-tts` package and GPU (supports CPU fallback).
     *   **Enhanced Lip-Sync**: Requires `gfpgan` and `basicsr` (installed via pip).
+    *   **LivePortrait**: Requires ~2GB VRAM and additional model checkpoints (auto-downloaded to `models/live_portrait`).
 
 ## 🖥️ Usage
 
@@ -107,6 +109,7 @@ An advanced, locally-run video translation pipeline that separates vocals, trans
         *   **Lip-Sync**: Enable, then select **Model**:
             *   `Wav2Lip-GAN`: Fast.
             *   `Wav2Lip + GFPGAN`: Enhanced quality (slower).
+            *   `LivePortrait (High Quality)`: Best visual fidelity and natural animation.
         *   **Visual Text Translation**: (Experimental) Translates on-screen text.
     *   **Click Process Video**.
 
@@ -155,7 +158,7 @@ flowchart TD
     Mix --> FinalAudio[Final Audio Track]
     
     Video --> VisualTrans{"Visual Translation<br/>(PaddleOCR / EasyOCR)"}
-    VisualTrans --> LipSync{"Lip-Sync<br/>(Wav2Lip / GFPGAN)"}
+    VisualTrans --> LipSync{"Lip-Sync<br/>(LivePortrait / Wav2Lip / GFPGAN)"}
     MergedSpeech -.-> LipSync
     
     LipSync --> Mux{"Merge with Video<br/>(FFmpeg)"}

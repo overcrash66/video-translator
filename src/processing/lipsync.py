@@ -1,32 +1,53 @@
 """
-Wav2Lip Lip-Sync Integration
+Lip-Sync Integration Wrapper
 """
 import logging
 from src.processing.wav2lip import Wav2LipSyncer
+from src.processing.live_portrait import LivePortraitSyncer
 
 logger = logging.getLogger(__name__)
 
 class LipSyncer:
     """
-    Wrapper for Lip Syncing using Wav2Lip.
+    Wrapper for Lip Syncing that supports multiple engines (Wav2Lip, LivePortrait).
     """
     
     def __init__(self):
-        self.engine = Wav2LipSyncer()
+        self.engines = {
+            "wav2lip": Wav2LipSyncer(),
+            "live_portrait": LivePortraitSyncer()
+        }
+        self.current_engine_name = "wav2lip"
+        self.engine = self.engines["wav2lip"]
         
-    def load_model(self):
-        """Pass-through to Wav2Lip load_model"""
-        self.engine.load_model()
+    def load_model(self, model_name: str = "wav2lip"):
+        """Loads the specified lip-sync model."""
+        if model_name not in self.engines:
+            logger.warning(f"Unknown lip-sync model '{model_name}'. Defaulting to wav2lip.")
+            model_name = "wav2lip"
+            
+        self.current_engine_name = model_name
+        self.engine = self.engines[model_name]
+        
+        if hasattr(self.engine, 'load_model'):
+            self.engine.load_model()
+        elif hasattr(self.engine, 'load_models'):
+            self.engine.load_models()
         return True
 
     def unload_model(self):
-        """Pass-through to Wav2Lip unload_model"""
-        # Wav2Lip doesn't have explicit unload yet, but we can add if needed.
-        # For now, just a placeholder.
-        pass
+        """Unloads the current engine."""
+        if hasattr(self.engine, 'unload_model'):
+            self.engine.unload_model()
+        elif hasattr(self.engine, 'unload_models'):
+            self.engine.unload_models()
 
     def sync_lips(self, video_path: str, audio_path: str, output_path: str, model_name: str = "wav2lip", enhance_face: bool = False) -> str:
         """
-        Synchronizes lips in video_path to match audio_path using Wav2Lip.
+        Synchronizes lips in video_path to match audio_path using the selected engine.
         """
+        # Ensure correct engine is loaded
+        if self.current_engine_name != model_name:
+            self.load_model(model_name)
+            
         return self.engine.sync_lips(video_path, audio_path, output_path, enhance_face=enhance_face)

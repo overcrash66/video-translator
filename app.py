@@ -305,11 +305,11 @@ def create_ui():
                 )
                 
                 lipsync_model = gr.Dropdown(
-                    choices=["Wav2Lip-GAN (Fast)", "Wav2Lip + GFPGAN (High Quality)"],
+                    choices=["Wav2Lip-GAN (Low Quality - Fast)", "Wav2Lip + GFPGAN (Low Quality - Medium)", "LivePortrait (High Quality - Slow)"],
                     label="Lip-Sync Model",
-                    value="Wav2Lip + GFPGAN (High Quality)",
+                    value="LivePortrait (High Quality - Slow)",
                     visible=False,
-                    info="Select 'Wav2Lip + GFPGAN' to drastically improve face quality (slower)."
+                    info="Select 'LivePortrait' for the best visual quality."
                 )
 
                 enable_lipsync.change(

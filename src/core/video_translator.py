@@ -730,13 +730,27 @@ class VideoTranslator:
          
          :param video_path: Path to the video file.
          :param audio_path: Path to the new audio file.
-         :param model_name: Name of the lipsync model (checks for 'GFPGAN').
+         :param model_name: Name of the lipsync model from UI.
          :return: Path to the lipsynced video or None if failed.
          """
          lipsync_out = config.TEMP_DIR / f"{video_path.stem}_lipsync.mp4"
          try:
+             # Resolve engine and enhancement
+             engine_key = "wav2lip"
              enhance = "GFPGAN" in (model_name or "")
-             self.lipsyncer.sync_lips(str(video_path), str(audio_path), str(lipsync_out), enhance_face=enhance)
+             
+             if "LivePortrait" in (model_name or ""):
+                 engine_key = "live_portrait"
+             
+             logger.info(f"Using lip-sync engine: {engine_key} (UI selected: {model_name})")
+             
+             self.lipsyncer.sync_lips(
+                 str(video_path), 
+                 str(audio_path), 
+                 str(lipsync_out), 
+                 model_name=engine_key,
+                 enhance_face=enhance
+             )
              return str(lipsync_out) if lipsync_out.exists() else None
          except Exception as e:
              logger.error(f"Lip-Sync failed: {e}")

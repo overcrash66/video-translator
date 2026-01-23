@@ -222,9 +222,8 @@ class VisualTranslator:
              x, y, w, h = cv2.boundingRect(pts)
              
              # Calculate font size
-             # Heuristic: Start with height-based size
-             # Aprox: 1pt ~= 1.33px. 
-             target_height = h * 0.8
+             # Heuristic: Match original height plus a small margin (2px)
+             target_height = h + 2
              font_size = int(target_height) 
              if font_size < 8: font_size = 8
              
