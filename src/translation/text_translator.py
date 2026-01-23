@@ -2,6 +2,7 @@ import logging
 import torch
 from deep_translator import GoogleTranslator
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from src.utils import config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -284,7 +285,27 @@ class Translator:
         self.llm_translator = None 
         # Import centralized languages
         from src.utils import languages
+        from src.utils import languages
         self.languages = languages
+        self.cache_file = config.TEMP_DIR / "translation_cache.json"
+        self.cache = self._load_cache()
+
+    def _load_cache(self):
+        import json
+        if self.cache_file.exists():
+            try:
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception: return {}
+        return {}
+        
+    def _save_cache(self):
+        import json
+        try:
+            with open(self.cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self.cache, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to save translation cache: {e}")
 
     def get_google_translator(self, target_lang):
         # Use centralized map
@@ -305,7 +326,28 @@ class Translator:
         source_code = source_lang if source_lang != "auto" else "en"
         
         translated_segments = []
+        segments_to_trans = []
+        map_indices = []
         
+        # Check Cache
+        for i, seg in enumerate(segments):
+            key = f"{source_code}|{target_code}|{seg['text'].strip()}|{model}"
+            if key in self.cache:
+                s = seg.copy()
+                s['translated_text'] = self.cache[key]
+                translated_segments.append(s)
+            else:
+                segments_to_trans.append(seg)
+                map_indices.append(i)
+                # Placeholder to preserve order
+                translated_segments.append(None)
+                
+        if not segments_to_trans:
+            return translated_segments
+            
+        logger.info(f"Translating {len(segments_to_trans)}/{len(segments)} items (Cache Hit: {len(segments)-len(segments_to_trans)})")
+        
+        newly_translated = []
         if model in ["hymt", "llama", "alma"]:
             model_id_map = {
                 "hymt": "tencent/HY-MT1.5-1.8B",
@@ -334,7 +376,7 @@ class Translator:
                     
                     new_s = seg.copy()
                     new_s['translated_text'] = trans_text
-                    translated_segments.append(new_s)
+                    newly_translated.append(new_s)
                     
                     # Update context for next iteration
                     prev_text = trans_text
@@ -352,7 +394,7 @@ class Translator:
                 for i, seg in enumerate(segments):
                     new_s = seg.copy()
                     new_s['translated_text'] = trans_texts[i]
-                    translated_segments.append(new_s)
+                    newly_translated.append(new_s)
             
             # Unload after use
             self.llm_translator.unload_model()
@@ -363,7 +405,16 @@ class Translator:
             for seg in segments:
                 s = seg.copy()
                 s['translated_text'] = translator.translate(seg['text'])
-                translated_segments.append(s)
+                newly_translated.append(s)
+
+        # Merge results and update cache
+        for idx, seg in zip(map_indices, newly_translated):
+            translated_segments[idx] = seg
+            # update cache
+            key = f"{source_code}|{target_code}|{seg['text'].strip()}|{model}"
+            self.cache[key] = seg['translated_text']
+            
+        self._save_cache()
                 
         return translated_segments
 

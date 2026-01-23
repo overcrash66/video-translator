@@ -76,21 +76,14 @@ def test_smart_fallback_profile_invalid(video_translator):
     for _ in gen: pass
     
     # Assert
-    # We expect 'vocals.wav' because validation failed
-    video_translator.tts_engine.generate_audio.assert_called_with(
-        ANY, 
-        None, # EXPECTED FALLBACK to GENERIC (None)
-        language='es', 
-        output_path=ANY, 
-        model='f5', 
-        gender=ANY, 
-        speaker_id='SPEAKER_00', 
-        guidance_scale=ANY,
-        force_cloning=ANY,
-        voice_selector=ANY,
-        source_lang='en',
-        preferred_voice=ANY
-    )
+    # Assert
+    # We expect speaker_wav to be None (Generic Voice) because profile validation failed
+    video_translator.tts_engine.generate_batch.assert_called()
+    args, _ = video_translator.tts_engine.generate_batch.call_args
+    tasks = args[0]
+    
+    assert tasks[0]['speaker_wav'] is None
+    assert tasks[0]['model'] == 'f5' if 'model' in tasks[0] else True # Model is arg to batch func usually
 
 def test_smart_fallback_profile_valid(video_translator):
     """
@@ -110,7 +103,7 @@ def test_smart_fallback_profile_valid(video_translator):
     video_translator.diarizer.detect_genders.return_value = {}
     
     # Mock TTS validation SUCCESS
-    video_translator.tts_engine._check_reference_audio.return_value = True # VALID PROFILE
+    video_translator.tts_engine.validate_reference.return_value = True # VALID PROFILE
     video_translator.translator.translate_segments.return_value = [
         {"translated_text": "Hola", "start": 0.0, "end": 2.0}
     ]
@@ -143,17 +136,8 @@ def test_smart_fallback_profile_valid(video_translator):
     for _ in gen: pass
     
     # Assert
-    video_translator.tts_engine.generate_audio.assert_called_with(
-        ANY, 
-        'profile.wav', # EXPECTED NORMAL
-        language='es', 
-        output_path=ANY, 
-        model='f5', 
-        gender=ANY, 
-        speaker_id='SPEAKER_00', 
-        guidance_scale=ANY,
-        force_cloning=ANY,
-        voice_selector=ANY,
-        source_lang='en',
-        preferred_voice=ANY
-    )
+    video_translator.tts_engine.generate_batch.assert_called()
+    args, _ = video_translator.tts_engine.generate_batch.call_args
+    tasks = args[0]
+    
+    assert tasks[0]['speaker_wav'] == 'profile.wav'

@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 from src.utils import config
+from src.core.session import SessionContext
 
 # Component imports
 from src.audio.separator import AudioSeparator
@@ -26,41 +27,52 @@ class VideoTranslator:
     Central controller for the video translation pipeline.
     Enforces strict VRAM management by ensuring only one heavy model is loaded at a time.
     """
-    def __init__(self):
-        self.separator = AudioSeparator()
-        self.transcriber = Transcriber()
-        self.translator = Translator()
-        self.tts_engine = TTSEngine()
-        self.synchronizer = AudioSynchronizer()
-        self.processor = VideoProcessor()
-        self.diarizer = Diarizer()
-        self.lipsyncer = LipSyncer()
-        self.visual_translator = VisualTranslator()
-        self.voice_enhancer = VoiceEnhancer()
+    def __init__(self,
+                 separator: AudioSeparator | None = None,
+                 transcriber: Transcriber | None = None,
+                 translator: Translator | None = None,
+                 tts_engine: TTSEngine | None = None,
+                 synchronizer: AudioSynchronizer | None = None,
+                 processor: VideoProcessor | None = None,
+                 diarizer: Diarizer | None = None,
+                 lipsyncer: LipSyncer | None = None,
+                 visual_translator: VisualTranslator | None = None,
+                 voice_enhancer: VoiceEnhancer | None = None) -> None:
+        
+        self.separator = separator or AudioSeparator()
+        self.transcriber = transcriber or Transcriber()
+        self.translator = translator or Translator()
+        self.tts_engine = tts_engine or TTSEngine()
+        self.synchronizer = synchronizer or AudioSynchronizer()
+        self.processor = processor or VideoProcessor()
+        self.diarizer = diarizer or Diarizer()
+        self.lipsyncer = lipsyncer or LipSyncer()
+        self.visual_translator = visual_translator or VisualTranslator()
+        self.voice_enhancer = voice_enhancer or VoiceEnhancer()
         
         # Track currently loaded model to avoid redundant unloads/loads
         self.current_model = None
         
-        # Session state for deterministic voice mapping
-        self.speaker_voice_map = {} 
-        self.used_voices = set()
+        # Session state
+        self.session = SessionContext()
 
     def _get_assigned_voice(self, speaker_id, available_voices):
         """
         Deterministically assigns an unused voice to a speaker ID for the session.
         """
-        if speaker_id in self.speaker_voice_map:
-            return self.speaker_voice_map[speaker_id]
+        # Check existing assignment
+        existing = self.session.get_voice(speaker_id)
+        if existing:
+            return existing
             
         # Find first unused voice
         for voice in available_voices:
-            if voice not in self.used_voices:
-                self.speaker_voice_map[speaker_id] = voice
-                self.used_voices.add(voice)
+            if not self.session.is_voice_used(voice):
+                self.session.assign_voice(speaker_id, voice)
                 return voice
                 
         # If all used, cycle using modulo (fallback)
-        idx = len(self.speaker_voice_map) % len(available_voices)
+        idx = len(self.session.speaker_voice_map) % len(available_voices)
         return available_voices[idx]
 
     def _resolve_speaker_reference(self, speaker_id, speaker_profiles, vocals_path, tts_model_name):
@@ -201,30 +213,30 @@ class VideoTranslator:
         return self.tts_engine.get_available_voices(model_name, language_code)
 
     def process_video(self, 
-                      video_path, 
-                      source_lang, 
-                      target_lang, 
-                      audio_model_name, 
-                      tts_model_name, 
-                      translation_model_name, 
-                      context_model_name,
-                      transcription_model_name, 
-                      optimize_translation, 
-                      enable_diarization, 
-                      enable_time_stretch, 
-                      enable_vad,
-                      enable_lipsync,
-                      enable_visual_translation,
-                      enable_audio_enhancement=False,
-                      vad_min_silence_duration_ms=1000,
-                      transcription_beam_size=5,
-                      tts_enable_cfg=False,
-                      diarization_model="pyannote/SpeechBrain (Default)",
-                      min_speakers=1,
-                      max_speakers=10,
-                      ocr_model_name="PaddleOCR",
-                      tts_voice=None,
-                      lipsync_model_name=None):
+                      video_path: str | Path, 
+                      source_lang: str, 
+                      target_lang: str, 
+                      audio_model_name: str, 
+                      tts_model_name: str, 
+                      translation_model_name: str, 
+                      context_model_name: str,
+                      transcription_model_name: str, 
+                      optimize_translation: bool, 
+                      enable_diarization: bool, 
+                      enable_time_stretch: bool, 
+                      enable_vad: bool,
+                      enable_lipsync: bool,
+                      enable_visual_translation: bool,
+                      enable_audio_enhancement: bool = False,
+                      vad_min_silence_duration_ms: int = 1000,
+                      transcription_beam_size: int = 5,
+                      tts_enable_cfg: bool = False,
+                      diarization_model: str = "pyannote/SpeechBrain (Default)",
+                      min_speakers: int = 1,
+                      max_speakers: int = 10,
+                      ocr_model_name: str = "PaddleOCR",
+                      tts_voice: str | None = None,
+                      lipsync_model_name: str | None = None):
         """
         Orchestrates the full pipeline as a generator.
         Yields: ("log", message) or ("progress", value, desc) or ("result", path)
@@ -235,270 +247,86 @@ class VideoTranslator:
         
         # 1. Extraction
         yield ("progress", 0.1, "Extracting Audio...")
-        full_audio = config.TEMP_DIR / f"{video_path.stem}_full.wav"
-        extracted_path = self.processor.extract_audio(str(video_path), str(full_audio))
-        if not extracted_path:
-             raise Exception("Failed to extract audio")
+        extracted_path = self._step_extraction(video_path)
         yield ("log", "Audio extracted.")
              
         # 2. Separation
         self.load_model("demucs") 
         yield ("progress", 0.2, "Separating Vocals...")
-        vocals_path, bg_path = self.separator.separate(extracted_path, model_selection=audio_model_name)
+        vocals_path, bg_path = self._step_separation(extracted_path, audio_model_name)
         yield ("log", f"Separation complete. Vocals: {Path(vocals_path).name}")
         
         # 3. Diarization
-        speaker_map = {}
-        diarization_segments = []
-        speaker_profiles = {}
+        # Reset session state for new video
+        self.session.reset()
         
-        # Reset voice map for new video
-        self.speaker_voice_map = {}
-        self.used_voices = set()
-        self._last_valid_reference_wav = None # Track last valid ref for fallback
-        
+        diarization_segments, speaker_map, speaker_profiles = [], {}, {}
         if enable_diarization:
             self.load_model("diarization")
             yield ("progress", 0.25, "Diarizing...")
-            
-            # Map UI name to backend key
-            diar_backend = "speechbrain"
-            if "NeMo" in diarization_model:
-                diar_backend = "nemo"
-            elif "Community" in diarization_model:
-                diar_backend = "pyannote_community"
-                
-            diarization_segments = self.diarizer.diarize(vocals_path, backend=diar_backend, min_speakers=min_speakers, max_speakers=max_speakers)
-            speaker_map = self.diarizer.detect_genders(vocals_path, diarization_segments)
-            
-            # EXTRACT PROFILES FOR TTS CLONING
-            profiles_dir = config.TEMP_DIR / f"{video_path.stem}_profiles"
-            yield ("log", "Extracting speaker profiles...")
-            speaker_profiles = self.diarizer.extract_speaker_profiles(vocals_path, diarization_segments, profiles_dir)
-            
+            diarization_segments, speaker_map, speaker_profiles = self._step_diarization(
+                vocals_path, video_path, diarization_model, min_speakers, max_speakers
+            )
             yield ("log", f"Diarization complete. Speakers: {len(speaker_map)}")
             
         # 4. Transcription
         self.load_model("whisper")
         yield ("progress", 0.3, "Transcribing...")
+        # Resolve source/target codes
         source_code = config.get_language_code(source_lang)
-        segments = self.transcriber.transcribe(
-            vocals_path, 
-            language=source_code, 
-            model_size=transcription_model_name, 
-            use_vad=enable_vad, 
-            beam_size=transcription_beam_size,
-            min_silence_duration_ms=vad_min_silence_duration_ms
-        )
-        if not segments:
-            raise Exception("No speech detected")
-        yield ("log", f"Transcription complete. {len(segments)} segments.")
-            
-        # 5. Translation
-        self.load_model("translation_llm") 
-        yield ("progress", 0.4, "Translating...")
         target_code = config.get_language_code(target_lang)
         
-        # Determine effective model
-        effective_model_name = translation_model_name
-        if optimize_translation and context_model_name:
-             effective_model_name = context_model_name
-
-        trans_model_key = "google"
-        if "HY-MT" in effective_model_name:
-            trans_model_key = "hymt"
-        elif "Llama" in effective_model_name:
-             trans_model_key = "llama"
-        elif "ALMA" in effective_model_name:
-             trans_model_key = "alma"
-        
-        # [Refactor] Transcriber now returns (segments, detected_lang_code)
-        segments, detected_lang = self.transcriber.transcribe(
-            str(vocals_path), 
-            language=source_code,
-            beam_size=5,
-            use_vad=enable_vad
+        segments, detected_lang = self._step_transcription(
+             vocals_path, source_code, transcription_model_name, 
+             enable_vad, transcription_beam_size, vad_min_silence_duration_ms
         )
+        yield ("log", f"Transcription complete. {len(segments)} segments (Lang: {detected_lang}).")
         
-        # [Fix] Update source_code if it was auto/unknown, so Translator uses correct source lang
+        # Update source lang if auto
         if source_code == "auto" or source_code is None:
             logger.info(f"Updating source language from 'auto' to '{detected_lang}'")
             source_code = detected_lang
-            if target_code == "auto": # Corner case
-                 target_code = "en"
-        
-        # [NEW] Merge short segments for smoother TTS
-        logger.info(f"Merging short segments (min_dur=2.0s, max_gap=0.5s)...")
+            if target_code == "auto": target_code = "en"
+            
+        # Merge short segments
+        logger.info(f"Merging short segments (min_dur={config.MERGE_MIN_DURATION}s, max_gap={config.MERGE_MAX_GAP}s)...")
         before_count = len(segments)
-        segments = self.transcriber.merge_short_segments(segments, min_duration=2.0, max_gap=0.5)
+        segments = self.transcriber.merge_short_segments(segments, min_duration=config.MERGE_MIN_DURATION, max_gap=config.MERGE_MAX_GAP)
         logger.info(f"Merged segments: {before_count} -> {len(segments)}")
 
+        # 5. Translation
+        self.load_model("translation_llm") 
         yield ("progress", 0.4, "Translating...")
         
-        translated_segments = self.translator.translate_segments(
-            segments, 
-            target_code, 
-            model=trans_model_key, 
-            source_lang=source_code,
-            optimize=optimize_translation
+        translated_segments = self._step_translation(
+            segments, source_code, target_code, target_lang,
+            translation_model_name, context_model_name, optimize_translation,
+            video_path
         )
         yield ("log", f"Translation complete for {target_lang}.")
-        
-        # [NEW] Export Subtitles (SRT)
-        try:
-            from src.utils.srt_generator import generate_srt
-            srt_path = config.OUTPUT_DIR / f"{video_path.stem}.srt"
-            # Ensure output dir exists (it should, but safety first)
-            config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            
-            generate_srt(translated_segments, str(srt_path))
-            yield ("log", f"Subtitles exported to {srt_path.name}")
-        except Exception as e:
-            logger.error(f"Failed to export subtitles: {e}")
-            yield ("log", f"Subtitle export failed: {e}")
         
         # 6. TTS
         self.load_model("tts")
         yield ("progress", 0.5, "Generating Speech...")
         
-        seg_dir = config.TEMP_DIR / video_path.stem
-        seg_dir.mkdir(exist_ok=True)
+        # Determine iterator for progress reporting
+        gen_iterator = self._step_tts_generator(
+            translated_segments, video_path, target_code, source_code,
+            tts_model_name, tts_voice, tts_enable_cfg,
+            enable_diarization, diarization_segments, speaker_map, speaker_profiles, vocals_path
+        )
+        
         tts_segments = []
+        for item in gen_iterator:
+            if isinstance(item, tuple) and item[0] == "progress":
+                 yield item
+            elif isinstance(item, list):
+                 tts_segments = item
         
-        total_segs = len(translated_segments)
-        for i, seg in enumerate(translated_segments):
-             text = seg["translated_text"]
-             if not text: continue
-             
-             ext = ".wav" if tts_model_name in ["piper", "xtts"] else ".mp3"
-             seg_out = seg_dir / f"seg_{i}_tts{ext}"
-             
-             # Gender/Speaker logic
-             gender = "Female"
-             best_speaker = None
-             
-             # Speaker Logic Simplification
-             speaker_wav = vocals_path
-             use_force_cloning = False
-
-             if enable_diarization:
-                 if not diarization_segments:
-                     use_force_cloning = True
-                     logger.warning("Diarization enabled but no segments. Fallback to full vocals.")
-                 else:
-                     # Find overlapping speaker
-                     seg_start = seg['start']
-                     seg_end = seg['end']
-                     max_overlap = 0
-                     for d_seg in diarization_segments:
-                          overlap_start = max(seg_start, d_seg['start'])
-                          overlap_end = min(seg_end, d_seg['end'])
-                          overlap = max(0, overlap_end - overlap_start)
-                          if overlap > max_overlap:
-                              max_overlap = overlap
-                              best_speaker = d_seg['speaker']
-                     
-                     if best_speaker:
-                         gender = speaker_map.get(best_speaker, "Female")
-                         speaker_wav, use_force_cloning = self._resolve_speaker_reference(
-                             best_speaker, speaker_profiles, vocals_path, tts_model_name
-                         )
-                     else:
-                         # No overlap logic
-                         use_force_cloning = False
-                         speaker_wav = None
-                         logger.warning(f"No specific speaker detected for segment {i}.")
-             
-             # --- [NEW] Reference Voice Fallback Logic ---
-             
-             # 1. Update tracking if we have a valid speaker_wav
-             if speaker_wav:
-                 # We assume _resolve_speaker_reference returns None if invalid, 
-                 # but double check validation if needed? 
-                 # _resolve_speaker_reference already validates against profiles.
-                 # If it returned something, it's likely good.
-                 if self.tts_engine.validate_reference(speaker_wav, model_name=tts_model_name):
-                     self._last_valid_reference_wav = speaker_wav
-                 else:
-                     speaker_wav = None # It was invalid
-             
-             # 2. If no valid speaker_wav, try Last Valid
-             if not speaker_wav and getattr(self, '_last_valid_reference_wav', None):
-                 logger.info(f"Segment {i}: Using LAST VALID reference: {Path(self._last_valid_reference_wav).name}")
-                 speaker_wav = self._last_valid_reference_wav
-                 # We don't force clone fallbacks, usually partial matches
-                 use_force_cloning = False 
-
-             # 3. If still no valid reference, try 0-30s Fallback
-             if not speaker_wav:
-                 # Try to get or create the 0-30s fallback
-                 fallback_30s = self._extract_fallback_reference(vocals_path)
-                 if fallback_30s:
-                      logger.info(f"Segment {i}: Using 0-30s FALLBACK reference.")
-                      speaker_wav = fallback_30s
-                      self._last_valid_reference_wav = fallback_30s # Set as new valid
-                 else:
-                      logger.warning(f"Segment {i}: No reference found (Last or 30s). Will fallback to Edge-TTS.")
-                      
-             # --------------------------------------------
-                     
-             generated_path = self.tts_engine.generate_audio(
-                text, speaker_wav, 
-                language=target_code, 
-                output_path=seg_out, 
-                model=tts_model_name, 
-                gender=gender,
-
-                speaker_id=best_speaker if enable_diarization else None,
-                guidance_scale=1.3 if tts_enable_cfg else None,
-                force_cloning=use_force_cloning,
-                voice_selector=self._get_assigned_voice, # Pass function or we handle mapping here
-                source_lang=source_code,  # For cross-lingual detection
-                preferred_voice=tts_voice
-            )
-             
-             if generated_path and Path(generated_path).exists() and Path(generated_path).stat().st_size > 100:
-                tts_segments.append({
-                    'audio_path': generated_path,
-                    'start': seg['start'],
-                    'end': seg['end']
-                })
-             
-             # Report progress periodically
-             if i % 5 == 0:
-                 yield ("progress", 0.5 + (0.2 * (i / total_segs)), f"Processed segment {i+1}/{total_segs}")
-        
-        if not tts_segments:
-            raise Exception("TTS Generation failed: No valid segments produced")
-            
-        # [NEW] EQ Matching
-        if enable_audio_enhancement:
-             # We use the 'enable_audio_enhancement' flag for this, or should it be a separate flag?
-             # The user request said "EQ Matching (Spectral Matching)". 
-             # The plan didn't specify a new flag, but we should probably use one or just do it.
-             # "The Fix: Capture the "EQ Curve"... and apply it".
-             # Let's apply it by default if vocals exist, or maybe check a new arg?
-             # For now, let's tie it to 'enable_audio_enhancement' OR just do it always if we want "Zero computing power" cost?
-             # Actually, EQ matching changes the sound character significantly.
-             # The prompt implied it's to fix the "studio clean" vs "hall" disconnect.
-             # Let's apply it. 
-             pass
-
-        # Apply EQ Matching if we have reference vocals
-        if vocals_path and Path(vocals_path).exists():
-             yield ("log", "Applying EQ matching to match original vocal tone...")
-             from src.audio.eq_matching import apply_eq_matching
-             
-             count = 0
-             for tts_seg in tts_segments:
-                 out_path = str(tts_seg['audio_path']).replace('.wav', '_eq.wav').replace('.mp3', '_eq.wav')
-                 # Use 0.7 strength as a safe default
-                 apply_eq_matching(str(vocals_path), str(tts_seg['audio_path']), out_path, strength=0.7)
-                 
-                 # Update path if success
-                 if Path(out_path).exists():
-                     tts_seg['audio_path'] = out_path
-                     count += 1
+        # EQ Matching
+        if enable_audio_enhancement and vocals_path and Path(vocals_path).exists():
+             yield ("log", "Applying EQ matching...")
+             count = self._apply_eq_matching_batch(vocals_path, tts_segments)
              yield ("log", f"Applied EQ matching to {count} segments.")
 
         yield ("log", "TTS Generation complete.")
@@ -507,52 +335,28 @@ class VideoTranslator:
         self.unload_all_models() 
         yield ("progress", 0.7, "Synchronizing...")
         
-        merged_speech = config.TEMP_DIR / f"{video_path.stem}_merged_speech.wav"
-        
+        # Calculate duration
         import soundfile as sf
         try:
              duration_sec = sf.info(str(extracted_path)).duration
         except:
-             if tts_segments:
-                 duration_sec = tts_segments[-1]['end'] + 2.0
-             else:
-                 duration_sec = 10.0
+             duration_sec = tts_segments[-1]['end'] + 2.0 if tts_segments else 10.0
              
-        if not self.synchronizer.merge_segments(tts_segments, total_duration=duration_sec, output_path=str(merged_speech), enable_time_stretch=enable_time_stretch):
-            raise Exception("Merging speech segments failed")
-            
-        # 7.5. Audio Enhancement (VoiceFixer)
-        if enable_audio_enhancement:
-             yield ("progress", 0.75, "Enhancing Audio (VoiceFixer)...")
-             self.load_model("voice_enhancer")
-             enhanced_speech = config.TEMP_DIR / f"{video_path.stem}_enhanced_speech.wav"
-             
-             try:
-                 yield ("log", "Enhancing audio with VoiceFixer...")
-                 self.voice_enhancer.enhance_audio(merged_speech, enhanced_speech)
-                 if enhanced_speech.exists():
-                     merged_speech = enhanced_speech
-                     yield ("log", "Audio enhancement complete.")
-             except Exception as e:
-                 logger.error(f"VoiceFixer failed: {e}. using non-enhanced audio.")
-                 yield ("log", f"VoiceFixer failed: {e}. Skipping.")
+        merged_speech, final_mix = self._step_merge_mix(
+            tts_segments, duration_sec, video_path, bg_path,
+            enable_time_stretch, enable_audio_enhancement
+        )
         
-        final_mix = config.TEMP_DIR / f"{video_path.stem}_final_mix.wav"
-        self.processor.mix_tracks(str(merged_speech), bg_path, str(final_mix))
-        
+        # 8. Visual & LipSync
         if enable_visual_translation:
              yield ("progress", 0.8, "Translating Video Text...")
              self.load_model("visual")
              visual_out = config.TEMP_DIR / f"{video_path.stem}_visual.mp4"
              try:
-                 # Pass source and target language for proper text translation
                  self.visual_translator.translate_video_text(
-                     str(video_path),
-                     str(visual_out),
-                     target_lang=target_code,
-                     source_lang=source_code,
-                     ocr_engine=ocr_model_name,
-                     ocr_interval_sec=10.0
+                     str(video_path), str(visual_out),
+                     target_lang=target_code, source_lang=source_code,
+                     ocr_engine=ocr_model_name, ocr_interval_sec=10.0
                  )
                  if visual_out.exists():
                      video_path = visual_out
@@ -563,40 +367,355 @@ class VideoTranslator:
         if enable_lipsync:
             yield ("progress", 0.9, "Lip-Syncing (Experimental)...")
             self.load_model("lipsync")
-            
-            # Lip-sync generated audio with original video (or re-dubbed video)
-            # Actually we usually want to lip sync the translated audio onto the original video faces.
-            # But we just replaced the audio. 
-            # Flow: Original Video Frames + Final Mixed Audio -> Lip Synced Video
-            
-            # We use the video with the NEW Audio as input? No, typically MuseTalk takes:
-            # - Input Video (Face Source)
-            # - Input Audio (Driver)
-            # - Output Video
-            
-            lipsync_out = config.TEMP_DIR / f"{video_path.stem}_lipsync.mp4"
-            
-            try:
-                # We use the original video frames (video_path) and the merged speech (merged_speech) 
-                # NOT the final mix with BG music, as that might confuse the model? 
-                # Usually purely speech audio is best for driving lips.
-                
-                yield ("log", f"Starting Lip-Sync... (Model: {lipsync_model_name or 'Default'})")
-                enhance_face = "GFPGAN" in (lipsync_model_name or "")
-                
-                self.lipsyncer.sync_lips(str(video_path), str(merged_speech), str(lipsync_out), enhance_face=enhance_face)
-                
-                if lipsync_out.exists():
-                    # Now assume this is the source for final mixing?
-                    # The lipsynced video HAS no audio usually, or we mute it.
-                    # We need to mix the final audio track back onto this NEW video.
-                    video_path = lipsync_out 
-                    yield ("log", "Lip-Sync complete.")
-            except Exception as e:
-                logger.error(f"Lip-Sync failed: {e}")
-                yield ("log", f"Lip-Sync failed: {e}. Skipping.")
+            out_path = self._step_lipsync(
+                video_path, merged_speech, lipsync_model_name
+            )
+            if out_path:
+                # Use result as video source (silent)
+                video_path = Path(out_path)
+                yield ("log", "Lip-Sync complete.")
+            else:
+                yield ("log", "Lip-Sync failed or skipped.")
         
+        # 9. Final Output
         output_video = config.OUTPUT_DIR / f"translated_{video_path.name}"
         result = self.processor.replace_audio(str(video_path), str(final_mix), str(output_video))
         
         yield ("result", str(result))
+
+    # --- Orchestration Steps ---
+
+    def _step_extraction(self, video_path: Path) -> str:
+        """
+        Extracts full audio track from the video file using ffmpeg.
+        
+        :param video_path: Path to the input video.
+        :return: Path to the extracted .wav audio file.
+        :raises Exception: If extraction fails.
+        """
+        full_audio = config.TEMP_DIR / f"{video_path.stem}_full.wav"
+        extracted_path = self.processor.extract_audio(str(video_path), str(full_audio))
+        if not extracted_path:
+             raise Exception("Failed to extract audio")
+        return extracted_path
+
+    def _step_separation(self, extracted_path, model_name):
+        """
+        Separates audio into vocals and background (accompaniment).
+        
+        :param extracted_path: Path to the full audio file.
+        :param model_name: Name/Type of the separation model (e.g., 'demucs', 'mdx').
+        :return: Tuple (vocals_path, accompaniment_path).
+        """
+        return self.separator.separate(extracted_path, model_selection=model_name)
+
+    def _step_diarization(self, vocals_path, video_path, model_name, min_spk, max_spk):
+        """
+        Performs speaker diarization to identify speakers and extract their profiles.
+        
+        :param vocals_path: Path to the isolated vocals audio.
+        :param video_path: Path to the original video (used for naming).
+        :param model_name: Name of the diarization model/backend.
+        :param min_spk: Minimum number of speakers.
+        :param max_spk: Maximum number of speakers.
+        :return: Tuple (segments, speaker_map, speaker_profiles).
+        """
+        # Map UI name to backend key
+        diar_backend = "speechbrain"
+        if "NeMo" in model_name: diar_backend = "nemo"
+        elif "Community" in model_name: diar_backend = "pyannote_community"
+            
+        segs = self.diarizer.diarize(vocals_path, backend=diar_backend, min_speakers=min_spk, max_speakers=max_spk)
+        spk_map = self.diarizer.detect_genders(vocals_path, segs)
+        
+        profiles_dir = config.TEMP_DIR / f"{video_path.stem}_profiles"
+        profiles = self.diarizer.extract_speaker_profiles(vocals_path, segs, profiles_dir)
+        return segs, spk_map, profiles
+
+    def _step_transcription(self, vocals_path, source_code, model_name, use_vad, beam_size, min_silence):
+        """
+        Transcribes the vocals track into text segments with timestamps.
+        
+        :param vocals_path: Path to isolated vocals.
+        :param source_code: Language code of the source audio.
+        :param model_name: Size of the Whisper model (e.g., 'tiny', 'large-v3').
+        :return: List of transcription segments (dict with 'start', 'end', 'text').
+        """
+        return self.transcriber.transcribe(
+            str(vocals_path), 
+            language=source_code,
+            beam_size=beam_size,
+            use_vad=use_vad,
+            model_size=model_name,
+            min_silence_duration_ms=min_silence
+        )
+
+    def _step_translation(self, segments, source_code, target_code, target_lang, 
+                          model_name, context_model, optimize, video_path):
+        """
+        Translates transcribed segments to the target language.
+        Handles caching, optimization (context-aware), and SRT export.
+        
+        :param segments: List of source segments.
+        :param source_code: Source language code.
+        :param target_code: Target language code.
+        :param model_name: Translation model key (e.g., 'google', 'gpt4').
+        :param optimize: Whether to use context-aware translation.
+        :return: List of segments with added 'translated_text' key.
+        """
+        # [Early Exit] Optimization
+        if source_code == target_code:
+            logger.info(f"Source matches Target ({source_code}). Skipping translation API.")
+            translated = []
+            for seg in segments:
+                new_seg = seg.copy()
+                new_seg["translated_text"] = seg["text"]
+                translated.append(new_seg)
+        else:
+            effective_model = context_model if (optimize and context_model) else model_name
+            
+            trans_key = "google"
+            if "HY-MT" in effective_model: trans_key = "hymt"
+            elif "Llama" in effective_model: trans_key = "llama"
+            elif "ALMA" in effective_model: trans_key = "alma"
+            
+            translated = self.translator.translate_segments(
+                segments, target_code, model=trans_key, 
+                source_lang=source_code, optimize=optimize
+            )
+        
+        # Export SRT
+        try:
+            from src.utils.srt_generator import generate_srt
+            srt_path = config.OUTPUT_DIR / f"{video_path.stem}.srt"
+            config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            generate_srt(translated, str(srt_path))
+        except Exception as e:
+            logger.error(f"Failed to export subtitles: {e}")
+            
+        return translated
+
+    def _step_tts_generator(self, translated_segments, video_path, target_code, source_code,
+                            model_name, tts_voice, enable_cfg, enable_diarization, 
+                            diarization_segments, speaker_map, speaker_profiles, vocals_path):
+        """
+        Generator that handles the loop for TTS segments.
+        Now uses BATCH generation for performance.
+        
+        :param translated_segments: List of text segments to synthesize.
+        :param video_path: Source video path.
+        :param target_code: Target language code.
+        :param source_code: Source language code.
+        :param model_name: TTS model to use.
+        :param tts_voice: Preferred generic voice.
+        :param enable_cfg: Enable Classifier-Free Guidance.
+        :param enable_diarization: Whether to use speaker profiles.
+        :param diarization_segments: Diarization data.
+        :param speaker_map: Map of speaker IDs to genders.
+        :param speaker_profiles: Map of speaker IDs to reference wavs.
+        :param vocals_path: Original vocals for fallback.
+        :yields: Progress updates or log messages.
+        :return: List of generated TTS segments (yielded as final item).
+        """
+        seg_dir = config.TEMP_DIR / video_path.stem
+        seg_dir.mkdir(exist_ok=True)
+        tts_segments = []
+        
+        # Prepare Batch Tasks
+        tasks = []
+        original_indices = []
+        
+        total_segs = len(translated_segments)
+        
+        for i, seg in enumerate(translated_segments):
+             text = seg["translated_text"]
+             if not text: continue
+             
+             ext = ".wav" if model_name in ["piper", "xtts"] else ".mp3"
+             seg_out = seg_dir / f"seg_{i}_tts{ext}"
+             
+             gender, best_speaker, speaker_wav = "Female", None, None
+             use_force_cloning = False
+             
+             # Resolve Speaker
+             if enable_diarization:
+                 best_speaker = self._find_overlapping_speaker(seg, diarization_segments) if diarization_segments else None
+                 if best_speaker:
+                     gender = speaker_map.get(best_speaker, "Female")
+                     speaker_wav, use_force_cloning = self._resolve_speaker_reference(
+                         best_speaker, speaker_profiles, vocals_path, model_name
+                     )
+                 else:
+                     # logger.warning(f"No specific speaker detected for segment {i}.")
+                     pass
+             else:
+                  # If no diarization, generic or fallback
+                  speaker_wav = vocals_path 
+                  
+             # Fallback Logic
+             speaker_wav, use_force_cloning = self._apply_reference_fallback(
+                 speaker_wav, vocals_path, model_name, i
+             )
+
+             # Create Task
+             task = {
+                'text': text,
+                'output_path': seg_out,
+                'language': target_code,
+                'speaker_wav': speaker_wav,
+                'gender': gender,
+                'speaker_id': best_speaker if enable_diarization else None,
+                'guidance_scale': 1.3 if enable_cfg else None,
+                'force_cloning': use_force_cloning,
+                'voice_selector': self._get_assigned_voice,
+                'source_lang': source_code,
+                'preferred_voice': tts_voice
+             }
+             tasks.append(task)
+             original_indices.append(i) # Needed to map back to segments
+
+        yield ("log", f"Batch generating {len(tasks)} TTS segments...")
+        
+        # Execute Batch
+        # Note: Progress updates for batch are harder. We might simulate or just yield 'generating'
+        yield ("progress", 0.5, "Generating Speech (Batch)...")
+        
+        generated_paths = self.tts_engine.generate_batch(tasks, model=model_name)
+        
+        msg_count = 0
+        for idx, (orig_i, path) in enumerate(zip(original_indices, generated_paths)):
+             if path and Path(path).exists() and Path(path).stat().st_size > 100:
+                seg = translated_segments[orig_i]
+                tts_segments.append({
+                    'audio_path': path,
+                    'start': seg['start'],
+                    'end': seg['end']
+                })
+             
+        yield ("progress", 0.65, "TTS Generation Complete.")
+        
+        # Return the final list
+        yield tts_segments
+
+    def _find_overlapping_speaker(self, seg, diar_segments):
+         """
+         Identifies the speaker with the most overlap for a given segment.
+         
+         :param seg: The text segment {'start': float, 'end': float}.
+         :param diar_segments: List of diarization segments with speaker info.
+         :return: The speaker ID (e.g., 'SPEAKER_01') or None.
+         """
+         seg_start, seg_end = seg['start'], seg['end']
+         max_overlap = 0
+         best = None
+         for d_seg in diar_segments:
+              ov_start = max(seg_start, d_seg['start'])
+              ov_end = min(seg_end, d_seg['end'])
+              overlap = max(0, ov_end - ov_start)
+              if overlap > max_overlap:
+                  max_overlap = overlap
+                  best = d_seg['speaker']
+         return best
+
+    def _apply_reference_fallback(self, speaker_wav, vocals_path, model_name, index):
+         """
+         Applies cascading fallback logic for speaker reference audio.
+         1. Validates current reference.
+         2. Tries 'Last Valid Reference'.
+         3. Tries '0-30s Clip' from original vocals.
+         
+         :param speaker_wav: Current candidate for speaker reference.
+         :param vocals_path: Path to full vocals (source for 30s clip).
+         :param model_name: TTS model name (for validation rules).
+         :param index: Segment index for logging.
+         :return: Tuple (resolved_wav_path, force_cloning_flag).
+         """
+         # Logic from original code
+         # 1. Update tracking
+         if speaker_wav:
+             if self.tts_engine.validate_reference(speaker_wav, model_name=model_name):
+                 self.session.last_valid_reference_wav = speaker_wav
+             else:
+                 speaker_wav = None
+         
+         # 2. Last Valid
+         use_force = False
+         if not speaker_wav and self.session.last_valid_reference_wav:
+             logger.info(f"Segment {index}: Using LAST VALID reference.")
+             speaker_wav = self.session.last_valid_reference_wav
+         
+         # 3. 0-30s
+         if not speaker_wav:
+             fallback = self._extract_fallback_reference(vocals_path)
+             if fallback:
+                  logger.info(f"Segment {index}: Using 0-30s FALLBACK.")
+                  speaker_wav = fallback
+                  self.session.last_valid_reference_wav = fallback
+         
+         return speaker_wav, use_force
+
+    def _apply_eq_matching_batch(self, vocals_path, tts_segments):
+         """
+         Applies EQ matching to generated TTS segments to match the tone of the original vocals.
+         
+         :param vocals_path: Path to original vocals (reference).
+         :param tts_segments: List of TTS segment dicts (modified in-place).
+         :return: Count of successfully modified segments.
+         """
+         from src.audio.eq_matching import apply_eq_matching
+         count = 0
+         for tts_seg in tts_segments:
+             out_path = str(tts_seg['audio_path']).replace('.wav', '_eq.wav').replace('.mp3', '_eq.wav')
+             apply_eq_matching(str(vocals_path), str(tts_seg['audio_path']), out_path, strength=0.7)
+             if Path(out_path).exists():
+                 tts_seg['audio_path'] = out_path
+                 count += 1
+         return count
+
+    def _step_merge_mix(self, tts_segments, duration, video_path, bg_path, time_stretch, enhance_audio):
+        """
+        Merges individual TTS segments into a single track and mixes with background audio.
+        
+        :param tts_segments: List of generated TTS segments.
+        :param duration: Total duration of the detailed audio.
+        :param video_path: Original video path.
+        :param bg_path: Background music/noise path.
+        :param time_stretch: Whether to stretch audio to fit time.
+        :param enhance_audio: Whether to run VoiceFixer.
+        :return: Tuple (merged_speech_path, final_mix_path).
+        """
+        merged_speech = config.TEMP_DIR / f"{video_path.stem}_merged_speech.wav"
+        
+        if not self.synchronizer.merge_segments(tts_segments, total_duration=duration, output_path=str(merged_speech), enable_time_stretch=time_stretch):
+            raise Exception("Merging speech segments failed")
+            
+        if enhance_audio:
+             self.load_model("voice_enhancer")
+             enhanced = config.TEMP_DIR / f"{video_path.stem}_enhanced_speech.wav"
+             try:
+                 self.voice_enhancer.enhance_audio(merged_speech, enhanced)
+                 if enhanced.exists(): merged_speech = enhanced
+             except Exception as e:
+                 logger.error(f"VoiceFixer failed: {e}")
+                 
+        final_mix = config.TEMP_DIR / f"{video_path.stem}_final_mix.wav"
+        self.processor.mix_tracks(str(merged_speech), bg_path, str(final_mix))
+        return merged_speech, final_mix
+        
+    def _step_lipsync(self, video_path, audio_path, model_name):
+         """
+         Runs lip-syncing on the video using the generated audio.
+         
+         :param video_path: Path to the video file.
+         :param audio_path: Path to the new audio file.
+         :param model_name: Name of the lipsync model (checks for 'GFPGAN').
+         :return: Path to the lipsynced video or None if failed.
+         """
+         lipsync_out = config.TEMP_DIR / f"{video_path.stem}_lipsync.mp4"
+         try:
+             enhance = "GFPGAN" in (model_name or "")
+             self.lipsyncer.sync_lips(str(video_path), str(audio_path), str(lipsync_out), enhance_face=enhance)
+             return str(lipsync_out) if lipsync_out.exists() else None
+         except Exception as e:
+             logger.error(f"Lip-Sync failed: {e}")
+             return None

@@ -29,19 +29,30 @@ def test_validation_variable_duration(mock_exists, mock_read, mock_info, tts_eng
     valid = tts_engine._check_reference_audio("dummy.wav", min_duration=1.0)
     assert valid, "Should pass for 1.5s audio with 1.0s limit"
 
+
 @patch('src.synthesis.tts.TTSEngine._check_reference_audio')
-@patch('src.synthesis.tts.TTSEngine._generate_f5')
-@patch('src.synthesis.tts.TTSEngine._generate_xtts')
-def test_generate_call_validation(mock_xtts, mock_f5, mock_check, tts_engine):
+def test_generate_call_validation(mock_check, tts_engine):
     """
     Test that generate_audio calls validation with correct duration for different models.
     """
     mock_check.return_value = True
     
-    # Test F5 -> Should use min_duration=1.0
+    # Mock the backends to avoid actual generation logic and errors
+    tts_engine.backends['f5'] = MagicMock()
+    tts_engine.backends['xtts'] = MagicMock()
+    
+    # Test F5 -> Should use min_duration=1.0 (from config.F5_MIN_DURATION)
+    # Note: We rely on config values, assuming they are set to 1.0 and 2.0 respectively or imported logic
+    # Actually, let's just check relative calls.
+    
     tts_engine.generate_audio("text", "ref.wav", model="f5")
-    mock_check.assert_called_with("ref.wav", min_duration=1.0)
+    # Last call should match F5 duration
+    # We need to know what config.F5_MIN_DURATION is. It's 1.0.
+    args, kwargs = mock_check.call_args
+    assert kwargs['min_duration'] == 1.0 or args[1] == 1.0
     
     # Test XTTS -> Should use min_duration=2.0
     tts_engine.generate_audio("text", "ref.wav", model="xtts")
-    mock_check.assert_called_with("ref.wav", min_duration=2.0)
+    args, kwargs = mock_check.call_args
+    assert kwargs['min_duration'] == 2.0 or args[1] == 2.0
+

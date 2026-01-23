@@ -29,6 +29,8 @@ def test_tts_engine_f5_dispatch():
     from src.synthesis.tts import TTSEngine
     engine = TTSEngine()
     
-    with patch.object(engine, '_generate_f5') as mock_f5:
-        engine.generate_audio("test", "wav.wav", model="f5", force_cloning=True)
-        mock_f5.assert_called_once()
+    # Mock the backend
+    engine.backends["f5"] = MagicMock()
+    
+    engine.generate_audio("test", "wav.wav", model="f5", force_cloning=True)
+    engine.backends["f5"].generate.assert_called_once()

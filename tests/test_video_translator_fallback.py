@@ -62,7 +62,12 @@ def test_tts_fallback_strategy(video_translator):
     from pathlib import Path
     dummy_wav = Path("dummy_output.wav")
     dummy_wav.write_bytes(b'\x00' * 1024) # Write 1KB so st_size > 100 check passes
-    video_translator.tts_engine.generate_audio = MagicMock(return_value=str(dummy_wav))
+    
+    # MOCK BATCH API NOW (Phase 4 change)
+    video_translator.tts_engine.generate_batch = MagicMock(return_value=[str(dummy_wav)])
+
+    # Mock extraction for fallback to prevent "System error" log
+    video_translator._extract_fallback_reference = MagicMock(return_value="fallback_ref.wav")
 
     # Run the generator
     gen = video_translator.process_video(
@@ -81,24 +86,23 @@ def test_tts_fallback_strategy(video_translator):
         enable_lipsync=False,
         enable_visual_translation=False
     )
-    
+
     # Consume generator
     for item in gen:
         pass
-        
+
     # VERIFICATION
-    # Check what generate_audio was called with
-    # It should be called with speaker_wav = vocals_path, NOT None
-    
-    # args: (text, speaker_wav, ...)
-    call_args = video_translator.tts_engine.generate_audio.call_args
+    # Check generate_batch being called with task list
+    call_args = video_translator.tts_engine.generate_batch.call_args
     if call_args:
         args, kwargs = call_args
-        speaker_wav_arg = args[1] if len(args) > 1 else kwargs.get('speaker_wav_path') # logic uses arg 1
+        tasks = args[0]
+        assert len(tasks) > 0
+        task = tasks[0]
         
-        print(f"Called with speaker_wav: {speaker_wav_arg}")
-        
-        # We expect None (Generic Voice) because "vocals_path" fallback was removed to avoid demon voices
-        assert speaker_wav_arg is None, f"Expected fallback to Generic (None), but got {speaker_wav_arg}"
+        # We expect "fallback_ref.wav" because we mocked _extract_fallback_reference to return it
+        speaker_wav = task['speaker_wav']
+        print(f"Task speaker_wav: {speaker_wav}")
+        assert speaker_wav == "fallback_ref.wav"
     else:
-        pytest.fail("generate_audio was never called!")
+        pytest.fail("generate_batch was never called!")

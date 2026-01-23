@@ -49,6 +49,24 @@ DEVICE = get_device()
 # Model Configurations
 WHISPER_MODEL_SIZE = "large-v3"
 
+# -----------------------------
+# Algorithm Parameters
+# -----------------------------
+
+# TTS Validation
+TTS_MIN_TEXT_LENGTH = 2
+TTS_MIN_AUDIO_SIZE = 100  # bytes
+REFERENCE_RMS_THRESHOLD = 0.02
+REFERENCE_VAR_THRESHOLD = 1e-5
+XTTS_MIN_DURATION = 2.0  # seconds
+F5_MIN_DURATION = 1.0    # seconds
+
+# Segmentation Merging
+MERGE_MIN_DURATION = 2.0 # seconds
+MERGE_MAX_GAP = 0.5      # seconds
+
+# Fallbacks
+DUMMY_AUDIO_DURATION_MAX = 5.0 # seconds
 
 from src.utils import languages
 

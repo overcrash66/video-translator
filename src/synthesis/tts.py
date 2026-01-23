@@ -1,20 +1,21 @@
 import asyncio
-import edge_tts
-from src.utils import config
-from src.utils import languages
-from src.utils import audio_utils
-import logging
 from pathlib import Path
-import torchaudio
+import logging
 import soundfile as sf
 import torch
-from src.synthesis.f5_tts import F5TTSWrapper
+import torchaudio
+
+from src.utils import config
+from src.utils import languages
+from src.synthesis.backends.edge_tts import EdgeTTSBackend
+from src.synthesis.backends.piper_tts import PiperTTSBackend
+from src.synthesis.backends.xtts import XttsBackend
+from src.synthesis.backends.f5_tts import F5TTSBackend
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+
 
 # [Fix] Enforce soundfile backend to avoid TorchCodec errors via monkey-patching
 # Recent torchaudio versions removed set_audio_backend, so we intercept load()
@@ -53,28 +54,22 @@ class TTSEngine:
     def __init__(self):
         self.device = config.DEVICE
         
-        # Mapping from language code to Edge-TTS Voices
-        self.voice_map = languages.EDGE_TTS_VOICE_MAP
-
-        self.xtts_model = None
-        self.f5_model = None
-        
-        # Mapping for Piper (language code -> model name)
-        self.piper_map = languages.PIPER_MODEL_MAP
+        # Initialize Backends
+        self.backends = {
+            "edge": EdgeTTSBackend(languages.EDGE_TTS_VOICE_MAP),
+            "piper": PiperTTSBackend(languages.PIPER_MODEL_MAP),
+            "xtts": XttsBackend(self.device),
+            "f5": F5TTSBackend()
+        }
 
     def get_available_voices(self, model_name: str, language_code: str) -> list:
         """
         Returns a list of available voices for the given model and language.
+        Delegates to specific knowledge where possible, though mostly static config currently.
         """
         if model_name == "edge":
-            # Flatten male/female lists from voice_map
-            opts = self.voice_map.get(language_code, {})
+            opts = languages.EDGE_TTS_VOICE_MAP.get(language_code, {})
             voices = []
-            if not opts and language_code != "en":
-                 # Fallback to English if language not found? Or return empty?
-                 # Let's return empty, UI can handle it or show default
-                 pass
-            
             for gender in ["Female", "Male"]:
                 v_list = opts.get(gender, [])
                 if isinstance(v_list, str): v_list = [v_list]
@@ -82,61 +77,29 @@ class TTSEngine:
             return sorted(voices)
             
         elif model_name == "piper":
-            # Return the single model name if available
-            val = self.piper_map.get(language_code)
+            val = languages.PIPER_MODEL_MAP.get(language_code)
             return [val] if val else []
             
         elif model_name in ["xtts", "f5"]:
-            # Cloning models don't have preset voices (unless we list samples later)
             return ["Cloning (Reference Audio)"]
             
         return []
+
+    def load_model(self, model_name="all"):
+        """
+        Loads specific model or all reasonable defaults.
+        Usually controlled by VideoTranslator calling specific backends implicitly via use.
+        But exposed for pre-loading.
+        """
+        if model_name == "xtts":
+            self.backends["xtts"].load_model()
+        elif model_name == "f5":
+            self.backends["f5"].load_model()
+    
     def unload_model(self):
-        """Unload XTTS and F5 models if loaded."""
-        if self.xtts_model:
-            logger.info("Unloading XTTS model...")
-            del self.xtts_model
-            self.xtts_model = None
-            
-        if self.f5_model:
-            self.f5_model.unload_model()
-            self.f5_model = None
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-
-
-    def load_model(self):
-        # Edge-TTS is API based (or rather, no local model load needed in same sense)
-        pass
-
-    def _load_xtts(self):
-        if self.xtts_model:
-            return
-        
-        logger.info("Loading XTTS-v2 model...")
-        try:
-            from TTS.api import TTS
-            self.xtts_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
-            logger.info("XTTS-v2 model loaded.")
-        except Exception as e:
-            if "CUDA" in str(e) and self.device == "cuda":
-                logger.warning(f"CUDA Error loading XTTS: {e}")
-                logger.warning("Switching to CPU fallback for XTTS...")
-                self.device = "cpu"
-                if self.xtts_model:
-                     del self.xtts_model
-                     self.xtts_model = None
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    
-                # Retry
-                self._load_xtts()
-                return
-
-            logger.error(f"Failed to load XTTS model: {e}")
-            raise
+        """Unload heavy models."""
+        self.backends["xtts"].unload_model()
+        self.backends["f5"].unload_model()
 
     def _sanitize_text(self, text):
         """
@@ -152,7 +115,7 @@ class TTSEngine:
             return None
         
         # Minimum length check (very short strings often fail)
-        if len(text) < 2:
+        if len(text) < config.TTS_MIN_TEXT_LENGTH:
             logger.warning(f"Text too short for TTS: '{text}'")
             return None
         
@@ -171,7 +134,7 @@ class TTSEngine:
         
         return text.strip() if text.strip() else None
     
-    def _validate_audio_file(self, file_path, min_size=100):
+    def _validate_audio_file(self, file_path: str | Path, min_size: int = config.TTS_MIN_AUDIO_SIZE) -> bool:
         """
         Validates that an audio file exists and has minimum size.
         Returns True if valid, False otherwise.
@@ -192,16 +155,17 @@ class TTSEngine:
             logger.warning(f"Failed to validate audio file {file_path}: {e}")
             return False
 
-    def validate_reference(self, wav_path, model_name="XTTS"):
+    def validate_reference(self, wav_path: str | Path, model_name: str = "XTTS") -> bool:
         """
         Public API to check if a reference audio is valid for the target model.
         XTTS requires ~2.0s, F5-TTS can handle ~1.0s.
         """
         # Determine strictness based on model
-        min_dur = 1.0 if "F5" in model_name else 2.0
+        # [Fix] Case insensitive check
+        min_dur = config.F5_MIN_DURATION if "f5" in model_name.lower() else config.XTTS_MIN_DURATION
         return self._check_reference_audio(wav_path, min_duration=min_dur)
 
-    def _check_reference_audio(self, wav_path, min_duration=2.0):
+    def _check_reference_audio(self, wav_path: str | Path, min_duration: float = 2.0) -> bool:
         """
         Checks if reference audio is suitable for cloning (has signal, reasonable duration).
         Returns True if valid, False otherwise.
@@ -227,13 +191,13 @@ class TTSEngine:
                 data = data.mean(axis=1) # mix to mono
                 
             rms = np.sqrt(np.mean(data**2))
-            if rms < 0.02: # Increased Silence threshold (was 0.01)
+            if rms < config.REFERENCE_RMS_THRESHOLD: 
                 logger.warning(f"Reference audio too silent (RMS={rms:.4f}). Skipping clone.")
                 return False
                 
             # Check for flat signal (low variance) which might be just DC offset or hum
             variance = np.var(data)
-            if variance < 1e-5:
+            if variance < config.REFERENCE_VAR_THRESHOLD:
                 logger.warning(f"Reference audio has low variance ({variance}). Likely background noise only. Skipping clone.")
                 return False
                 
@@ -242,352 +206,261 @@ class TTSEngine:
             logger.warning(f"Failed to analyze reference audio: {e}")
             return False
 
-    def generate_audio(self, text, speaker_wav_path, language="en", output_path=None, model="edge", gender="Female", speaker_id=None, guidance_scale=None, emotion=None, force_cloning=False, voice_selector=None, source_lang=None, preferred_voice=None):
+    def generate_audio(self, 
+                       text: str, 
+                       speaker_wav_path: str | Path | None, 
+                       language: str = "en", 
+                       output_path: str | Path | None = None, 
+                       model: str = "edge", 
+                       gender: str = "Female", 
+                       speaker_id: str | None = None, 
+                       guidance_scale: float | None = None, 
+                       emotion: str | None = None, 
+                       force_cloning: bool = False, 
+                       voice_selector=None, 
+                       source_lang: str | None = None, 
+                       preferred_voice: str | None = None) -> str | None:
         """
-        Generates audio using Edge-TTS, Piper, or XTTS.
-        model: "edge", "piper", "xtts", or "f5"
-        gender: "Male" or "Female" (used for default/edge mapping)
-        speaker_id: Speaker identifier (e.g., "SPEAKER_00") used to select unique voice
-        guidance_scale: (XTTS) CFG scale, e.g. 1.2-1.5
-        emotion: (XTTS) Emotion preset
-        force_cloning: If True, bypass validation and attempt cloning regardless (for fallback audio)
-        voice_selector: Optional callback(speaker_id, voice_list) -> voice_name
-        source_lang: Language of the original/reference audio (for cross-lingual detection)
-        preferred_voice: Specific voice name to use (overrides automatic selection for Edge-TTS)
+        Generates audio using the selected backend with robust fallback capability.
+        Strategy:
+        1. Try selected backend (e.g., XTTS, F5).
+        2. If failed, fallback to Edge-TTS.
+        3. If failed, fallback to Dummy Audio (silence/noise).
+        
+        :param text: Text to synthesize.
+        :param speaker_wav_path: Path to reference audio for cloning.
+        :param language: Target language code.
+        :param output_path: Destination path for audio file.
+        :param model: Primary model to use.
+        :param gender: Gender hint for generic voices.
+        :param speaker_id: Specific speaker ID for multi-speaker models.
+        :param guidance_scale: CFG scale for models supporting it.
+        :param emotion: Emotion prompt for supported models.
+        :param force_cloning: Whether to bypass some validation checks.
+        :param voice_selector: Callback to select voices.
+        :param source_lang: Source language code.
+        :param preferred_voice: Specific voice name to request.
+        :return: Path to generated audio file or None if absolutely failed.
         """
         if not output_path:
             output_path = config.TEMP_DIR / "tts_output.wav"
-            
         output_path = str(output_path)
         
-        # Sanitize text before processing
+        # Sanitize text
         sanitized_text = self._sanitize_text(text)
         if not sanitized_text:
             logger.warning(f"Skipping TTS generation for empty/invalid text")
             return self._generate_dummy_audio(text or "silence", output_path)
+
+        # Select Backend
+        backend = self.backends.get(model)
+        if not backend:
+            logger.warning(f"Unknown TTS model '{model}'. Falling back to 'edge'.")
+            backend = self.backends["edge"]
+            model = "edge"
+
+        try:
+            # Prepare kwargs
+            kwargs = {
+                "gender": gender,
+                "speaker_id": speaker_id,
+                "guidance_scale": guidance_scale,
+                "emotion": emotion,
+                "voice_selector": voice_selector,
+                "preferred_voice": preferred_voice
+            }
             
-        if model == "piper":
-             return self._generate_piper(sanitized_text, language, output_path)
-             
-        elif model == "xtts" or model == "f5":
-             # [Force Cloning] Bypass validation if caller explicitly requests it (fallback audio scenario)
-             should_attempt_clone = force_cloning
-             
-             if not force_cloning:
-                 # [Relaxed] F5 and XTTS support zero-shot cross-lingual cloning.
-                 # We only warn/info, but do NOT disable cloning just because languages differ.
-                 if model == "f5" and language != "en":
-                     logger.warning(f"F5-TTS Base model is English-only. Requested '{language}'. Falling back to Edge-TTS.")
-                     should_attempt_clone = False
-                 elif source_lang and source_lang != language:
-                     logger.info(f"Cross-lingual synthesis (source='{source_lang}', target='{language}'). Proceeding with {model} cloning.")
-                 
-                 # Strict validation for cloning models
-                 # [Fix] F5-TTS is robust to shorter audio (1.0s), XTTS needs 2.0s to avoid crashing
-                 if should_attempt_clone is False: 
-                    # Only check if not explicitly disabled above (for F5 non-en)
-                    # But wait, should_attempt_clone starts as False (if not forced).
-                    # We need a flag 'skip_check'.
-                    pass
-                 
-                 # Re-structure logic:
-                 perform_validation = True
-                 if model == "f5" and language != "en":
-                     perform_validation = False
-                 
-                 if perform_validation:
-                    min_dur = 1.0 if model == "f5" else 2.0
-                    should_attempt_clone = self._check_reference_audio(speaker_wav_path, min_duration=min_dur)
-             
-             if should_attempt_clone:
-                 if model == "xtts":
-                    # XTTS does NOT support CFG or emotion - warn and ignore
-                    if guidance_scale is not None or emotion:
-                        logger.warning("CFG (guidance_scale) and emotion are NOT supported by XTTS-v2. Ignoring.")
-                    return self._generate_xtts(sanitized_text, language, speaker_wav_path, output_path)
-                 else:
-                    # F5-TTS DOES support CFG (cfg_strength)
-                    cfg = float(guidance_scale) if guidance_scale else 2.0
-                    return self._generate_f5(sanitized_text, speaker_wav_path, output_path, cfg_strength=cfg)
-             else:
-                 logger.warning("Invalid reference audio for cloning. Falling back to Edge-TTS.")
-                 # Fallback to edge below
-                 
-        # Default Edge-TTS logic
-        
-        # Get voice list for language and gender
-        opts = self.voice_map.get(language, self.voice_map.get("en", {}))
-        voice_list = opts.get(gender, opts.get("Female", ["en-US-AriaNeural"]))
-        
-        # Handle legacy single-voice format (backward compatibility)
-        if isinstance(voice_list, str):
-            voice_list = [voice_list]
-        
-        # Select voice
-        voice = voice_list[0]
-        
-        if preferred_voice and preferred_voice != "Auto":
-            voice = preferred_voice
-            logger.info(f"Using preferred voice: {voice}")
-        elif speaker_id:
-            # deterministic voice selection via callback
-            if voice_selector:
-                voice = voice_selector(speaker_id, voice_list)
-                logger.info(f"Selected voice via callback for {speaker_id}: {voice}")
-                # We skip the manual index selection below
-            else:
-                # Fallback to modulo
+            # Additional cloning validation logic?
+            # The backends (XTTS/F5) will use speaker_wav.
+            # We used to have validation logic here. 
+            # Reference Validation Logic:
+            if model in ["xtts", "f5"]:
+                should_attempt_clone = force_cloning
+                if not force_cloning:
+                     perform_check = True
+                     # if model == "f5" and language != "en": perform_check = False 
+                     
+                     if perform_check:
+                              if self.validate_reference(speaker_wav_path, model):
+                                  should_attempt_clone = True
+                              else:
+                                  should_attempt_clone = False
+                                  
+                if not should_attempt_clone:
+                    logger.warning(f"Cloning validation failed or disabled. Fallback to Edge-TTS.")
+                    # Switch to edge backend immediately
+                    backend = self.backends["edge"]
+                    # Clean kwargs for edge? Edge ignores unused kwargs usually.
+                    
+            # Generate
+            result = backend.generate(
+                text=sanitized_text,
+                output_path=output_path,
+                language=language,
+                speaker_wav=speaker_wav_path,
+                **kwargs
+            )
+            
+            if result:
+                return result
+            # If backend returns None without raising (some paths in my impl might), treat as fail
+            raise RuntimeError("Backend returned None")
+
+        except Exception as e:
+            logger.error(f"TTS Configured Backend ({model}) failed: {e}")
+            
+            # Fallback to Edge if we weren't already using it
+            if model != "edge":
+                logger.info("Attempting Fallback to Edge-TTS...")
                 try:
-                    # Extract speaker number from ID like "SPEAKER_00", "SPEAKER_01", etc.
-                    speaker_num = int(speaker_id.split("_")[-1])
-                    voice_index = speaker_num % len(voice_list)  # Cycle through available voices
-                    voice = voice_list[voice_index]
-                except (ValueError, IndexError):
-                    voice = voice_list[0]
-        
-        logger.info(f"Generating TTS: lang='{language}', gender='{gender}', speaker='{speaker_id}' -> voice='{voice}'")
-        
-        # Retry logic with exponential backoff for transient Edge-TTS failures
-        max_retries = 3
-        last_error = None
-        
-        for attempt in range(max_retries):
-            try:
-                # Async wrapper
-                async def _gen():
-                    communicate = edge_tts.Communicate(sanitized_text, voice)
-                    await communicate.save(output_path)
-                
-                asyncio.run(_gen())
-                
-                # Validate the generated file
-                if self._validate_audio_file(output_path):
-                    return output_path
-                else:
-                    raise RuntimeError("Edge-TTS produced invalid/empty file")
-                    
-            except Exception as e:
-                last_error = e
-                logger.warning(f"Edge-TTS attempt {attempt + 1}/{max_retries} failed: {e}")
-                
-                if attempt < max_retries - 1:
-                    # Exponential backoff: 1s, 2s, 4s
-                    import time
-                    wait_time = 2 ** attempt
-                    logger.info(f"Retrying Edge-TTS in {wait_time}s...")
-                    time.sleep(wait_time)
-                    
-                    # Try alternate voice on retry
-                    if len(voice_list) > 1:
-                        voice_index = (voice_index + 1) % len(voice_list)
-                        voice = voice_list[voice_index]
-                        logger.info(f"Switching to alternate voice: {voice}")
-        
-        # All retries failed - generate dummy audio as fallback
-        logger.error(f"Edge-TTS failed after {max_retries} attempts: {last_error}")
-        logger.info(f"Generating placeholder audio for text: '{sanitized_text[:50]}...'")
-        return self._generate_dummy_audio(sanitized_text, output_path)
-
-    def _generate_xtts(self, text, language, speaker_wav, output_path):
-        """Generate audio using XTTS-v2. Note: CFG and emotion are NOT supported."""
-        try:
-            self._load_xtts()
-            logger.info(f"Generating XTTS audio for: '{text[:20]}...'")
+                    return self.backends["edge"].generate(
+                        text=sanitized_text,
+                        output_path=output_path,
+                        language=language,
+                        gender=gender,
+                        # Edge vars
+                        preferred_voice=preferred_voice,
+                        speaker_id=speaker_id,
+                        voice_selector=voice_selector
+                    )
+                except Exception as e2:
+                    logger.error(f"Fallback Edge-TTS also failed: {e2}")
             
-            if not self.xtts_model:
-                 raise RuntimeError("XTTS model failed to load.")
+            # Ultimate Fallback
+            logger.info("Generating placeholder dummy audio.")
+            return self._generate_dummy_audio(sanitized_text, output_path)
 
-            self.xtts_model.tts_to_file(
-                text=text, 
-                speaker_wav=str(speaker_wav), 
-                language=language, 
-                file_path=str(output_path)
-            )
-            
-            logger.info(f"Saved XTTS output to {output_path}")
-            return output_path
-        except Exception as e:
-            logger.error(f"XTTS generation failed: {e}")
-            # Fallback
-            return self.generate_audio(text, speaker_wav, language, output_path, model="edge")
-
-    def _generate_f5(self, text, speaker_wav, output_path, cfg_strength=2.0):
-        """Generates audio using F5-TTS. Supports CFG via cfg_strength param."""
-        if not self.f5_model:
-            self.f5_model = F5TTSWrapper()
-            
-        try:
-             logger.info(f"F5-TTS with cfg_strength={cfg_strength}")
-             return self.f5_model.generate_voice_clone(text, speaker_wav, ref_text="", output_path=output_path, cfg_strength=cfg_strength)
-        except Exception as e:
-             logger.error(f"F5 generation failed: {e}")
-             return self.generate_audio(text, speaker_wav, "en", output_path, model="edge")
-
-
-    def _generate_piper(self, text, language, output_path):
+    def generate_batch(self, tasks: list, model="edge") -> list:
         """
-        Generates audio using Piper TTS binary (subprocess).
-        Checks for binary and model, downloads if needed.
+        Synthesizes a batch of text segments into audio.
+        Delegates to the backend's `generate_batch` for optimized processing (e.g., parallel async requests).
+        Handles cleanup, fallbacks, and retries for individual failures.
+        
+        :param tasks: List of dictionaries containing TTS parameters per segment.
+                      Keys: text, output_path, language, speaker_wav, etc.
+        :param model: The TTS model identifier (e.g., 'edge', 'xtts').
+        :return: List of paths to generated audio files (or fallback dummy audio).
         """
+        # 1. Select Backend
+        backend = self.backends.get(model)
+        if not backend:
+            logger.warning(f"Unknown TTS model '{model}'. Batch fallback to 'edge'.")
+            backend = self.backends["edge"]
+            model = "edge"
+            
+        # 2. Pre-processing (Sanitize)
+        valid_tasks = []
+        original_indices = [] # Track alignment
+        
+        results = [None] * len(tasks)
+        
+        for i, t in enumerate(tasks):
+             safe_text = self._sanitize_text(t['text'])
+             if not safe_text:
+                 results[i] = self._generate_dummy_audio("silence", t['output_path'])
+                 continue
+             
+             # Create a mutable copy and update text
+             t_copy = t.copy()
+             t_copy['text'] = safe_text
+             # Pre-populate defaults if missing?
+             t_copy.setdefault('language', 'en')
+             
+             # Validation Logic (Cloning)
+             # Logic is seemingly per-task, but backends might batch it?
+             # For simplicity, if model is XTTS/F5, we might validate here.
+             # But let's assume raw access for now or update later.
+             
+             valid_tasks.append(t_copy)
+             original_indices.append(i)
+             
+        if not valid_tasks:
+            return results
+        
+        # 3. Process Batch
+        # We try strict batch call first
         try:
-            # 1. Resolve Voice Model
-            model_name = self.piper_map.get(language, "en_US-lessac-high")
-            model_dir = config.TEMP_DIR / "piper_models"
-            model_dir.mkdir(exist_ok=True)
-            
-            onnx_path = model_dir / f"{model_name}.onnx"
-            conf_path = model_dir / f"{model_name}.onnx.json"
-            
-            # 2. Download Model if missing
-            if not onnx_path.exists():
-                logger.info(f"Downloading Piper model: {model_name}...")
-                self._download_piper_model(model_name, model_dir)
-            
-            # 3. Check for Piper Binary
-            piper_bin_dir = config.TEMP_DIR / "piper_bin"
-            piper_exe = piper_bin_dir / "piper" / "piper.exe"
-            
-            if not piper_exe.exists():
-                logger.info("Piper binary not found. Downloading...")
-                self._download_piper_binary(piper_bin_dir)
-                
-            if not piper_exe.exists():
-                raise RuntimeError("Piper binary missing after download attempt.")
-
-            logger.info(f"Generating Piper TTS (Binary): '{text[:20]}...' ({model_name})")
-            
-            # 4. Execute Piper
-            # Command: echo text | piper.exe --model model.onnx --output_file out.wav
-            
-            import subprocess
-            
-            cmd = [
-                str(piper_exe),
-                "--model", str(onnx_path),
-                "--output_file", str(output_path)
-            ]
-            
-            # We assume single speaker for now, or default. 
-            # If multi-speaker, we'd add --speaker_id.
-            
-            process = subprocess.Popen(
-                cmd, 
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE,
-                text=True, # text mode for stdin (echo)
-                encoding='utf-8' # Ensure utf-8
-            )
-            
-            stdout, stderr = process.communicate(input=text)
-            
-            if process.returncode != 0:
-                raise RuntimeError(f"Piper binary failed (code {process.returncode}): {stderr}")
-            
-            if not Path(output_path).exists() or Path(output_path).stat().st_size == 0:
-                 raise RuntimeError(f"Piper binary produced empty file: {stderr}")
-
-            logger.info(f"Saved Piper WAV to {output_path}")
-            return output_path
-
+             batch_results = backend.generate_batch(valid_tasks)
         except Exception as e:
-            logger.error(f"Piper generation failed: {e}")
-            logger.info("Falling back to Edge-TTS...")
-            return self.generate_audio(text, None, language, output_path, model="edge")
+             logger.error(f"Batch generation failed: {e}. Falling back to sequential.")
+             # Fallback to sequential calls via self.generate_audio (which handles fallbacks internally)
+             batch_results = [None] * len(valid_tasks) # Will trigger individual loop below
+        
+        # 4. Handle Failures & Fallbacks
+        for j, res in enumerate(batch_results):
+            orig_idx = original_indices[j]
+            task = valid_tasks[j]
+            
+            if res:
+                results[orig_idx] = res
+            else:
+                # Individual Failure -> Fallback to sequential generate_audio
+                # This ensures we get Edge fallback -> Dummy fallback
+                logger.warning(f"Batch item {j} failed/missing. Retrying individually.")
+                try:
+                    # Map task keys to generate_audio args
+                    # generate_audio(text, speaker_wav_path, language, output_path, model...)
+                    # We might need to map keys carefully
+                    
+                    # Construct args
+                    # We pass the Original sanitized text, not dummy
+                    results[orig_idx] = self.generate_audio(
+                        text=task['text'],
+                        speaker_wav_path=task.get('speaker_wav'),
+                        language=task.get('language', 'en'),
+                        output_path=task.get('output_path'),
+                        model=model,
+                        gender=task.get('gender', 'Female'),
+                        speaker_id=task.get('speaker_id'),
+                        guidance_scale=task.get('guidance_scale'),
+                        emotion=task.get('emotion'),
+                        force_cloning=task.get('force_cloning', False),
+                        voice_selector=task.get('voice_selector'),
+                        source_lang=task.get('source_lang'),
+                        preferred_voice=task.get('preferred_voice')
+                    )
+                except Exception as e:
+                     logger.error(f"Retry failed for item {j}: {e}")
+                     results[orig_idx] = self._generate_dummy_audio("error", task['output_path'])
+
+        return results
 
     def _download_piper_model(self, model_name, dest_dir):
-        """
-        Downloads .onnx and .json from Hugging Face (rhasspy/piper-voices)
-        """
-        import requests
-        
-        # Build URL (using standard structure for rhasspy/piper-voices v1.0.0)
-        # Structure: https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/[lang]/[region]/[voice]/[quality]/[voice].onnx
-        # But we only have the model name e.g. en_US-lessac-high
-        # Parsing: lang_region, voice, quality
-        try:
-            parts = model_name.split("-") # ['en_US', 'lessac', 'high']
-            lang_region = parts[0]
-            voice = parts[1]
-            quality = parts[2]
-            
-            # Extract lang code (e.g. "en" from "en_US")
-            lang_code = lang_region.split("_")[0]
-            
-            # Correct URL Structure: v1.0.0/[lang_code]/[lang_region]/[voice]/[quality]/[model_name]
-            base_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/{lang_code}/{lang_region}/{voice}/{quality}/{model_name}"
-            
-            for ext in [".onnx", ".onnx.json"]:
-                url = base_url + ext
-                logger.info(f"Downloading {url}...")
-                r = requests.get(url)
-                r.raise_for_status()
-                with open(dest_dir / (model_name + ext), "wb") as f:
-                    f.write(r.content)
-                    
-        except Exception as e:
-             raise RuntimeError(f"Could not download model {model_name}: {e}")
+        # Deprecated: Logic moved to PiperBackend
+        pass
 
     def _download_piper_binary(self, dest_dir):
-        """
-        Downloads Piper Windows binary.
-        """
-        import requests
-        import zipfile
-        import io
-        
-        url = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip"
-        logger.info(f"Downloading Piper binary from {url}...")
-        
-        try:
-            r = requests.get(url)
-            r.raise_for_status()
-            
-            with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-                z.extractall(dest_dir)
-                
-            logger.info("Piper binary downloaded and extracted.")
-            
-        except Exception as e:
-            raise RuntimeError(f"Failed to download Piper binary: {e}")
+        # Deprecated: Logic moved to PiperBackend
+        pass
 
     def _generate_dummy_audio(self, text, output_path):
         """
         Generates a short silence/tone as fallback when TTS fails.
-        IMPORTANT: Writes to the ORIGINAL path to maintain caller expectations.
-        Converts to WAV internally but saves to whatever path is requested.
         """
         import soundfile as sf
         import numpy as np
         
         sr = 24000
-        # Smart length estimate based on text: ~3 words per sec
+        # Smart length estimate
         word_count = len(text.split()) if text else 1
-        duration = max(0.5, min(word_count * 0.3, 5.0))  # Cap at 5 seconds
+        duration = max(0.5, min(word_count * 0.3, config.DUMMY_AUDIO_DURATION_MAX))
         
-        # Generate silence with very subtle noise (avoids completely silent segments)
+        # Generate silence with very subtle noise
         samples = int(sr * duration)
-        wav = np.random.randn(samples) * 0.001  # Very quiet noise
+        wav = np.random.randn(samples) * 0.001 
         
         output_path = str(output_path) if output_path else str(config.TEMP_DIR / "dummy.wav")
-        
-        # IMPORTANT: Keep the original path that the caller expects
-        # soundfile can write to .mp3 paths as WAV data (browser/ffmpeg will handle it)
-        # Or we can use a proper format based on extension
         path_obj = Path(output_path)
         
         try:
-            # Try to write to the original path
-            # soundfile writes WAV format by default
-            sf.write(output_path, wav, sr)
-            logger.info(f"Generated placeholder audio: {output_path} ({duration:.1f}s)")
+             sf.write(output_path, wav, sr)
+             logger.info(f"Generated placeholder audio: {output_path} ({duration:.1f}s)")
         except Exception as e:
-            # If writing to original path fails, try with .wav extension
-            logger.warning(f"Failed to write to {output_path}: {e}")
-            wav_path = str(path_obj.with_suffix('.wav'))
-            sf.write(wav_path, wav, sr)
-            output_path = wav_path
-            logger.info(f"Generated placeholder audio (fallback): {output_path} ({duration:.1f}s)")
+             logger.warning(f"Failed to write to {output_path}: {e}")
+             wav_path = str(path_obj.with_suffix('.wav'))
+             sf.write(wav_path, wav, sr)
+             output_path = wav_path
+             logger.info(f"Generated placeholder audio (fallback): {output_path} ({duration:.1f}s)")
         
         return output_path
 

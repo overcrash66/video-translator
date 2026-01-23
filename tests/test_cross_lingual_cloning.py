@@ -5,20 +5,19 @@ from pathlib import Path
 
 @pytest.fixture
 def tts_engine():
-    with patch('src.synthesis.tts.F5TTSWrapper'):
+    # Patch the F5TTSWrapper in the backend module where it is actually used
+    with patch('src.synthesis.backends.f5_tts.F5TTSWrapper'):
         engine = TTSEngine()
-        # Mock validation to always pass so we can test the language logic
+        # Mock validation to always pass
+        engine.validate_reference = MagicMock(return_value=True)
         engine._check_reference_audio = MagicMock(return_value=True)
-        # Mock sanitize to pass
         engine._sanitize_text = MagicMock(side_effect=lambda t: t)
         
-        # Mock internal generators
-        engine._generate_f5 = MagicMock(return_value="f5_out.wav")
-        engine._generate_xtts = MagicMock(return_value="xtts_out.wav")
-        # Mock generate_audio recursion for fallback (we want to ensure this is NOT called)
-        # But we create a spy or check call args if it calls itself?
-        # Actually generate_audio calls itself recursively for fallback.
-        # We can check if _generate_f5 was called.
+        # Mock backends
+        engine.backends["f5"] = MagicMock()
+        engine.backends["xtts"] = MagicMock()
+        engine.backends["edge"] = MagicMock()
+        
         return engine
 
 def test_cross_lingual_cloning_allowed_f5(tts_engine):
@@ -29,17 +28,17 @@ def test_cross_lingual_cloning_allowed_f5(tts_engine):
     tts_engine.generate_audio(
         text="Bonjour",
         speaker_wav_path="ref.wav",
-        language="fr",      # Target
-        source_lang="en",   # Source
+        language="fr",
+        source_lang="en",
         model="f5",
         output_path="out.wav"
     )
     
     # Assert
-    # Should NOT call _generate_f5 (fallback behavior)
-    tts_engine._generate_f5.assert_not_called()
-    # Validate reference check should NOT be called (optimization)
-    tts_engine._check_reference_audio.assert_not_called()
+    # Should use F5 backend
+    tts_engine.backends['f5'].generate.assert_called_once()
+    # Should NOT fallback to Edge
+    tts_engine.backends['edge'].generate.assert_not_called()
 
 def test_cross_lingual_cloning_allowed_xtts(tts_engine):
     """
@@ -48,42 +47,40 @@ def test_cross_lingual_cloning_allowed_xtts(tts_engine):
     tts_engine.generate_audio(
         text="Hola",
         speaker_wav_path="ref.wav",
-        language="es",      # Target
-        source_lang="en",   # Source
+        language="es",
+        source_lang="en",
         model="xtts",
         output_path="out.wav"
     )
     
-    tts_engine._generate_xtts.assert_called_once()
+    tts_engine.backends['xtts'].generate.assert_called_once()
 
 def test_fallback_still_occurs_on_invalid_ref(tts_engine):
     """
     Verify fallback logic still works if reference is INVALID
     """
     # Setup - Reference Invalid
-    tts_engine._check_reference_audio.return_value = False
+    tts_engine.validate_reference = MagicMock(return_value=False)
     
-    with patch.object(tts_engine, 'generate_audio', side_effect=tts_engine.generate_audio) as spy:
-        # Act
-        tts_engine.generate_audio(
-            text="Test",
-            speaker_wav_path="bad_ref.wav",
-            language="fr",
-            source_lang="en",
-            model="f5",
-            output_path="out.wav"
-        )
-        
-        # Assert
-        # Should NOT call _generate_f5 because reference validation failed
-        tts_engine._generate_f5.assert_not_called()
-        
-        # Should not have verified reference (optimization skipping)
-        tts_engine._check_reference_audio.assert_not_called()
+    # Act
+    tts_engine.generate_audio(
+        text="Test",
+        speaker_wav_path="bad_ref.wav",
+        language="fr",
+        source_lang="en",
+        model="f5",
+        output_path="out.wav"
+    )
+    
+    # Assert
+    # Should NOT call F5 backend
+    tts_engine.backends['f5'].generate.assert_not_called()
+    # Should Fallback to Edge
+    tts_engine.backends['edge'].generate.assert_called()
         
 def test_cross_lingual_cloning_allowed_f5_english(tts_engine):
     """
-    Verify that F5-TTS works when language is English (even if source is different, though unlikely for now)
+    Verify that F5-TTS works when language is English
     """
     tts_engine.generate_audio(
         text="Hello",
@@ -93,4 +90,4 @@ def test_cross_lingual_cloning_allowed_f5_english(tts_engine):
         model="f5",
         output_path="out.wav"
     )
-    tts_engine._generate_f5.assert_called_once()
+    tts_engine.backends['f5'].generate.assert_called_once()

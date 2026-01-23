@@ -74,17 +74,19 @@ def test_fallback_last_valid_reference(video_translator):
     
     for _ in gen: pass
     
-    # Verify Calls
-    calls = video_translator.tts_engine.generate_audio.call_args_list
-    assert len(calls) == 2
+    # Verify Calls to Batch
+    video_translator.tts_engine.generate_batch.assert_called()
     
-    # Call 1: Should use profile_01.wav
-    args1, _ = calls[0]
-    assert args1[1] == 'profile_01.wav'
+    args, _ = video_translator.tts_engine.generate_batch.call_args
+    tasks = args[0]
     
-    # Call 2: Should fallback to profile_01.wav (Last Valid)
-    args2, _ = calls[1]
-    assert args2[1] == 'profile_01.wav' 
+    assert len(tasks) == 2
+    
+    # Task 1: Should use profile_01.wav
+    assert tasks[0]['speaker_wav'] == 'profile_01.wav'
+    
+    # Task 2: Should fallback to profile_01.wav (Last Valid)
+    assert tasks[1]['speaker_wav'] == 'profile_01.wav'
 
 def test_fallback_0_30s_extraction(video_translator):
     """
@@ -95,17 +97,14 @@ def test_fallback_0_30s_extraction(video_translator):
         {"translated_text": "Seg1", "start": 0.0, "end": 2.0}
     ]
     
-    
     # Mock diarization segments to EXIST but NOT OVERLAP with translation
-    # Trans segment: 0.0 - 2.0
-    # Diar segment: 10.0 - 12.0 (No overlap)
     video_translator.diarizer.diarize.return_value = [
         {'start': 10.0, 'end': 12.0, 'speaker': 'SPEAKER_00'}
     ]
     video_translator.diarizer.extract_speaker_profiles.return_value = {}
     video_translator.transcriber.transcribe.return_value = ([], "en")
 
-    # Mock _extract_fallback_reference directly to avoid file IO
+    # Mock _extract_fallback_reference directly
     with patch.object(video_translator, '_extract_fallback_reference', return_value='fallback_30.wav') as mock_extract:
     
         gen = video_translator.process_video(
@@ -125,11 +124,10 @@ def test_fallback_0_30s_extraction(video_translator):
         # Verify
         mock_extract.assert_called_once()
         
-        # Check generate audio call
-        video_translator.tts_engine.generate_audio.assert_called_with(
-            ANY, 
-            'fallback_30.wav', # USED FALLBACK
-            language=ANY, output_path=ANY, model='f5', 
-            gender=ANY, speaker_id=ANY, guidance_scale=ANY, 
-            force_cloning=ANY, voice_selector=ANY, source_lang=ANY, preferred_voice=ANY
-        )
+        # Check generate_batch call
+        args, kwargs = video_translator.tts_engine.generate_batch.call_args
+        tasks = args[0]
+        
+        assert len(tasks) == 1
+        assert tasks[0]['speaker_wav'] == 'fallback_30.wav' # USED FALLBACK
+        assert kwargs.get('model') == 'f5'

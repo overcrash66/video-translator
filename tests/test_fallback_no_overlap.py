@@ -74,17 +74,16 @@ def test_fallback_no_speaker_overlap(video_translator):
     
     # Assert
     # Should fallback to 'vocals.wav'
-    video_translator.tts_engine.generate_audio.assert_called_with(
-        ANY, 
-        None, # EXPECTED FALLBACK (No overlap -> Generic)
-        language='es', 
-        output_path=ANY, 
-        model='f5', 
-        gender=ANY, 
-        speaker_id=None, # No speaker identified
-        guidance_scale=ANY,
-        force_cloning=ANY,
-        voice_selector=ANY,
-        source_lang='en',
-        preferred_voice=ANY
-    )
+    # Assert
+    # Should fallback to 'vocals.wav' or fallback
+    video_translator.tts_engine.generate_batch.assert_called()
+    args, _ = video_translator.tts_engine.generate_batch.call_args
+    tasks = args[0]
+    
+    assert tasks[0]['speaker_wav'] is None # or vocals depending on logic?
+    # Logic: if no overlap -> speaker_id=None -> fallback logic
+    # _apply_reference_fallback calls validate(None) -> fails
+    # Then tries last valid -> None
+    # Then tries 0-30s -> Mocked as None?
+    # So it should be None (Generic)
+    assert tasks[0]['speaker_id'] is None

@@ -42,6 +42,7 @@ def test_get_prompt_alma():
 def test_translator_integration_context():
     from src.translation.text_translator import Translator
     tr = Translator()
+    tr.cache = {} # Force cache miss to trigger LLM calls
     
     # Mock LLMTranslator
     with patch('src.translation.text_translator.LLMTranslator') as MockLLM:
