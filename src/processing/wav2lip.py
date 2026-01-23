@@ -72,7 +72,7 @@ class Wav2LipSyncer:
         self.detector = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, 
                                                      flip_input=False, device=str(self.device).split(":")[0])
                                                      
-    def get_smooth_box(self, boxes, window_size=5):
+    def get_smooth_box(self, boxes, window_size=config.WAV2LIP_BOX_SMOOTH_WINDOW):
         """
         Smooths face bounding boxes over time using a moving average window.
         boxes: List of [x1, y1, x2, y2] or None

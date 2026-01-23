@@ -19,6 +19,7 @@ from src.audio.diarization import Diarizer
 from src.processing.lipsync import LipSyncer
 from src.translation.visual_translator import VisualTranslator
 from src.processing.voice_enhancement import VoiceEnhancer
+from typing import Generator, Literal, Any
 
 logger = logging.getLogger(__name__)
 
@@ -236,27 +237,36 @@ class VideoTranslator:
                       max_speakers: int = 10,
                       ocr_model_name: str = "PaddleOCR",
                       tts_voice: str | None = None,
-                      lipsync_model_name: str | None = None):
+                      lipsync_model_name: str | None = None) -> Generator[tuple[Literal["log", "progress", "result"], Any] | list, None, None]:
         """
         Orchestrates the full pipeline as a generator.
         Yields: ("log", message) or ("progress", value, desc) or ("result", path)
         """
         
-        # 0. Setup
-        video_path = Path(video_path)
+        # 0. Setup and Validation
+        video_path = config.validate_path(video_path, must_exist=True)
         
-        # 1. Extraction
+        # ---------------------------------------------------------------------
+        # 1. Audio Extraction Stage
+        #    - Uses FFmpeg to extract audio track from video
+        # ---------------------------------------------------------------------
         yield ("progress", 0.1, "Extracting Audio...")
         extracted_path = self._step_extraction(video_path)
         yield ("log", "Audio extracted.")
              
-        # 2. Separation
+        # ---------------------------------------------------------------------
+        # 2. Vocal Separation Stage
+        #    - Uses Demucs to separate Vocals vs Background (Accompaniment)
+        # ---------------------------------------------------------------------
         self.load_model("demucs") 
         yield ("progress", 0.2, "Separating Vocals...")
         vocals_path, bg_path = self._step_separation(extracted_path, audio_model_name)
         yield ("log", f"Separation complete. Vocals: {Path(vocals_path).name}")
         
-        # 3. Diarization
+        # ---------------------------------------------------------------------
+        # 3. Speaker Diarization Stage
+        #    - Identifies distinct speakers and extracts voice profiles
+        # ---------------------------------------------------------------------
         # Reset session state for new video
         self.session.reset()
         
@@ -269,7 +279,11 @@ class VideoTranslator:
             )
             yield ("log", f"Diarization complete. Speakers: {len(speaker_map)}")
             
-        # 4. Transcription
+        # ---------------------------------------------------------------------
+        # 4. Transcription Stage
+        #    - Converts speech to text (ASR) using Whisper
+        #    - Incorporates VAD for clean segmentation
+        # ---------------------------------------------------------------------
         self.load_model("whisper")
         yield ("progress", 0.3, "Transcribing...")
         # Resolve source/target codes
@@ -294,7 +308,11 @@ class VideoTranslator:
         segments = self.transcriber.merge_short_segments(segments, min_duration=config.MERGE_MIN_DURATION, max_gap=config.MERGE_MAX_GAP)
         logger.info(f"Merged segments: {before_count} -> {len(segments)}")
 
-        # 5. Translation
+        # ---------------------------------------------------------------------
+        # 5. Translation Stage
+        #    - Translates text segments to target language
+        #    - Supports Context-Aware LLM translation
+        # ---------------------------------------------------------------------
         self.load_model("translation_llm") 
         yield ("progress", 0.4, "Translating...")
         
@@ -653,6 +671,10 @@ class VideoTranslator:
                   self.session.last_valid_reference_wav = fallback
          
          return speaker_wav, use_force
+
+    # -------------------------------------------------------------------------
+    # Helper Methods
+    # -------------------------------------------------------------------------
 
     def _apply_eq_matching_batch(self, vocals_path, tts_segments):
          """

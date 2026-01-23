@@ -1,13 +1,20 @@
 
 import pytest
 from unittest.mock import MagicMock, patch, ANY
+from pathlib import Path
 from src.core.video_translator import VideoTranslator
+
 
 @pytest.fixture
 def video_translator():
+    patcher = patch('src.utils.config.validate_path', side_effect=lambda p, **kwargs: Path(p))
+    patcher.start()
+    
     vt = VideoTranslator()
     vt.tts_engine = MagicMock()
-    return vt
+    yield vt
+    
+    patcher.stop()
 
 def test_tts_fallback_strategy(video_translator):
     """
@@ -57,7 +64,7 @@ def test_tts_fallback_strategy(video_translator):
     video_translator.synchronizer.merge_segments = MagicMock(return_value=True)
     video_translator.processor.mix_tracks = MagicMock()
     video_translator.processor.replace_audio = MagicMock(return_value="output.mp4")
-    
+
     # [Fix] Configure TTS mock to return a valid path that passes validation checks
     from pathlib import Path
     dummy_wav = Path("dummy_output.wav")

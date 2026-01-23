@@ -6,6 +6,10 @@ from src.core.video_translator import VideoTranslator
 
 @pytest.fixture
 def video_translator():
+    # Mocking validate_path globally for this fixture
+    patcher = patch('src.utils.config.validate_path', side_effect=lambda p, **kwargs: Path(p))
+    patcher.start()
+    
     # Patch dependencies in the correct namespace
     with patch('src.core.video_translator.Diarizer'), \
          patch('src.core.video_translator.AudioSeparator'), \
@@ -18,7 +22,9 @@ def video_translator():
         vt.tts_engine = MockTTS.return_value
         # Default behavior: generate_audio returns a valid path
         vt.tts_engine.generate_audio.return_value = "output.wav"
-        return vt
+        yield vt
+        
+    patcher.stop()
 
 def test_smart_fallback_profile_invalid(video_translator):
     """

@@ -7,6 +7,9 @@ from src.core.video_translator import VideoTranslator
 @pytest.fixture
 def video_translator():
     # Patch dependencies in the correct namespace
+    patcher = patch('src.utils.config.validate_path', side_effect=lambda p, **kwargs: Path(p))
+    patcher.start()
+    
     with patch('src.core.video_translator.Diarizer'), \
          patch('src.core.video_translator.AudioSeparator'), \
          patch('src.core.video_translator.Transcriber'), \
@@ -17,7 +20,9 @@ def video_translator():
         vt = VideoTranslator()
         vt.tts_engine = MockTTS.return_value
         vt.tts_engine.generate_audio.return_value = "output.wav"
-        return vt
+        yield vt
+        
+    patcher.stop()
 
 
 def test_fallback_no_speaker_overlap(video_translator):

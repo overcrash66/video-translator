@@ -72,3 +72,40 @@ from src.utils import languages
 
 def get_language_code(name):
     return languages.get_language_code(name)
+
+# -----------------------------
+# Processing Parameters (Refactored from Magic Numbers)
+# -----------------------------
+DEMUCS_CHUNK_SECONDS = 10
+DEMUCS_OVERLAP_SECONDS = 1
+
+WAV2LIP_BOX_SMOOTH_WINDOW = 5
+
+OCR_INTERVAL_DEFAULT = 1.0
+
+def validate_path(path: str | Path, must_exist: bool = False, allowed_dirs: list[Path] | None = None) -> Path:
+    """
+    Validates and resolves a path, checking existence and containment.
+    
+    :param path: The input path string or Path object.
+    :param must_exist: If True, raises FileNotFoundError if path doesn't exist.
+    :param allowed_dirs: Optional list of directories the path must be inside.
+    :return: Resolved absolute Path object.
+    :raises FileNotFoundError: If must_exist is True and path is missing.
+    :raises ValueError: If path is outside allowed_dirs.
+    """
+    try:
+        resolved = Path(path).resolve()
+    except Exception as e:
+        raise ValueError(f"Invalid path format: {path}") from e
+
+    if must_exist and not resolved.exists():
+        raise FileNotFoundError(f"Path does not exist: {resolved}")
+    
+    if allowed_dirs:
+        # Check if resolved path starts with any allowed directory
+        is_allowed = any(str(resolved).startswith(str(d.resolve())) for d in allowed_dirs)
+        if not is_allowed:
+             raise ValueError(f"Path outside allowed directories: {resolved}")
+             
+    return resolved

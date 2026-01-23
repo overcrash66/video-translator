@@ -8,7 +8,7 @@ import soundfile as sf
 import logging
 from pathlib import Path
 
-logging.basicConfig(level=logging.INFO)
+# logging.basicConfig(level=logging.INFO) # Centralized in app.py
 logger = logging.getLogger(__name__)
 
 # Model size mapping for UI display names to actual model names

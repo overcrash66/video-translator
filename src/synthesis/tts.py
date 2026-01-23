@@ -4,6 +4,7 @@ import logging
 import soundfile as sf
 import torch
 import torchaudio
+import re
 
 from src.utils import config
 from src.utils import languages
@@ -11,8 +12,24 @@ from src.synthesis.backends.edge_tts import EdgeTTSBackend
 from src.synthesis.backends.piper_tts import PiperTTSBackend
 from src.synthesis.backends.xtts import XttsBackend
 from src.synthesis.backends.f5_tts import F5TTSBackend
+from typing import TypedDict, Literal
 
-logging.basicConfig(level=logging.INFO)
+# Type Definitions
+class TTSTask(TypedDict, total=False):
+    text: str
+    output_path: str | Path
+    language: str | None
+    speaker_wav: str | Path | None
+    gender: str
+    speaker_id: str | None
+    guidance_scale: float | None
+    emotion: str | None
+    force_cloning: bool
+    voice_selector: object # Callable
+    source_lang: str | None
+    preferred_voice: str | None
+
+# logging.basicConfig(level=logging.INFO) # Centralized in app.py
 logger = logging.getLogger(__name__)
 
 
@@ -121,7 +138,7 @@ class TTSEngine:
         
         # Check if text contains any speakable characters
         # (avoid punctuation-only strings that Edge-TTS can't handle)
-        import re
+        # import re # Moved to top-level
         # Match letters (any language), numbers, or CJK characters
         if not re.search(r'[a-zA-Z0-9\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\u0400-\u04ff\u0600-\u06ff\uac00-\ud7af]', text):
             logger.warning(f"Skipping TTS for non-speakable text: '{text[:50]}'")
@@ -330,7 +347,7 @@ class TTSEngine:
             logger.info("Generating placeholder dummy audio.")
             return self._generate_dummy_audio(sanitized_text, output_path)
 
-    def generate_batch(self, tasks: list, model="edge") -> list:
+    def generate_batch(self, tasks: list[TTSTask], model="edge") -> list:
         """
         Synthesizes a batch of text segments into audio.
         Delegates to the backend's `generate_batch` for optimized processing (e.g., parallel async requests).

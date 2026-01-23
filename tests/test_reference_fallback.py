@@ -6,7 +6,13 @@ import shutil
 
 @pytest.fixture
 def video_translator():
-    # Patch dependencies in the correct namespace
+    # Mocking validate_path globally for this fixture
+    # This patch needs to be active for the entire fixture's lifecycle,
+    # including the setup of VideoTranslator which might call validate_path.
+    validate_path_patcher = patch('src.utils.config.validate_path', side_effect=lambda p, **kwargs: Path(p))
+    validate_path_mock = validate_path_patcher.start() # Start the patcher
+
+    # Patch other dependencies using a context manager
     with patch('src.core.video_translator.Diarizer'), \
          patch('src.core.video_translator.AudioSeparator'), \
          patch('src.core.video_translator.Transcriber'), \

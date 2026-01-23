@@ -38,8 +38,9 @@ def test_process_video_lipsync_call():
     vt.synchronizer.merge_segments.return_value = True
     vt.processor.replace_audio.return_value = "final.mp4"
     
-    # Mock Path existence
-    with patch('src.core.video_translator.Path') as MockPath:
+    # Mock Path existence and validation
+    with patch('src.core.video_translator.Path') as MockPath, \
+         patch('src.utils.config.validate_path', side_effect=lambda p, **kwargs: Path(p)):
         # Configure MockPath to return True for exists()
         mock_path_instance = MockPath.return_value
         mock_path_instance.exists.return_value = True
@@ -97,7 +98,8 @@ def test_process_video_lipsync_skip():
     vt.synchronizer.merge_segments.return_value = True
     vt.processor.replace_audio.return_value = "final.mp4"
 
-    with patch('src.core.video_translator.Path') as MockPath:
+    with patch('src.core.video_translator.Path') as MockPath, \
+         patch('src.utils.config.validate_path', side_effect=lambda p, **kwargs: Path(p)):
         mock_path_instance = MockPath.return_value
         mock_path_instance.exists.return_value = True
         mock_path_instance.stat.return_value.st_size = 1000
@@ -154,7 +156,8 @@ def test_process_video_visual_translation_call():
     vt.processor.replace_audio.return_value = "final.mp4"
     vt.visual_translator.translate_video_text.return_value = "visual.mp4"
     
-    with patch('src.core.video_translator.Path') as MockPath:
+    with patch('src.core.video_translator.Path') as MockPath, \
+         patch('src.utils.config.validate_path', side_effect=lambda p, **kwargs: Path(p)):
         mock_path_instance = MockPath.return_value
         mock_path_instance.exists.return_value = True
         mock_path_instance.stat.return_value.st_size = 1000
@@ -210,7 +213,8 @@ def test_process_video_visual_translation_skip():
     vt.synchronizer.merge_segments.return_value = True
     vt.processor.replace_audio.return_value = "final.mp4"
     
-    with patch('src.core.video_translator.Path') as MockPath:
+    with patch('src.core.video_translator.Path') as MockPath, \
+         patch('src.utils.config.validate_path', side_effect=lambda p, **kwargs: Path(p)):
         mock_path_instance = MockPath.return_value
         mock_path_instance.exists.return_value = True
         mock_path_instance.stat.return_value.st_size = 1000
@@ -267,7 +271,8 @@ def test_lipsync_and_visual_together():
     vt.visual_translator.translate_video_text.return_value = "visual.mp4"
     vt.lipsyncer.sync_lips.return_value = "lipsync.mp4"
     
-    with patch('src.core.video_translator.Path') as MockPath:
+    with patch('src.core.video_translator.Path') as MockPath, \
+         patch('src.utils.config.validate_path', side_effect=lambda p, **kwargs: Path(p)):
         mock_path_instance = MockPath.return_value
         mock_path_instance.exists.return_value = True
         mock_path_instance.stat.return_value.st_size = 1000
@@ -327,7 +332,8 @@ def test_lipsync_failure_continues_pipeline():
     # Simulate lip-sync failure
     vt.lipsyncer.sync_lips.side_effect = Exception("Lip-sync failed!")
     
-    with patch('src.core.video_translator.Path') as MockPath:
+    with patch('src.core.video_translator.Path') as MockPath, \
+         patch('src.utils.config.validate_path', side_effect=lambda p, **kwargs: Path(p)):
         mock_path_instance = MockPath.return_value
         mock_path_instance.exists.return_value = True
         mock_path_instance.stat.return_value.st_size = 1000

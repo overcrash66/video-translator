@@ -7,7 +7,7 @@ from src.utils import config
 import logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s') # Centralized in app.py
 logger = logging.getLogger(__name__)
 
 class AudioSeparator:
@@ -174,8 +174,8 @@ class AudioSeparator:
         
         # Model expects [Batch, Channels, Time]
         # We process in chunks of X seconds
-        chunk_seconds = 10 # Conservative chunk size for limited VRAM
-        overlap_seconds = 1
+        chunk_seconds = config.DEMUCS_CHUNK_SECONDS # Conservative chunk size for limited VRAM
+        overlap_seconds = config.DEMUCS_OVERLAP_SECONDS
         
         sr = self.sample_rate
         chunk_size = chunk_seconds * sr
