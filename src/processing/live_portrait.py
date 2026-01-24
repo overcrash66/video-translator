@@ -24,14 +24,42 @@ class LivePortraitSyncer:
         self.providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if self.device_str == "cuda" else ['CPUExecutionProvider']
         
         # [WinFix] Register torch's library path so ONNX Runtime can find CUDA/cuDNN DLLs
+        # IMPORTANT: We must keep the return values of add_dll_directory alive, otherwise 
+        # the paths are removed when the objects are garbage collected.
+        self.dll_handles = []
+        
         if os.name == 'nt' and self.device_str == "cuda":
+            # 1. Register Torch Libs
             try:
                 libs_path = os.path.join(os.path.dirname(torch.__file__), 'lib')
                 if os.path.exists(libs_path):
-                    os.add_dll_directory(libs_path)
+                    self.dll_handles.append(os.add_dll_directory(libs_path))
                     logger.info(f"Registered torch CUDA libs for ONNX: {libs_path}")
             except Exception as e:
                 logger.warning(f"Could not register torch DLL path: {e}")
+            
+            # 2. Register System CUDA Libs (detect v12.x, v11.x, v13.x)
+            try:
+                 import glob
+                 cuda_bases = glob.glob("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v*")
+                 if cuda_bases:
+                     # Register ALL found versions to handle mixed dependency requirements
+                     # e.g. onnxruntime might want v12 libs while system has v13 installed
+                     for cuda_dir in cuda_bases:
+                         # Check standard bin
+                         bin_path = os.path.join(cuda_dir, "bin")
+                         if os.path.exists(bin_path):
+                             self.dll_handles.append(os.add_dll_directory(bin_path))
+                             logger.info(f"Registered system CUDA bin for ONNX: {bin_path}")
+                             
+                         # Check bin/x64 (sometimes used in newer versions)
+                         bin_x64_path = os.path.join(bin_path, "x64")
+                         if os.path.exists(bin_x64_path):
+                             self.dll_handles.append(os.add_dll_directory(bin_x64_path))
+                             logger.info(f"Registered system CUDA bin/x64 for ONNX: {bin_x64_path}")
+                             
+            except Exception as e:
+                logger.warning(f"Could not register system CUDA path: {e}")
 
         self.model_dir = Path("models/live_portrait_onnx")
         self.wav2lip_driver = Wav2LipSyncer()

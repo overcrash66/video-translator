@@ -29,16 +29,20 @@ class TestLivePortraitSyncer:
         assert "liveportrait_onnx/appearance_feature_extractor.onnx" in syncer.onnx_files.values()
 
     @patch("src.processing.live_portrait.hf_hub_download")
-    def test_download_models(self, mock_download, syncer):
+    @patch("src.processing.live_portrait.Path.exists")
+    def test_download_models(self, mock_exists, mock_download, syncer):
         """Test model downloading logic."""
-        syncer.download_models()
+        # Force exists() to return False so download triggers
+        mock_exists.return_value = False
         
+        syncer.download_models()
+    
         # Check specific file request from warmshao repo
         calls = [args[1]['filename'] for args in mock_download.call_args_list]
         repos = [args[1]['repo_id'] for args in mock_download.call_args_list]
-        
-        # Should now be requesting files with subdir prefix OR checking logic 
-        # The key is what `hf_hub_download` receives. 
+    
+        # Should now be requesting files with subdir prefix OR checking logic
+        # The key is what `hf_hub_download` receives.
         # Our code passes 'liveportrait_onnx/appearance...'.
         assert "liveportrait_onnx/appearance_feature_extractor.onnx" in calls
         assert "warmshao/FasterLivePortrait" in repos
