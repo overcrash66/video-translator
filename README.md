@@ -1,125 +1,240 @@
-# AI Video Translator (Local)
+# 🌍 AI Video Translator (Local)
 
-An advanced, locally-run video translation pipeline that separates vocals, transcribes speech, translates text, generates new speech, and synchronizes it back to the video while preserving the original background audio and video quality.
+> **Break language barriers with cinema-quality video translation — privately, on your own hardware.**
+
+Transform any video into a professional multilingual production with natural voice cloning, lip-sync, and on-screen text translation. No cloud APIs, no subscriptions, no data leaving your machine.
+
+---
+
+## ✨ Why This Project?
+
+**Traditional dubbing** is expensive, time-consuming, and requires professional studios. **AI Video Translator** democratizes video localization by bringing Hollywood-grade technology to your desktop:
+
+- 🎬 **Content Creators**: Expand your audience globally without hiring voice actors
+- 🎓 **Educators**: Make training content accessible in any language
+- 📰 **Journalists & Documentarians**: Localize footage for international audiences
+- 🎮 **Game Developers**: Dub cutscenes and trailers cost-effectively
+- 🏢 **Businesses**: Translate corporate videos, presentations, and webinars
+- 🔒 **Privacy-Focused Users**: Keep sensitive content 100% local
+
+---
+
+## 🎯 What It Does
+
+Upload a video, select your target language, and let the AI handle everything:
+
+```
+📹 Input Video (English) → 🤖 AI Pipeline → 📹 Output Video (French, with cloned voice & synced lips)
+```
+
+**The full pipeline includes:**
+1. **Vocal Separation** — Isolates speech from music/sound effects
+2. **Transcription** — Converts speech to text with word-level precision
+3. **Translation** — Translates text using local LLMs or Google Translate
+4. **Voice Cloning** — Regenerates speech in the target language with the original speaker's voice
+5. **Lip-Sync** — Adjusts mouth movements to match the new audio
+6. **Visual Text Translation** — Detects and replaces on-screen text (subtitles, signs, etc.)
+7. **Audio Enhancement** — Cleans and restores generated speech for broadcast quality
+
+---
 
 ## 🚀 Key Features
 
-*   **Vocal Separation**: Uses **HDemucs** (Meta's Hybrid Demucs) to cleanly separate speech from background music/sfx. Optimized with chunking to handle long videos on limited GPU memory.
-*   **Precision Transcription**: Powered by **Faster-Whisper** (CTranslate2). 
-    *   **Whisper Large v3 Turbo** (Recommended): 30-50% faster with comparable accuracy.
-    *   **Silero VAD Preprocessing**: Filters non-speech regions to reduce hallucinations. Fully configurable (Min Silence, Speech Pad) and toggleable.
-    *   **Beam Size Tuning**: Adjustable beam size (1-5) for balancing transcription speed vs accuracy.
-    *   **Word-level Confidence Filtering**: Removes low-confidence transcriptions.
-*   **Multi-Language Translation**: 
-    *   **Google Translate** (Online): Fast, reliable standard translation.
-    *   **Tencent HY-MT1.5** (Local): Large language model (1.8B) for better context and consistency in translations.
-    *   **Llama 3.1 8B Instruct** (Local): High-quality instruct-tuned model for nuanced translation.
-    *   **ALMA-R 7B** (Local): Specialized state-of-the-art translation model.
-    *   **Context-Aware**: Advanced mode using full-transcript context for superior coherence.
-*   **Neural TTS**: 
-    *   **Edge-TTS** (Online): High-quality, natural-sounding speech generation.
-    *   **Piper TTS** (Local): Robust offline neural TTS using the official Piper binary (automatically downloaded).
-    *   **XTTS-v2** (Local): High-fidelity voice cloning with **Emotion Control** (Happy, Sad, Angry, etc.). Requires ~2GB VRAM.
-    *   **F5-TTS** (Local): Fast, zero-shot voice cloning with Sway Sampling.
-    *   **Smart Segment Merging**: Automatically merges short, choppy transcription segments into fluid sentences for natural TTS output.
-    *   **Auto-Generated Subtitles**: Exports `.srt` subtitle files alongside translated videos as a fallback for unclear audio.
-    *   **EQ Spectral Matching**: Applies the tonal characteristics (EQ curve) of the original voice to TTS output for seamless audio blending.
-*   **Smart Synchronization**: 
-    *   High-quality **PyRubberband** time-stretching with formant preservation (Toggleable).
-    *   **Cross-fade blending** for smooth transitions between audio segments.
-*   **Speaker Diarization**: 
-    *   **SpeechBrain**: ECAPA-TDNN embeddings with spectral clustering.
-    *   **NVIDIA NeMo** (New): Advanced multi-scale diarization decoder (MSDD) for precise speaker turn detection.
-*   **Audio Enhancement**:
-    *   **VoiceFixer**: Restores degraded speech and removes noise (Optional).
-*   **Visual Enhancements (Experimental)**:
-    *   **Lip-Sync (Generative)**:
-        *   **Wav2Lip-GAN**: Fast, smoothed, and blended (Poisson Blending) validation.
-        *   **Enhanced (Wav2Lip + GFPGAN)**: Integrates **GFPGAN** for high-resolution face restoration (eliminates blurriness).
-        *   **LivePortrait (High Quality) (New)**: Uses **LivePortrait** for state-of-the-art cinematic lip synchronization and natural facial animation.
-    *   **Visual Text Translation**: Uses **PaddleOCR** or **EasyOCR** to detect text in video frames and **OpenCV** inpainting to replace it with translated text.
-*   **Global CPU Fallback**: Automatically switches ANY model (Lip-Sync, Whisper, Diarization, etc.) to CPU if GPU fails or is incompatible, ensuring successful processing on all hardware.
-*   **GPU Optimized**: Custom **VideoTranslator** orchestration enforces strict "one-heavy-model-at-a-time" policy. Supports **PyTorch 2.5+** and **RTX 50-series** GPUs.
-*   **Friendly UI**: Easy-to-use **Gradio** web interface.
+### Audio Intelligence
+| Feature | Technology | Description |
+|---------|------------|-------------|
+| **Vocal Separation** | HDemucs (Meta) | Cleanly separates speech from background music/sfx with GPU chunking for long videos |
+| **Transcription** | Faster-Whisper (Large v3 Turbo) | 30-50% faster with Silero VAD preprocessing and word-level confidence filtering |
+| **Speaker Diarization** | NeMo MSDD / SpeechBrain | Identifies individual speakers for multi-voice dubbing |
+| **EQ Spectral Matching** | Custom | Applies original voice tonal characteristics to TTS output |
+| **Voice Enhancement** | VoiceFixer | Restores degraded speech and removes noise (optional) |
+
+### Translation Engine
+| Model | Type | Best For |
+|-------|------|----------|
+| **Google Translate** | Online | Fast, reliable everyday translation |
+| **Tencent HY-MT1.5** | Local (1.8B) | Better context preservation |
+| **Llama 3.1 8B Instruct** | Local | Nuanced, human-like translations |
+| **ALMA-R 7B** | Local | State-of-the-art translation quality |
+
+All local models support **context-aware mode** using full-transcript context for superior coherence.
+
+### Voice Synthesis (TTS)
+| Model | Type | Highlights |
+|-------|------|------------|
+| **Edge-TTS** | Online | Natural Microsoft voices, zero GPU needed |
+| **Piper TTS** | Local | Robust offline neural TTS (auto-downloaded) |
+| **XTTS-v2** | Local | High-fidelity voice cloning with emotion control (Happy, Sad, Angry) |
+| **F5-TTS** | Local | Ultra-fast zero-shot voice cloning with Sway Sampling |
+
+### Visual Enhancements
+| Feature | Technology | Description |
+|---------|------------|-------------|
+| **Lip-Sync (Fast)** | Wav2Lip-GAN | Smooth, blended lip synchronization |
+| **Lip-Sync (HD)** | Wav2Lip + GFPGAN | Face restoration eliminates blurriness |
+| **Lip-Sync (Cinema)** | LivePortrait | State-of-the-art cinematic lip sync with natural facial animation |
+| **Visual Text Translation** | PaddleOCR / EasyOCR | Detects and replaces on-screen text with OpenCV inpainting |
+
+### Production-Ready
+- 🖥️ **Friendly Gradio UI** — Easy drag-and-drop interface
+- 🎛️ **Fine-Grained Control** — Beam size, VAD settings, voice selection, and more
+- 📝 **Auto-Generated Subtitles** — Exports `.srt` files alongside translated videos
+- 🔄 **Smart Segment Merging** — Combines choppy phrases into natural sentences
+- ⚡ **GPU Optimized** — One-model-at-a-time policy for maximum VRAM efficiency
+- 🛡️ **Global CPU Fallback** — Automatically switches to CPU if GPU fails
+
+---
+
+## 🎬 Use Cases
+
+### 🎥 YouTube & Social Media Creators
+> "I have 50 English tutorials and want to reach Spanish speakers."
+
+Upload each video, select English → Spanish, and export professional dubs with your cloned voice. No re-recording needed!
+
+### 🎓 Corporate Training & E-Learning
+> "Our compliance training is in English but we have offices in 12 countries."
+
+Batch-translate training videos while maintaining the presenter's voice for authenticity. Export with or without subtitles.
+
+### 🎞️ Film & Documentary Localization
+> "I want my indie film to premiere at international festivals."
+
+Use LivePortrait (HD) lip-sync for cinema-quality dubbing that doesn't look like a bad overdub.
+
+### 📢 Marketing & Advertising
+> "We need our 30-second ad in French, German, and Japanese by tomorrow."
+
+Process multiple language versions simultaneously with local LLM translation for brand-appropriate messaging.
+
+### 🔐 Sensitive Content Translation
+> "Our video contains confidential product demos."
+
+Everything runs locally — no data leaves your machine. Perfect for legal teams, medical content, or proprietary information.
+
+---
 
 ## 🛠️ Prerequisites
 
-*   **Python 3.10+** (Python 3.10 recommended)
-*   **PyTorch 2.5.1+** with **CUDA 12.4+** (Required for RTX 50-series support)
-*   **CUDA Toolkit 12.4+**
-*   **FFmpeg**: Must be installed and accessible in your system's PATH.
-    *   *Windows (Option 1)*: `winget install ffmpeg` then restart terminal.
-    *   *Windows (Option 2 - Manual)*: 
-        1. Download from [ffmpeg.org/download](https://ffmpeg.org/download.html) (Windows builds → gyan.dev)
-        2. Extract to `C:\ffmpeg`
-        3. Add `C:\ffmpeg\bin` to your system PATH
-        4. Restart terminal and verify with `ffmpeg -version`
-    *   *Linux*: `sudo apt install ffmpeg`
-    *   *macOS*: `brew install ffmpeg`
-*   **Rubberband** (Recommended): For high-quality audio time-stretching.
-    *   *Windows*: Download from [Rubberband Releases](https://breakfastquay.com/rubberband/). Extract and add to PATH, or place `rubberband-program.exe` in project folder.
-*   **NVIDIA GPU** (Recommended): For faster HDemucs, Whisper, and LLM inference. Required for F5-TTS and Enhanced Lip-Sync.
+| Requirement | Details |
+|-------------|---------|
+| **Python** | 3.10+ (3.10 recommended) |
+| **PyTorch** | 2.5.1+ with CUDA 12.4+ |
+| **GPU** | NVIDIA GPU recommended (RTX 30/40/50 series supported) |
+| **VRAM** | 8GB minimum, 12GB+ recommended for HD lip-sync |
+| **FFmpeg** | Must be in system PATH |
+| **Rubberband** | Recommended for high-quality audio time-stretching |
+
+<details>
+<summary><strong>📥 FFmpeg Installation</strong></summary>
+
+**Windows (Option 1):**
+```powershell
+winget install ffmpeg
+# Restart terminal after installation
+```
+
+**Windows (Option 2 - Manual):**
+1. Download from [ffmpeg.org/download](https://ffmpeg.org/download.html) (Windows builds → gyan.dev)
+2. Extract to `C:\ffmpeg`
+3. Add `C:\ffmpeg\bin` to your system PATH
+4. Restart terminal and verify: `ffmpeg -version`
+
+**Linux:**
+```bash
+sudo apt install ffmpeg
+```
+
+**macOS:**
+```bash
+brew install ffmpeg
+```
+</details>
+
+<details>
+<summary><strong>📥 Rubberband Installation</strong></summary>
+
+Download from [Rubberband Releases](https://breakfastquay.com/rubberband/). Extract and add to PATH, or place `rubberband-program.exe` in the project folder.
+</details>
+
+---
 
 ## 📦 Installation
 
-1.  **Clone the repository** (or extract files):
-    ```bash
-    cd video-translator
-    ```
+```bash
+# Clone the repository
+git clone https://github.com/overcrash66/video-translator.git
+cd video-translator
 
-2.  **Install Dependencies**:
-    It is recommended to use a virtual environment:
-    ```bash
-    py -3.10 -m venv venv
-    .\venv\Scripts\activate
-    pip install -r requirements.txt
-    ```
+# Create virtual environment (Python 3.10 recommended)
+py -3.10 -m venv venv
+.\venv\Scripts\activate  # Windows
+# source venv/bin/activate  # Linux/macOS
 
-3.  **Additional Requirements (Optional)**:
-    *   **NeMo**: If using NeMo diarization, ensure `nemo_toolkit[asr]` is installed.
-    *   **Wav2Lip**: Ensure `models/wav2lip/wav2lip_gan.pth` is present.
-    *   **F5-TTS**: Requires `f5-tts` package and GPU (supports CPU fallback).
-    *   **Enhanced Lip-Sync**: Requires `gfpgan` and `basicsr` (installed via pip).
-    *   **LivePortrait**: Requires ~2GB VRAM and additional model checkpoints (auto-downloaded to `models/live_portrait`).
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### Optional Components
+
+| Feature | Requirement |
+|---------|-------------|
+| **NeMo Diarization** | `nemo_toolkit[asr]` |
+| **Wav2Lip** | Model file at `models/wav2lip/wav2lip_gan.pth` |
+| **F5-TTS** | `f5-tts` package (GPU recommended) |
+| **Enhanced Lip-Sync** | `gfpgan` and `basicsr` (included in requirements) |
+| **LivePortrait** | ~2GB VRAM, auto-downloads to `models/live_portrait` |
+| **Llama 3.1 / NeMo** | HuggingFace token (`HF_TOKEN` env variable) |
+
+---
 
 ## 🖥️ Usage
 
-1.  **Run the Application**:
-    ```bash
-    .\venv\Scripts\python app.py
-    ```
+### Quick Start
 
-2.  **Open Interface**:
-    Click the local URL provided in the console (usually `http://127.0.0.1:7860`).
+```bash
+# Activate environment
+.\venv\Scripts\activate
 
-3.  **Translate a Video**:
-    *   **Upload Video**: Select an MP4/MKV/MOV file.
-    *   **Select Source/Target Language**: e.g., Auto -> Spanish.
-    *   **Select Translation Model**: 
-        *   `Google Translate`: Default, fast.
-        *   `Tencent HY-MT1.5`: Local LLM.
-        *   `Llama 3.1`: High quality instruct model.
-        *   `ALMA-R`: Specialized for translation.
-    *   **Select TTS Model**: 
-        *   `edge`: Online, best.
-        *   `xtts`: Voice cloning.
-        *   `f5`: Fast voice cloning.
-    *   **Enable Features**:
-        *   **Speaker Diarization**: Detects speakers.
-        *   **Lip-Sync**: Enable, then select **Model**:
-            *   `Wav2Lip-GAN`: Fast.
-            *   `Wav2Lip + GFPGAN`: Enhanced quality (slower).
-            *   `LivePortrait (High Quality)`: Best visual fidelity and natural animation.
-        *   **Visual Text Translation**: (Experimental) Translates on-screen text.
-    *   **Click Process Video**.
+# Launch the application
+python app.py
+```
+
+Open your browser to `http://127.0.0.1:7860`
+
+### Step-by-Step Translation
+
+1. **Upload Video** — Drag & drop MP4, MKV, or MOV files
+2. **Select Languages** — Source (or Auto-detect) → Target
+3. **Choose Models:**
+   - **Translation**: Google (fast) / Llama 3.1 (quality) / ALMA-R (best)
+   - **TTS**: Edge (online) / F5-TTS (fast cloning) / XTTS (emotion control)
+4. **Enable Features** (optional):
+   - ✅ Speaker Diarization — Multi-speaker videos
+   - ✅ Lip-Sync — Select quality level (Fast/HD/Cinema)
+   - ✅ Visual Text Translation — Replace on-screen text
+   - ✅ Audio Enhancement — VoiceFixer post-processing
+5. **Click "Process Video"** and monitor progress
+
+---
 
 ## ⚙️ Configuration
 
-*   **Directory Structure**:
-    *   `temp/`: Stores intermediate files. Cleared/Managed during runs.
-    *   `output/`: Stores final processed videos.
-*   **Env Variables**:
-    *   `HF_TOKEN`: HuggingFace token. Required for Llama 3.1 and NeMo models.
+### Directory Structure
+```
+video-translator/
+├── temp/           # Intermediate files (auto-cleaned)
+├── output/         # Final translated videos
+├── models/         # Downloaded model weights
+└── .env            # Environment variables (HF_TOKEN, etc.)
+```
+
+### Environment Variables
+```env
+HF_TOKEN=your_huggingface_token  # Required for Llama 3.1, NeMo
+```
+
+---
 
 ## 🧩 Pipeline Architecture
 
@@ -166,3 +281,29 @@ flowchart TD
     
     Mux --> Output[Translated Output Video]
 ```
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Areas where help is appreciated:
+- Additional language support and voice models
+- Performance optimizations
+- Bug fixes and stability improvements
+- Documentation and tutorials
+
+---
+
+## 📄 License
+
+This project is for educational and personal use. Please respect the licenses of underlying models and technologies.
+
+---
+
+<div align="center">
+
+**🌟 Star this repo if you find it useful! 🌟**
+
+*Made with ❤️ for content creators worldwide*
+
+</div>
