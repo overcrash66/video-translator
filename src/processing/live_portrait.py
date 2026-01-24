@@ -14,6 +14,10 @@ from src.processing.wav2lip import Wav2LipSyncer
 
 logger = logging.getLogger(__name__)
 
+# Constants for LivePortrait face processing
+LIVE_PORTRAIT_FACE_SCALE = 2.3  # Expansion factor for face bounding box
+LIVE_PORTRAIT_INPUT_SIZE = 256  # Standard input size for ONNX models
+
 class LivePortraitSyncer:
     """
     High-quality Lip Sync using LivePortrait (ONNX).
@@ -186,8 +190,18 @@ class LivePortraitSyncer:
     def sync_lips(self, video_path: str, audio_path: str, output_path: str, enhance_face: bool = False) -> str:
         """
         Runs the LivePortrait lip sync pipeline.
-        1. Run Wav2Lip to get driving video (low quality face, good lips).
-        2. Use LivePortrait to animate original video (high quality face) using driving motion.
+        
+        Uses Wav2Lip to generate driving motion (low quality face, good lips),
+        then LivePortrait to animate the original video (high quality face) using driving motion.
+        
+        Args:
+            video_path: Path to the input video file.
+            audio_path: Path to the audio file to sync lips to.
+            output_path: Path where the output video will be saved.
+            enhance_face: Not used in LivePortrait (included for API compatibility).
+            
+        Returns:
+            Path to the output video file.
         """
         self.load_models()
         
@@ -298,14 +312,21 @@ class LivePortraitSyncer:
 
     def _align_crop(self, img, face_info):
         """
-        Aligns and crops face to 512x512 using InshghtFace landmarks.
+        Aligns and crops face to standard size using InsightFace landmarks.
+        
+        Args:
+            img: Input image (H, W, C).
+            face_info: Face detection result from InsightFace.
+            
+        Returns:
+            Tuple of (cropped_resized_image, affine_matrix).
         """
         bbox = face_info.bbox
         w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
         center = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2]
         
-        # Expansion factor used in LivePortrait is roughly 1.5 - 2.0?
-        scale = 2.3  
+        # Expansion factor used in LivePortrait
+        scale = LIVE_PORTRAIT_FACE_SCALE
         size = int(max(w, h) * scale)
         
         # Square crop
@@ -317,8 +338,8 @@ class LivePortraitSyncer:
         # Adjust if OOB
         crop = img[y1:y2, x1:x2]
         
-        # Resize to 256x256 (Standard for ONNX models usually)
-        target_size = (256, 256) 
+        # Resize to standard input size for ONNX models
+        target_size = (LIVE_PORTRAIT_INPUT_SIZE, LIVE_PORTRAIT_INPUT_SIZE)
         
         crop_resized = cv2.resize(crop, target_size)
         
