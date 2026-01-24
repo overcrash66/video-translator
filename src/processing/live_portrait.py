@@ -145,7 +145,20 @@ class LivePortraitSyncer:
 
             self.appearance_extractor = load_ort("appearance")
             self.motion_extractor = load_ort("motion")
-            self.warping_module = load_ort("warping_spade") # Merged model
+            
+            # [Fix] GridSample on CUDA only supports 4D tensors, but LivePortrait uses 5D (volumetric).
+            # We must force the Warping/SPADE module to run on CPU to avoid the crash.
+            # Extractors will still run on GPU for speed.
+            try:
+                path_warp = str(self.model_dir / self.onnx_files["warping_spade"])
+                if not Path(path_warp).exists():
+                     raise FileNotFoundError(f"Model not found: {path_warp}")
+                logger.info(f"Loading warping_spade on CPU (Required for 5D GridSample support)...")
+                self.warping_module = ort.InferenceSession(path_warp, sess_opts, providers=['CPUExecutionProvider'])
+            except Exception as e:
+                logger.error(f"Failed to load warping_spade on CPU: {e}")
+                raise
+
             self.spade_generator = None # No longer separate
             
             # Verify provider
