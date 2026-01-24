@@ -112,10 +112,7 @@ class SeparationStage(PipelineStage):
         if not context.extracted_audio_path:
              raise ValueError("Extracted audio path missing in context.")
              
-        # Load model logic is handled by separator internal state or externally?
-        # VideoTranslator managed loading. We might need to call load here or assume loaded.
-        # Ideally, stage manages its tools.
-        self.separator.load_model("demucs") # Ensure loaded
+        self.separator.load_model("demucs")
         
         vocals_path, bg_path = self.separator.separate(
             context.extracted_audio_path, 
@@ -131,10 +128,6 @@ class DiarizationStage(PipelineStage):
         self.diarizer = diarizer
         
     def execute(self, context: PipelineContext):
-        # Reset session is handled by context.session.reset() called by orchestrator? 
-        # Or context init.
-        # Ideally stage shouldn't reset global session unless passed.
-        
         context.diarization_segments = []
         context.speaker_map = {}
         context.speaker_profiles = {}
@@ -213,25 +206,11 @@ class TTSStage(PipelineStage):
         # Prepare Tasks
         tts_tasks = []
         
-        # We need to access the helper methods for voice assignment.
-        # Ideally these are moved to a utility or static methods.
-        # For this refactor, we will rely on context having the session state
-        # and implement the logic here or call a helper.
-        # Since we are refactoring, let's assume valid segments.
+        # Prepare Tasks
+        tts_tasks = []
         
         # NOTE: This is a simplified version. The actual logic in VideoTranslator
         # handles detailed fallback and voice assignment. 
-        # For the purpose of this refactor plan, we will structure it 
-        # but acknowledging that full logic migration requires careful copy-paste.
-        
-        # ... logic to populate tts_tasks ...
-        # YIELDING CONTROL BACK TO ORCHESTRATOR FOR NOW TO AVOID REWRITING 200 LINES
-        # The Orchestrator (VideoTranslator) will still handle the complex TTS loop
-        # in the interim, or we define a minimal interface.
-        
-        # REALITY CHECK: The TTS logic is very coupled with VideoTranslator helpers.
-        # Moving it all now might be too risky for this step without broken tests.
-        # I will leave TTSStage as a stub or partial implementation and focus on the structure.
         
         context.tts_segments = [] 
         # Placeholder: Actual implementation would loop through translated_segments, 
@@ -258,8 +237,6 @@ class LipSyncStage(PipelineStage):
             yield ("log", f"Running Lip-Sync using {context.lipsync_model_name}...")
             
             # Logic would call lipsyncer.sync_lips
-            # For now, we assume logic remains in orchestrator or is moved here.
-            pass
 
 class VisualTranslationStage(PipelineStage):
     def __init__(self, visual_translator: VisualTranslator):

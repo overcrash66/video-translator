@@ -35,8 +35,6 @@ logger = logging.getLogger(__name__)
 
 
 # [Fix] Enforce soundfile backend to avoid TorchCodec errors via monkey-patching
-# Recent torchaudio versions removed set_audio_backend, so we intercept load()
-# [Fix] Enforce soundfile backend to avoid TorchCodec errors via monkey-patching
 # Post-2.x torchaudio on Windows is unstable with backends. We bypass it using soundfile directly.
 try:
     import soundfile as sf
@@ -138,8 +136,6 @@ class TTSEngine:
         
         # Check if text contains any speakable characters
         # (avoid punctuation-only strings that Edge-TTS can't handle)
-        # import re # Moved to top-level
-        # Match letters (any language), numbers, or CJK characters
         if not re.search(r'[a-zA-Z0-9\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\u0400-\u04ff\u0600-\u06ff\uac00-\ud7af]', text):
             logger.warning(f"Skipping TTS for non-speakable text: '{text[:50]}'")
             return None
@@ -287,9 +283,6 @@ class TTSEngine:
                 "preferred_voice": preferred_voice
             }
             
-            # Additional cloning validation logic?
-            # The backends (XTTS/F5) will use speaker_wav.
-            # We used to have validation logic here. 
             # Reference Validation Logic:
             if model in ["xtts", "f5"]:
                 should_attempt_clone = force_cloning

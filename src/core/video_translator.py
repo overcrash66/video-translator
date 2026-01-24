@@ -15,7 +15,6 @@ from src.processing.synchronization import AudioSynchronizer
 from src.processing.video import VideoProcessor
 from src.audio.diarization import Diarizer
 
-# Optional imports for new features (Placeholder for now until implemented)
 from src.processing.lipsync import LipSyncer
 from src.translation.visual_translator import VisualTranslator
 from src.processing.voice_enhancement import VoiceEnhancer
@@ -595,7 +594,6 @@ class VideoTranslator:
         yield ("log", f"Batch generating {len(tasks)} TTS segments...")
         
         # Execute Batch
-        # Note: Progress updates for batch are harder. We might simulate or just yield 'generating'
         yield ("progress", 0.5, "Generating Speech (Batch)...")
         
         generated_paths = self.tts_engine.generate_batch(tasks, model=model_name)
