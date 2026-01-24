@@ -50,14 +50,15 @@ class LivePortraitSyncer:
                          bin_path = os.path.join(cuda_dir, "bin")
                          if os.path.exists(bin_path):
                              self.dll_handles.append(os.add_dll_directory(bin_path))
+                             os.environ["PATH"] = bin_path + os.pathsep + os.environ["PATH"] # Legacy PATH support
                              logger.info(f"Registered system CUDA bin for ONNX: {bin_path}")
                              
                          # Check bin/x64 (sometimes used in newer versions)
                          bin_x64_path = os.path.join(bin_path, "x64")
                          if os.path.exists(bin_x64_path):
                              self.dll_handles.append(os.add_dll_directory(bin_x64_path))
+                             os.environ["PATH"] = bin_x64_path + os.pathsep + os.environ["PATH"] # Legacy PATH support
                              logger.info(f"Registered system CUDA bin/x64 for ONNX: {bin_x64_path}")
-                             
             except Exception as e:
                 logger.warning(f"Could not register system CUDA path: {e}")
 
