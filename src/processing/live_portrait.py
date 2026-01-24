@@ -188,74 +188,64 @@ class LivePortraitSyncer:
     def _animate_video(self, source_video, driving_video, output_path):
         """
         Core animation loop.
-        Extracts features from Source (Frame 0 usually, or per frame?) -> Usually Source is a single image or video.
-        If Source is video, we might do video-to-video retargeting.
-        For LipSync: Source is Video, Driving is Video (same duration).
-        We want to take the 'Lip Motion' from Driving and apply it to Source.
         """
         cap_src = cv2.VideoCapture(source_video)
         cap_drv = cv2.VideoCapture(driving_video)
+        writer = None
         
-        width = int(cap_src.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap_src.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = cap_src.get(cv2.CAP_PROP_FPS)
-        total_frames = int(cap_src.get(cv2.CAP_PROP_FRAME_COUNT))
-        
-        writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
-        
-        # Pre-calc Source Features? 
-        # Since it's Video-to-Video where Source and Driving are aligned (same video, just different lips),
-        # we can process frame-by-frame.
-        
-        pbar = tqdm(total=total_frames, desc="LivePortrait Inference")
-        
-        while True:
-            ret_s, frame_s = cap_src.read()
-            ret_d, frame_d = cap_drv.read()
+        try:
+            width = int(cap_src.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap_src.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = cap_src.get(cv2.CAP_PROP_FPS)
+            total_frames = int(cap_src.get(cv2.CAP_PROP_FRAME_COUNT))
             
-            if not ret_s or not ret_d:
-                break
+            writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+            
+            pbar = tqdm(total=total_frames, desc="LivePortrait Inference")
+            
+            while True:
+                ret_s, frame_s = cap_src.read()
+                ret_d, frame_d = cap_drv.read()
                 
-            # Process Frame
-            # 1. Detect Face & Crop
-            # We strictly need the face in the Source frame.
-            face_info = self._detect(frame_s)
-            
-            if face_info is None:
-                # No face detected, write original frame
-                writer.write(frame_s)
-                pbar.update(1)
-                continue
+                if not ret_s or not ret_d:
+                    break
+                    
+                # Process Frame
+                # 1. Detect Face & Crop
+                face_info = self._detect(frame_s)
                 
-            # 2. Prepare Inputs
-            # Crop 512x512
-            crop_img, M = self._align_crop(frame_s, face_info)
-            crop_drv, _ = self._align_crop(frame_d, face_info) # Use same face info/M ideally?
-            # Actually driving might have slightly different landmarks because lips moved.
-            # But we want to extract motion from driving.
-            # Ideally detect on driving too to get accurate 'kp_driving'.
-            
-            face_info_drv = self._detect(frame_d)
-            if face_info_drv is None:
-                 # Standard fallback
-                 writer.write(frame_s)
-                 pbar.update(1)
-                 continue
-            
-            crop_drv, _ = self._align_crop(frame_d, face_info_drv)
+                if face_info is None:
+                    writer.write(frame_s)
+                    pbar.update(1)
+                    continue
+                    
+                # 2. Prepare Inputs
+                crop_img, M = self._align_crop(frame_s, face_info)
+                
+                face_info_drv = self._detect(frame_d)
+                if face_info_drv is None:
+                     writer.write(frame_s)
+                     pbar.update(1)
+                     continue
+                
+                crop_drv, _ = self._align_crop(frame_d, face_info_drv)
 
-            # 3. Inference
-            out_img = self._run_inference(crop_img, crop_drv)
-            
-            # 4. Paste Back
-            final_frame = self._paste_back(out_img, frame_s, M)
-            writer.write(final_frame)
-            pbar.update(1)
-            
-        cap_src.release()
-        cap_drv.release()
-        writer.release()
-        pbar.close()
+                # 3. Inference
+                out_img = self._run_inference(crop_img, crop_drv)
+                
+                # 4. Paste Back
+                final_frame = self._paste_back(out_img, frame_s, M)
+                writer.write(final_frame)
+                pbar.update(1)
+                
+        except Exception as e:
+            logger.error(f"Animation loop error: {e}")
+            raise
+        finally:
+            if cap_src: cap_src.release()
+            if cap_drv: cap_drv.release()
+            if writer: writer.release()
+            if 'pbar' in locals(): pbar.close()
 
     def _detect(self, img):
         faces = self.face_analysis.get(img)
@@ -267,22 +257,7 @@ class LivePortraitSyncer:
     def _align_crop(self, img, face_info):
         """
         Aligns and crops face to 512x512 using InshghtFace landmarks.
-        Simulates LivePortrait standard crop.
         """
-        # Simplistic implementation matching standard FaceAnalysis suggestion
-        # LivePortrait usually expects specific scale. 
-        # We'll use a standard alignment function if available or simple crop
-        # Using simple bounding box expansion for robustness if alignment is complex to reproduce exactly without 'templates'.
-        # However, inference usually demands aligned eyes. 
-        
-        # We can use insightface's norm_crop if we had the template.
-        # But 'warmshao' onnx models input 256x256 or 512x512?
-        # FasterLivePortrait usually uses 256x256 inputs for speed.
-        # Let's assume 256x256 for ONNX.
-        
-        # Use simple bbox crop for now to avoid crashes, but this is the "Quality" risk.
-        # TODO: Implement proper 5-point alignment.
-        
         bbox = face_info.bbox
         w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
         center = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2]
@@ -301,13 +276,10 @@ class LivePortraitSyncer:
         crop = img[y1:y2, x1:x2]
         
         # Resize to 256x256 (Standard for ONNX models usually)
-        # We need to verify input size. 
         target_size = (256, 256) 
         
         crop_resized = cv2.resize(crop, target_size)
         
-        # Transformation Matrix (for inverse)
-        # Map (x1, y1) -> (0,0) and scale
         scale_x = target_size[0] / crop.shape[1]
         scale_y = target_size[1] / crop.shape[0]
         
@@ -320,13 +292,6 @@ class LivePortraitSyncer:
         return crop_resized, M
 
     def _paste_back(self, pred_img, bg_img, M):
-        # Inverse warp
-        # M maps Source -> Crop (256).
-        # Inverse M maps Crop -> Source.
-        
-        # pred_img is 256x256 (0-255).
-        
-        # We need to warp pred_img back to bg_img shape
         inv_M = cv2.invertAffineTransform(M[:2])
         
         output = cv2.warpAffine(
@@ -334,19 +299,12 @@ class LivePortraitSyncer:
             flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT
         )
         
-        # Masking? For now simple overlay (could be better with mask)
-        # Using the non-black pixels of output?
-        # Actually standard paste needs a mask. 
-        # Simplest: Just overwrite the bbox area.
-        
-        # Create mask from the crop (all ones)
         mask_crop = np.ones_like(pred_img) * 255
         mask_full = cv2.warpAffine(
              mask_crop, inv_M, (bg_img.shape[1], bg_img.shape[0]),
              flags=cv2.INTER_LINEAR
         )
         
-        # Blend
         mask_norm = mask_full.astype(float) / 255.0
         final = bg_img.astype(float) * (1 - mask_norm) + output.astype(float) * mask_norm
         return final.astype(np.uint8)
@@ -367,23 +325,39 @@ class LivePortraitSyncer:
         f_s = self.appearance_extractor.run(None, {input_name_app: t_src})[0]
         
         input_name_mot = self.motion_extractor.get_inputs()[0].name
-        kp_s = self.motion_extractor.run(None, {input_name_mot: t_src})
-        kp_d = self.motion_extractor.run(None, {input_name_mot: t_drv})
+        
+        # Motion Extractor returns multiple outputs. 
+        # Based on debug, Output 6 (index 6, or sometimes others depending on version) is KP.
+        # Shape is (1, 63). We need (1, 21, 3).
+        
+        # Run and capture all outputs
+        res_s = self.motion_extractor.run(None, {input_name_mot: t_src})
+        res_d = self.motion_extractor.run(None, {input_name_mot: t_drv})
+        
+        # Heuristic: Find the output with size 63 (21*3)
+        # Usually it is the last one or one of the middle ones.
+        # In Warmshao v1.1 optimization, it seems to be index 6.
+        
+        def extract_kp(outputs):
+            for out in outputs:
+                if out.shape == (1, 63):
+                    return out.reshape(1, 21, 3)
+            # Fallback if specific shape not found (maybe (1, 21, 3) already?)
+            for out in outputs:
+                if out.shape == (1, 21, 3):
+                    return out
+            raise ValueError(f"Could not find Keypoint output in Motion Extractor. Shapes: {[o.shape for o in outputs]}")
+
+        kp_s = extract_kp(res_s)
+        kp_d = extract_kp(res_d)
         
         # 2. Warping + SPADE (Merged in 'warping_spade.onnx')
-        # Inputs: feature, kp_driving, kp_source
-        # We try to map by order or reliable names if possible.
-        # Usually: feature (3d), kp_driving, kp_source
-        
         warp_inputs = self.warping_module.get_inputs()
-        
-        # Robust feed dict construction
-        # Assumption: 3 inputs.
         
         feed_dict = {
             warp_inputs[0].name: f_s,
-            warp_inputs[1].name: kp_d[0], # Driving KP (kp_driving)
-            warp_inputs[2].name: kp_s[0]  # Source KP (kp_source)
+            warp_inputs[1].name: kp_d, # Driving KP (kp_driving)
+            warp_inputs[2].name: kp_s  # Source KP (kp_source)
         }
         
         # Run merged inference
