@@ -1,3 +1,5 @@
+![Project Logo](src/logo.png)
+
 # 🌍 AI Video Translator (Local)
 
 > **Break language barriers with cinema-quality video translation — privately, on your own hardware.**
