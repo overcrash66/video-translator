@@ -309,53 +309,73 @@ class LivePortraitSyncer:
 
     def _align_crop(self, img, face_info):
         """
-        Aligns and crops face to standard size using InsightFace landmarks.
+        Aligns and crops face using standard 5-point landmarks and Affine Transform.
+        This ensures proper centering and scale expected by LivePortrait, fixing ghosting artifacts.
         
         Args:
             img: Input image (H, W, C).
-            face_info: Face detection result from InsightFace.
+            face_info: Face detection result from InsightFace (must have 'kps').
             
         Returns:
-            Tuple of (cropped_resized_image, inverse_affine_matrix).
-            The matrix maps from crop space (256x256) back to original image space.
+            Tuple of (cropped_aligned_image, inverse_affine_matrix).
         """
+        # 1. Standard Landmarks for 256x256 (derived from ArcFace 112x112)
+        # Using a slightly adjusted scaler to match LivePortrait's typical framing
+        scale = 256.0 / 112.0
+        ref_pts = np.array([
+            [38.2946, 51.6963],  # Left Eye
+            [73.5318, 51.5014],  # Right Eye
+            [56.0252, 71.7366],  # Nose
+            [41.5493, 92.3655],  # Left Mouth
+            [70.7299, 92.2041]   # Right Mouth
+        ], dtype=np.float32) * scale
+        
+        # 2. Get Source Landmarks
+        if not hasattr(face_info, 'kps') or face_info.kps is None:
+            # Fallback to bbox center if no KPS (unlikely with InsightFace)
+            logger.warning("No landmarks found, falling back to naive crop.")
+            return self._align_crop_naive(img, face_info)
+            
+        src_pts = face_info.kps.astype(np.float32)
+        
+        # 3. Estimate Similarity Transform (Scale, Rotation, Translation)
+        # Maps src_pts -> ref_pts
+        M, _ = cv2.estimateAffinePartial2D(src_pts, ref_pts)
+        
+        if M is None:
+             logger.warning("Affine estimate failed, falling back to naive crop.")
+             return self._align_crop_naive(img, face_info)
+             
+        # 4. Warp Image
+        crop_aligned = cv2.warpAffine(img, M, (LIVE_PORTRAIT_INPUT_SIZE, LIVE_PORTRAIT_INPUT_SIZE), flags=cv2.INTER_LINEAR)
+        
+        # 5. Inverse Matrix (for pasting back)
+        M_inv = cv2.invertAffineTransform(M)
+        
+        return crop_aligned, M_inv
+
+    def _align_crop_naive(self, img, face_info):
+        # ... (Previous Logic kept as fallback) ...
         bbox = face_info.bbox
         w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
         center = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2]
-        
-        # Expansion factor used in LivePortrait
         scale = LIVE_PORTRAIT_FACE_SCALE
         size = int(max(w, h) * scale)
-        
-        # Square crop coordinates
         x1 = max(0, int(center[0] - size / 2))
         y1 = max(0, int(center[1] - size / 2))
         x2 = min(img.shape[1], x1 + size)
         y2 = min(img.shape[0], y1 + size)
-        
-        # Actual crop dimensions (may differ from 'size' if clamped)
         crop_w = x2 - x1
         crop_h = y2 - y1
-        
-        # Crop the region
         crop = img[y1:y2, x1:x2]
-        
-        # Resize to standard input size for ONNX models
         target_size = (LIVE_PORTRAIT_INPUT_SIZE, LIVE_PORTRAIT_INPUT_SIZE)
         crop_resized = cv2.resize(crop, target_size)
-        
-        # Calculate scale factors from crop to target size
         scale_x = target_size[0] / crop_w
         scale_y = target_size[1] / crop_h
-        
-        # Build INVERSE affine matrix: maps from target (256x256) back to original image
-        # Forward transform is: u = (x - x1) * scale_x, v = (y - y1) * scale_y
-        # Inverse is: x = u / scale_x + x1, y = v / scale_y + y1
         M_inv = np.array([
             [1.0 / scale_x, 0, x1],
             [0, 1.0 / scale_y, y1]
         ], dtype=np.float32)
-        
         return crop_resized, M_inv
 
     def _paste_back(self, pred_img, bg_img, M_inv):

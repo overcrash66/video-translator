@@ -106,6 +106,17 @@ class VibeVoiceWrapper:
             # Move inputs to device
             inputs = {k: v.to(self.device) if hasattr(v, 'to') else v for k, v in inputs.items()}
             
+            # [Fix] Ensure generation_config is populated to avoid 'NoneType object has no attribute bos_token_id'
+            if getattr(self.tts, "generation_config", None) is None:
+                from transformers import GenerationConfig
+                self.tts.generation_config = GenerationConfig()
+                
+            if getattr(self.tts.generation_config, "bos_token_id", None) is None:
+                if hasattr(self.processor.tokenizer, "bos_token_id") and self.processor.tokenizer.bos_token_id is not None:
+                     self.tts.generation_config.bos_token_id = self.processor.tokenizer.bos_token_id
+                elif hasattr(self.processor.tokenizer, "eos_token_id"):
+                     self.tts.generation_config.bos_token_id = self.processor.tokenizer.eos_token_id
+            
             # Generate audio
             with torch.no_grad():
                 output = self.tts.generate(**inputs)
