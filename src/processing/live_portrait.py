@@ -319,7 +319,8 @@ class LivePortraitSyncer:
             face_info: Face detection result from InsightFace.
             
         Returns:
-            Tuple of (cropped_resized_image, affine_matrix).
+            Tuple of (cropped_resized_image, inverse_affine_matrix).
+            The matrix maps from crop space (256x256) back to original image space.
         """
         bbox = face_info.bbox
         w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
@@ -329,45 +330,64 @@ class LivePortraitSyncer:
         scale = LIVE_PORTRAIT_FACE_SCALE
         size = int(max(w, h) * scale)
         
-        # Square crop
+        # Square crop coordinates
         x1 = max(0, int(center[0] - size / 2))
         y1 = max(0, int(center[1] - size / 2))
         x2 = min(img.shape[1], x1 + size)
         y2 = min(img.shape[0], y1 + size)
         
-        # Adjust if OOB
+        # Actual crop dimensions (may differ from 'size' if clamped)
+        crop_w = x2 - x1
+        crop_h = y2 - y1
+        
+        # Crop the region
         crop = img[y1:y2, x1:x2]
         
         # Resize to standard input size for ONNX models
         target_size = (LIVE_PORTRAIT_INPUT_SIZE, LIVE_PORTRAIT_INPUT_SIZE)
-        
         crop_resized = cv2.resize(crop, target_size)
         
-        scale_x = target_size[0] / crop.shape[1]
-        scale_y = target_size[1] / crop.shape[0]
+        # Calculate scale factors from crop to target size
+        scale_x = target_size[0] / crop_w
+        scale_y = target_size[1] / crop_h
         
-        M = np.array([
-            [scale_x, 0, -x1 * scale_x],
-            [0, scale_y, -y1 * scale_y],
-            [0, 0, 1]
-        ])
+        # Build INVERSE affine matrix: maps from target (256x256) back to original image
+        # Forward transform is: u = (x - x1) * scale_x, v = (y - y1) * scale_y
+        # Inverse is: x = u / scale_x + x1, y = v / scale_y + y1
+        M_inv = np.array([
+            [1.0 / scale_x, 0, x1],
+            [0, 1.0 / scale_y, y1]
+        ], dtype=np.float32)
         
-        return crop_resized, M
+        return crop_resized, M_inv
 
-    def _paste_back(self, pred_img, bg_img, M):
-        inv_M = cv2.invertAffineTransform(M[:2])
+    def _paste_back(self, pred_img, bg_img, M_inv):
+        """
+        Pastes the predicted face back onto the background image.
         
+        Args:
+            pred_img: Generated face image (256x256).
+            bg_img: Original background frame.
+            M_inv: Inverse affine matrix from _align_crop (maps crop → original).
+            
+        Returns:
+            Blended output frame with same dimensions as bg_img.
+        """
+        # Warp the predicted face to original image coordinates
+        # M_inv already maps from crop space to original space
         output = cv2.warpAffine(
-            pred_img, inv_M, (bg_img.shape[1], bg_img.shape[0]), 
+            pred_img, M_inv, (bg_img.shape[1], bg_img.shape[0]), 
             flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT
         )
         
+        # Create mask for blending
         mask_crop = np.ones_like(pred_img) * 255
         mask_full = cv2.warpAffine(
-             mask_crop, inv_M, (bg_img.shape[1], bg_img.shape[0]),
+             mask_crop, M_inv, (bg_img.shape[1], bg_img.shape[0]),
              flags=cv2.INTER_LINEAR
         )
         
+        # Blend using the mask
         mask_norm = mask_full.astype(float) / 255.0
         final = bg_img.astype(float) * (1 - mask_norm) + output.astype(float) * mask_norm
         return final.astype(np.uint8)
