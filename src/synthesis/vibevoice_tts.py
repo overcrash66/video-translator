@@ -90,9 +90,9 @@ class VibeVoiceWrapper:
         try:
             logger.info(f"VibeVoice generating: '{text[:30]}...' (Speaker: {speaker_name})")
             
-            # VibeVoice uses script-style format: "Speaker 1: text"
-            # If no speaker_name provided, default to "Speaker 1"
-            target_speaker = speaker_name if speaker_name else "Speaker 1"
+            # VibeVoice works best with explicit "Speaker X" format and numeric IDs
+            # The processor regex strictly requires "Speaker \d+"
+            target_speaker = "Speaker 1"
             
             # Format text as VibeVoice script (single speaker format)
             script_text = f"{target_speaker}: {text}"

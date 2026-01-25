@@ -15,7 +15,8 @@ from src.processing.wav2lip import Wav2LipSyncer
 logger = logging.getLogger(__name__)
 
 # Constants for LivePortrait face processing
-LIVE_PORTRAIT_FACE_SCALE = 1.6  # Reduced from 2.3 to prevent oversized face output (matches Wav2Lip)
+# Constants for LivePortrait face processing
+LIVE_PORTRAIT_FACE_SCALE = 2.3  # Standard scale for LivePortrait to match training distribution
 LIVE_PORTRAIT_INPUT_SIZE = 256  # Standard input size for ONNX models
 
 class LivePortraitSyncer:
