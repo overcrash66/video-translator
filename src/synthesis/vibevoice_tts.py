@@ -13,8 +13,8 @@ class VibeVoiceWrapper:
     """
     
     MODEL_PATHS = {
-        "vibevoice": "microsoft/VibeVoice-1.5B",       # Default 1.5B
-        "vibevoice-7b": "microsoft/VibeVoice-Large"    # Large 7B
+        "vibevoice": "microsoft/VibeVoice-1.5B",       # Default 1.5B (Official/Mirror)
+        "vibevoice-7b": "rsxdalv/VibeVoice-Large"      # Community Mirror (Official 7B removed)
     }
 
     def __init__(self, model_name="vibevoice"):

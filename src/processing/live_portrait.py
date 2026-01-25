@@ -276,15 +276,11 @@ class LivePortraitSyncer:
                     continue
                     
                 # 2. Prepare Inputs
+                # Use source face info for BOTH to ensure consistent cropping region
+                # This fixes the issue where driving video face scale mismatch causes 
+                # the pasted face to be the wrong size/position
                 crop_img, M = self._align_crop(frame_s, face_info)
-                
-                face_info_drv = self._detect(frame_d)
-                if face_info_drv is None:
-                     writer.write(frame_s)
-                     pbar.update(1)
-                     continue
-                
-                crop_drv, _ = self._align_crop(frame_d, face_info_drv)
+                crop_drv, _ = self._align_crop(frame_d, face_info)
 
                 # 3. Inference
                 out_img = self._run_inference(crop_img, crop_drv)
@@ -381,7 +377,20 @@ class LivePortraitSyncer:
         )
         
         # Create mask for blending
-        mask_crop = np.ones_like(pred_img) * 255
+        # Use a feathered mask to avoid hard square edges
+        h, w = pred_img.shape[:2]
+        mask_crop = np.zeros((h, w), dtype=np.float32)
+        
+        # Define a center rectangle with margin to blur edges
+        margin = int(min(h, w) * 0.05) # 5% margin
+        cv2.rectangle(mask_crop, (margin, margin), (w-margin, h-margin), 1.0, -1)
+        
+        # Apply Gaussian blur to soften the transition
+        mask_crop = cv2.GaussianBlur(mask_crop, (51, 51), 0)
+        
+        # Expand to 3 channels and scale to 255
+        mask_crop = np.stack([mask_crop]*3, axis=-1) * 255
+
         mask_full = cv2.warpAffine(
              mask_crop, M_inv, (bg_img.shape[1], bg_img.shape[0]),
              flags=cv2.INTER_LINEAR
