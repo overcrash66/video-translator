@@ -228,8 +228,8 @@ def create_ui():
                 )
                 
                 tts_model = gr.Dropdown(
-                    choices=["edge", "piper", "xtts", "f5"],
-                    label="TTS Model (Edge=Online, Piper=Local, XTTS=Cloning)",
+                    choices=["edge", "piper", "xtts", "f5", "vibevoice", "vibevoice-7b"],
+                    label="TTS Model (Edge=Online, Piper=Local, XTTS=Cloning, VibeVoice=Long-form)",
                     value="edge"
                 )
 
