@@ -19,6 +19,7 @@ class VibeVoiceWrapper:
 
     def __init__(self, model_name="vibevoice"):
         self.tts = None
+        self.processor = None
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model_loaded = False
         self.model_name = model_name
@@ -30,18 +31,22 @@ class VibeVoiceWrapper:
 
         logger.info(f"Loading VibeVoice model ({self.model_name}) from {self.repo_id} on {self.device}...")
         try:
-            from vibevoice import VibeVoice
+            # VibeVoice uses HuggingFace-style imports from submodules
+            from vibevoice.modular.modeling_vibevoice_inference import VibeVoiceForConditionalGenerationInference
+            from vibevoice.processor.vibevoice_processor import VibeVoiceProcessor
             
-            # Initialize VibeVoice
-            # Note: The actual API might vary slightly, adapting based on standard usage patterns
-            # Checking VibeVoice repo, typically it loads via a class method or init
-            self.tts = VibeVoice.from_pretrained(self.repo_id).to(self.device)
+            # Load processor and model
+            self.processor = VibeVoiceProcessor.from_pretrained(self.repo_id)
+            self.tts = VibeVoiceForConditionalGenerationInference.from_pretrained(
+                self.repo_id,
+                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
+            ).to(self.device)
             
             self.model_loaded = True
             logger.info("VibeVoice loaded successfully.")
             
-        except ImportError:
-            logger.error("VibeVoice module not found. Install with `pip install vibevoice`.")
+        except ImportError as e:
+            logger.error(f"VibeVoice module not found: {e}. Install with `pip install vibevoice`.")
             raise
         except Exception as e:
             logger.error(f"Failed to load VibeVoice: {e}")
@@ -57,6 +62,10 @@ class VibeVoiceWrapper:
         if self.tts:
             del self.tts
             self.tts = None
+        
+        if self.processor:
+            del self.processor
+            self.processor = None
             
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -81,44 +90,48 @@ class VibeVoiceWrapper:
         try:
             logger.info(f"VibeVoice generating: '{text[:30]}...' (Speaker: {speaker_name})")
             
-            # VibeVoice generation
-            # Assuming typical generate API: generate(text, speaker_id/name)
-            # If speaker_name is None, use a default
+            # VibeVoice uses script-style format: "Speaker 1: text"
+            # If no speaker_name provided, default to "Speaker 1"
+            target_speaker = speaker_name if speaker_name else "Speaker 1"
             
-            # Check available speakers if possible or default to a safe one
-            # Microsoft VibeVoice doesn't have "cloning" in the same way, but uses prompts or IDs
-            # Per docs: "Supports up to 4 distinct speakers" in conversation, so names might be arbitrary labels for the session
-            # or pretrained voices. 
+            # Format text as VibeVoice script (single speaker format)
+            script_text = f"{target_speaker}: {text}"
             
-            # For now, we'll assume a simple generate interface. 
-            # We might need to adjust this once we see the actual installed package API.
-            
-            target_speaker = speaker_name if speaker_name else "Speaker_A"
-            
-            # Generate audio tensor
-            # output is typically (sample_rate, audio_numpy) or just audio_tensor
-            output = self.tts.generate(
-                text=text,
-                speaker_id=target_speaker, # Use name as ID?
-                language=language
+            # Process input through the processor
+            inputs = self.processor(
+                text=script_text,
+                return_tensors="pt",
             )
+            
+            # Move inputs to device
+            inputs = {k: v.to(self.device) if hasattr(v, 'to') else v for k, v in inputs.items()}
+            
+            # Generate audio
+            with torch.no_grad():
+                output = self.tts.generate(**inputs)
             
             # Handle return types
             import soundfile as sf
             import numpy as np
             
-            # Normalize output structure
-            if isinstance(output, tuple):
-                sr, audio = output
+            # Extract audio from output
+            # VibeVoice returns VibeVoiceGenerationOutput with speech_outputs
+            if hasattr(output, 'speech_outputs') and output.speech_outputs:
+                audio = output.speech_outputs[0]
             else:
-                # Assume 24k or model default if not returned
-                sr = 24000 
                 audio = output
+                
+            # VibeVoice uses 24kHz sample rate
+            sr = 24000 
                 
             if hasattr(audio, 'cpu'):
                 audio = audio.cpu().numpy()
+            
+            # Flatten if needed
+            if audio.ndim > 1:
+                audio = audio.squeeze()
                 
-            # Write key file
+            # Write output file
             sf.write(str(output_path), audio, sr)
             
             return str(output_path)
