@@ -104,3 +104,47 @@ class TestLivePortraitSyncer:
         # Should have processed 2 frames
         assert mock_inf.call_count == 2
         assert mock_writer.return_value.write.call_count == 2
+
+    def test_stitching_models_in_config(self, syncer):
+        """Test that stitching and lip retargeting models are configured."""
+        assert "stitching" in syncer.onnx_files
+        assert "stitching_lip" in syncer.onnx_files
+        assert "liveportrait_onnx/stitching.onnx" == syncer.onnx_files["stitching"]
+        assert "liveportrait_onnx/stitching_lip.onnx" == syncer.onnx_files["stitching_lip"]
+
+    def test_simple_lip_transfer(self, syncer):
+        """Test the fallback simple lip transfer function."""
+        import numpy as np
+        
+        # Create mock keypoints (1, 21, 3)
+        kp_source = np.zeros((1, 21, 3), dtype=np.float32)
+        kp_driving = np.ones((1, 21, 3), dtype=np.float32) * 0.5
+        
+        result = syncer._simple_lip_transfer(kp_source, kp_driving)
+        
+        # Result should be same shape
+        assert result.shape == (1, 21, 3)
+        
+        # Lip indices (17, 18, 19, 20) should have changed
+        # Non-lip indices should remain zero
+        for i in range(17):
+            np.testing.assert_array_equal(result[0, i], kp_source[0, i])
+        
+        # Lip indices should have some motion applied
+        for i in [17, 18, 19, 20]:
+            assert not np.array_equal(result[0, i], kp_source[0, i])
+
+    def test_apply_lip_retargeting_fallback(self, syncer):
+        """Test that _apply_lip_retargeting falls back when module not loaded."""
+        import numpy as np
+        
+        # Ensure lip_retargeting is None (not loaded)
+        syncer.lip_retargeting = None
+        
+        kp_source = np.zeros((1, 21, 3), dtype=np.float32)
+        kp_driving = np.ones((1, 21, 3), dtype=np.float32)
+        
+        # Should not raise, should fall back to simple transfer
+        result = syncer._apply_lip_retargeting(kp_source, kp_driving)
+        
+        assert result.shape == (1, 21, 3)

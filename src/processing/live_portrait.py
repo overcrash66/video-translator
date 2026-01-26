@@ -70,12 +70,13 @@ class LivePortraitSyncer:
         self.model_dir = Path("models/live_portrait_onnx")
         self.wav2lip_driver = Wav2LipSyncer()
         
-        # Models
         self.face_analysis = None
         self.appearance_extractor = None
         self.motion_extractor = None
         self.warping_module = None
         self.spade_generator = None
+        self.stitching_module = None
+        self.lip_retargeting = None
         
         # ONNX Model Paths
         # Prepend 'liveportrait_onnx/' as per repo structure
@@ -83,7 +84,9 @@ class LivePortraitSyncer:
             "appearance": "liveportrait_onnx/appearance_feature_extractor.onnx",
             "motion": "liveportrait_onnx/motion_extractor.onnx",
             "warping_spade": "liveportrait_onnx/warping_spade.onnx",
-            "landmark": "liveportrait_onnx/landmark.onnx" 
+            "landmark": "liveportrait_onnx/landmark.onnx",
+            "stitching": "liveportrait_onnx/stitching.onnx",
+            "stitching_lip": "liveportrait_onnx/stitching_lip.onnx"
         }
 
     def download_models(self):
@@ -166,6 +169,21 @@ class LivePortraitSyncer:
 
             self.spade_generator = None # No longer separate
             
+            # 3. Load Stitching and Retargeting Modules (small MLPs, fast on CPU)
+            try:
+                self.stitching_module = load_ort("stitching")
+                logger.info("Loaded stitching module.")
+            except Exception as e:
+                logger.warning(f"Failed to load stitching module: {e}. Stitching disabled.")
+                self.stitching_module = None
+                
+            try:
+                self.lip_retargeting = load_ort("stitching_lip")
+                logger.info("Loaded lip retargeting module.")
+            except Exception as e:
+                logger.warning(f"Failed to load lip retargeting module: {e}. Lip retargeting disabled.")
+                self.lip_retargeting = None
+            
             # Verify provider
             prov = self.appearance_extractor.get_providers()
             logger.info(f"LivePortrait models loaded successfully. Active providers: {prov}")
@@ -182,6 +200,8 @@ class LivePortraitSyncer:
         self.motion_extractor = None
         self.warping_module = None
         self.spade_generator = None
+        self.stitching_module = None
+        self.lip_retargeting = None
         import gc
         gc.collect()
         if torch.cuda.is_available():
@@ -396,6 +416,12 @@ class LivePortraitSyncer:
         return final.astype(np.uint8)
 
     def _run_inference(self, src_img, drv_img):
+        """
+        Run LivePortrait inference with lip-only motion transfer.
+        
+        Uses the lip retargeting module to extract ONLY lip motion from the driving
+        video and apply it to source keypoints, preserving head pose and face shape.
+        """
         # Prepare Tensors
         def to_tensor(img):
             x = img.astype(np.float32) / 255.0  # 0-1
@@ -406,52 +432,139 @@ class LivePortraitSyncer:
         t_src = to_tensor(src_img)
         t_drv = to_tensor(drv_img)
         
-        # 1. Extract Features
+        # 1. Extract Appearance Features from SOURCE only
         input_name_app = self.appearance_extractor.get_inputs()[0].name
         f_s = self.appearance_extractor.run(None, {input_name_app: t_src})[0]
         
+        # 2. Extract Motion (Keypoints) from both source and driving
         input_name_mot = self.motion_extractor.get_inputs()[0].name
         
-        # Motion Extractor returns multiple outputs. 
-        # Based on debug, Output 6 (index 6, or sometimes others depending on version) is KP.
-        # Shape is (1, 63). We need (1, 21, 3).
-        
-        # Run and capture all outputs
         res_s = self.motion_extractor.run(None, {input_name_mot: t_src})
         res_d = self.motion_extractor.run(None, {input_name_mot: t_drv})
         
-        # Heuristic: Find the output with size 63 (21*3)
-        # Usually it is the last one or one of the middle ones.
-        # In Warmshao v1.1 optimization, it seems to be index 6.
-        
         def extract_kp(outputs):
+            """Extract keypoints tensor from motion extractor outputs."""
             for out in outputs:
                 if out.shape == (1, 63):
                     return out.reshape(1, 21, 3)
-            # Fallback if specific shape not found (maybe (1, 21, 3) already?)
             for out in outputs:
                 if out.shape == (1, 21, 3):
                     return out
-            raise ValueError(f"Could not find Keypoint output in Motion Extractor. Shapes: {[o.shape for o in outputs]}")
+            raise ValueError(f"Could not find Keypoint output. Shapes: {[o.shape for o in outputs]}")
 
         kp_s = extract_kp(res_s)
         kp_d = extract_kp(res_d)
         
-        # 2. Warping + SPADE (Merged in 'warping_spade.onnx')
+        # 3. Apply Lip Retargeting (KEY FIX)
+        # Instead of using kp_d directly (which transfers ALL motion including head pose),
+        # we use the lip retargeting module to compute only the lip delta
+        kp_driving = self._apply_lip_retargeting(kp_s, kp_d)
+        
+        # 4. Warping + SPADE
         warp_inputs = self.warping_module.get_inputs()
         
         feed_dict = {
             warp_inputs[0].name: f_s,
-            warp_inputs[1].name: kp_d, # Driving KP (kp_driving)
-            warp_inputs[2].name: kp_s  # Source KP (kp_source)
+            warp_inputs[1].name: kp_driving,  # Modified keypoints (lip motion only)
+            warp_inputs[2].name: kp_s         # Source KP (unchanged)
         }
         
-        # Run merged inference
         out_gen = self.warping_module.run(None, feed_dict)[0]
         
         # Post-process
-        # Output is usually N,C,H,W in 0-1 range
         res = np.clip(out_gen, 0, 1) * 255
         res = np.transpose(res[0], (1, 2, 0)) # H,W,C
         return res.astype(np.uint8)
+    
+    def _apply_lip_retargeting(self, kp_source: np.ndarray, kp_driving: np.ndarray) -> np.ndarray:
+        """
+        Apply lip-only retargeting using the stitching_lip module.
+        
+        This preserves the source head pose and face shape while transferring
+        only the lip motion from the driving keypoints.
+        
+        Args:
+            kp_source: Source keypoints (1, 21, 3)
+            kp_driving: Driving keypoints (1, 21, 3)
+            
+        Returns:
+            Modified keypoints with lip motion applied to source (1, 21, 3)
+        """
+        if self.lip_retargeting is None:
+            # Fallback: If lip retargeting not available, use simple lip interpolation
+            return self._simple_lip_transfer(kp_source, kp_driving)
+        
+        try:
+            # Flatten keypoints for the MLP input
+            kp_s_flat = kp_source.reshape(1, -1).astype(np.float32)  # (1, 63)
+            kp_d_flat = kp_driving.reshape(1, -1).astype(np.float32)  # (1, 63)
+            
+            # The lip retargeting module expects concatenated source and driving keypoints
+            # Input format: [kp_source, kp_driving] -> outputs delta for lips
+            lip_inputs = self.lip_retargeting.get_inputs()
+            
+            # Handle different input configurations
+            if len(lip_inputs) == 1:
+                # Single concatenated input
+                concat_input = np.concatenate([kp_s_flat, kp_d_flat], axis=1)  # (1, 126)
+                feed_dict = {lip_inputs[0].name: concat_input}
+            elif len(lip_inputs) == 2:
+                # Separate source and driving inputs
+                feed_dict = {
+                    lip_inputs[0].name: kp_s_flat,
+                    lip_inputs[1].name: kp_d_flat
+                }
+            else:
+                # Try using first two inputs
+                feed_dict = {
+                    lip_inputs[0].name: kp_s_flat,
+                    lip_inputs[1].name: kp_d_flat
+                }
+            
+            # Run lip retargeting - output is the delta to apply
+            delta_lip = self.lip_retargeting.run(None, feed_dict)[0]
+            
+            # The delta is typically for the full keypoint set but weighted for lips
+            # Apply delta to source keypoints
+            if delta_lip.shape == (1, 63):
+                delta_lip = delta_lip.reshape(1, 21, 3)
+            
+            # Create modified keypoints: source + lip delta
+            kp_result = kp_source + delta_lip
+            
+            return kp_result.astype(np.float32)
+            
+        except Exception as e:
+            logger.warning(f"Lip retargeting failed: {e}. Using simple lip transfer.")
+            return self._simple_lip_transfer(kp_source, kp_driving)
+    
+    def _simple_lip_transfer(self, kp_source: np.ndarray, kp_driving: np.ndarray) -> np.ndarray:
+        """
+        Fallback: Simple lip motion transfer by blending only lip-related keypoints.
+        
+        LivePortrait uses 21 keypoints. Based on standard face keypoint layouts,
+        lower face keypoints (roughly indices 15-20) correspond to mouth/chin area.
+        
+        Args:
+            kp_source: Source keypoints (1, 21, 3)
+            kp_driving: Driving keypoints (1, 21, 3)
+            
+        Returns:
+            Blended keypoints with lip motion from driving (1, 21, 3)
+        """
+        kp_result = kp_source.copy()
+        
+        # Lip keypoint indices (estimated for 21-point layout)
+        # Typically: 0-4 = face contour, 5-9 = eyebrows, 10-14 = eyes, 15-20 = nose/mouth
+        LIP_INDICES = [17, 18, 19, 20]  # Lower lip/mouth area
+        
+        # Calculate the delta for lip keypoints only
+        for idx in LIP_INDICES:
+            if idx < kp_source.shape[1]:
+                # Transfer driving lip position relative to source
+                delta = kp_driving[0, idx] - kp_source[0, idx]
+                # Apply with dampening to avoid extreme movements
+                kp_result[0, idx] = kp_source[0, idx] + delta * 0.8
+        
+        return kp_result.astype(np.float32)
 
