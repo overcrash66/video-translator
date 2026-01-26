@@ -483,6 +483,10 @@ class LivePortraitSyncer:
         This preserves the source head pose and face shape while transferring
         only the lip motion from the driving keypoints.
         
+        The stitching_lip.onnx model expects:
+        - Input: [1, 65] = 63 (source keypoints) + 1 (source lip-open) + 1 (driving lip-open)
+        - Output: [1, 63] = delta to apply to source keypoints
+        
         Args:
             kp_source: Source keypoints (1, 21, 3)
             kp_driving: Driving keypoints (1, 21, 3)
@@ -495,41 +499,31 @@ class LivePortraitSyncer:
             return self._simple_lip_transfer(kp_source, kp_driving)
         
         try:
-            # Flatten keypoints for the MLP input
+            # Flatten keypoints
             kp_s_flat = kp_source.reshape(1, -1).astype(np.float32)  # (1, 63)
             kp_d_flat = kp_driving.reshape(1, -1).astype(np.float32)  # (1, 63)
             
-            # The lip retargeting module expects concatenated source and driving keypoints
-            # Input format: [kp_source, kp_driving] -> outputs delta for lips
+            # Calculate lip-open ratio from keypoints
+            # Lip keypoints are typically at indices 17-20 in 21-point layout
+            # Lip-open = vertical distance between upper and lower lip keypoints
+            lip_open_src = self._compute_lip_open(kp_source)
+            lip_open_drv = self._compute_lip_open(kp_driving)
+            
+            # Build input: [kp_source(63), lip_open_src(1), lip_open_drv(1)] = (1, 65)
+            lip_input = np.concatenate([
+                kp_s_flat,
+                np.array([[lip_open_src]], dtype=np.float32),
+                np.array([[lip_open_drv]], dtype=np.float32)
+            ], axis=1)  # (1, 65)
+            
+            # Run lip retargeting
             lip_inputs = self.lip_retargeting.get_inputs()
+            feed_dict = {lip_inputs[0].name: lip_input}
             
-            # Handle different input configurations
-            if len(lip_inputs) == 1:
-                # Single concatenated input
-                concat_input = np.concatenate([kp_s_flat, kp_d_flat], axis=1)  # (1, 126)
-                feed_dict = {lip_inputs[0].name: concat_input}
-            elif len(lip_inputs) == 2:
-                # Separate source and driving inputs
-                feed_dict = {
-                    lip_inputs[0].name: kp_s_flat,
-                    lip_inputs[1].name: kp_d_flat
-                }
-            else:
-                # Try using first two inputs
-                feed_dict = {
-                    lip_inputs[0].name: kp_s_flat,
-                    lip_inputs[1].name: kp_d_flat
-                }
+            delta_lip = self.lip_retargeting.run(None, feed_dict)[0]  # (1, 63)
             
-            # Run lip retargeting - output is the delta to apply
-            delta_lip = self.lip_retargeting.run(None, feed_dict)[0]
-            
-            # The delta is typically for the full keypoint set but weighted for lips
-            # Apply delta to source keypoints
-            if delta_lip.shape == (1, 63):
-                delta_lip = delta_lip.reshape(1, 21, 3)
-            
-            # Create modified keypoints: source + lip delta
+            # Reshape delta and apply to source keypoints
+            delta_lip = delta_lip.reshape(1, 21, 3)
             kp_result = kp_source + delta_lip
             
             return kp_result.astype(np.float32)
@@ -537,6 +531,31 @@ class LivePortraitSyncer:
         except Exception as e:
             logger.warning(f"Lip retargeting failed: {e}. Using simple lip transfer.")
             return self._simple_lip_transfer(kp_source, kp_driving)
+    
+    def _compute_lip_open(self, kp: np.ndarray) -> float:
+        """
+        Compute lip-open ratio from keypoints.
+        
+        Uses the vertical distance between upper and lower lip keypoints.
+        LivePortrait 21-point layout: indices 17-20 are around mouth area.
+        
+        Args:
+            kp: Keypoints (1, 21, 3)
+            
+        Returns:
+            Lip-open ratio (normalized value)
+        """
+        # For 21-point layout, estimate mouth opening from relevant indices
+        # Upper lip ~ index 18, Lower lip ~ index 19 (approximate)
+        # If indices don't exist or are wrong, return neutral value
+        try:
+            # Y-coordinate difference gives vertical opening
+            upper_lip_y = kp[0, 18, 1]  # Y of upper lip point
+            lower_lip_y = kp[0, 19, 1]  # Y of lower lip point
+            lip_open = abs(lower_lip_y - upper_lip_y)
+            return float(lip_open)
+        except (IndexError, TypeError):
+            return 0.0  # Neutral - lips closed
     
     def _simple_lip_transfer(self, kp_source: np.ndarray, kp_driving: np.ndarray) -> np.ndarray:
         """
