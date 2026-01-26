@@ -110,16 +110,29 @@ class VibeVoiceWrapper:
             if getattr(self.tts, "generation_config", None) is None:
                 from transformers import GenerationConfig
                 self.tts.generation_config = GenerationConfig()
-                
-            if getattr(self.tts.generation_config, "bos_token_id", None) is None:
-                if hasattr(self.processor.tokenizer, "bos_token_id") and self.processor.tokenizer.bos_token_id is not None:
-                     self.tts.generation_config.bos_token_id = self.processor.tokenizer.bos_token_id
-                elif hasattr(self.processor.tokenizer, "eos_token_id"):
-                     self.tts.generation_config.bos_token_id = self.processor.tokenizer.eos_token_id
             
+            # Determine BOS token
+            bos_id = None
+            if hasattr(self.processor.tokenizer, "bos_token_id") and self.processor.tokenizer.bos_token_id is not None:
+                bos_id = self.processor.tokenizer.bos_token_id
+            elif hasattr(self.processor.tokenizer, "eos_token_id"):
+                bos_id = self.processor.tokenizer.eos_token_id
+            else:
+                bos_id = 1 # Fallback
+                
+            # Set in generation_config
+            if getattr(self.tts.generation_config, "bos_token_id", None) is None:
+                self.tts.generation_config.bos_token_id = bos_id
+                
+            # Set in model config (sometimes accessed directly)
+            if getattr(self.tts, "config", None) is not None:
+                if getattr(self.tts.config, "bos_token_id", None) is None:
+                    self.tts.config.bos_token_id = bos_id
+
             # Generate audio
             with torch.no_grad():
-                output = self.tts.generate(**inputs)
+                # Explicitly pass bos_token_id to be safe
+                output = self.tts.generate(**inputs, bos_token_id=bos_id)
             
             # Handle return types
             import soundfile as sf
