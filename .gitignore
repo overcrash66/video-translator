@@ -192,3 +192,4 @@ cython_debug/
 /.agent
 /gfpgan
 /output
+LivePortrait GPU Acceleration Options.md

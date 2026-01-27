@@ -138,6 +138,11 @@ class LivePortraitSyncer:
             sess_opts = ort.SessionOptions()
             sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
             
+            # [Optimization] CPU Threading for warping_spade (forced to CPU)
+            # 5D GridSample on CPU benefits significantly from parallelism
+            sess_opts.intra_op_num_threads = 8  # Parallelize operators (like GridSample)
+            sess_opts.inter_op_num_threads = 2  # Run different nodes in parallel
+            
             def load_ort(name):
                 path = str(self.model_dir / self.onnx_files[name])
                 if not Path(path).exists():
