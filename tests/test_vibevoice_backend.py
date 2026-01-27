@@ -4,7 +4,21 @@ from src.synthesis.backends.vibevoice_tts import VibeVoiceBackend, VibeVoiceWrap
 
 @pytest.fixture
 def mock_vibevoice_package():
-    with patch.dict('sys.modules', {'vibevoice': MagicMock()}):
+    mock_vibevoice = MagicMock()
+    mock_modular = MagicMock()
+    mock_inference = MagicMock()
+    mock_processor_pkg = MagicMock()
+    mock_processor_cls = MagicMock()
+
+    modules = {
+        'vibevoice': mock_vibevoice,
+        'vibevoice.modular': mock_modular,
+        'vibevoice.modular.modeling_vibevoice_inference': mock_inference,
+        'vibevoice.processor': mock_processor_pkg,
+        'vibevoice.processor.vibevoice_processor': mock_processor_cls,
+    }
+    
+    with patch.dict('sys.modules', modules):
         yield
 
 @pytest.fixture

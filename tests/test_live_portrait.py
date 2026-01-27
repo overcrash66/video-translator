@@ -83,11 +83,15 @@ class TestLivePortraitSyncer:
         """Test the animation loop logic (mocked)."""
         # Mock VideoCapture to return different instances for source and driving
         cap_src = MagicMock()
-        cap_src.read.side_effect = [(True, "frame1"), (True, "frame2"), (False, None)]
+        frame_mock = MagicMock()
+        frame_mock.copy.return_value = frame_mock
+        frame_mock.shape = (100, 100, 3) # fake shape needed for logic?
+        
+        cap_src.read.side_effect = [(True, frame_mock), (True, frame_mock), (False, None)]
         cap_src.get.return_value = 100
         
         cap_drv = MagicMock()
-        cap_drv.read.side_effect = [(True, "frame1"), (True, "frame2"), (False, None)]
+        cap_drv.read.side_effect = [(True, frame_mock), (True, frame_mock), (False, None)]
         cap_drv.get.return_value = 100
         
         mock_cap.side_effect = [cap_src, cap_drv]
@@ -98,8 +102,15 @@ class TestLivePortraitSyncer:
         mock_inf.return_value = "out_img"
         mock_paste.return_value = "final_frame"
         
-        with patch("src.processing.live_portrait.os.remove"): # suppress remove
-             syncer._animate_video("src.mp4", "drv.mp4", "out.mp4")
+        # Prepare patches for ffmpeg and os operations
+        with patch("src.processing.live_portrait.subprocess.run") as mock_run:
+            with patch("src.processing.live_portrait.os.remove") as mock_remove:
+                with patch("src.processing.live_portrait.os.path.exists", return_value=True):
+                    
+                    syncer._animate_video("src.mp4", "drv.mp4", "out.mp4")
+                    
+                    # Verify ffmpeg called
+                    mock_run.assert_called_once()
         
         # Should have processed 2 frames
         assert mock_inf.call_count == 2
@@ -148,3 +159,16 @@ class TestLivePortraitSyncer:
         result = syncer._apply_lip_retargeting(kp_source, kp_driving)
         
         assert result.shape == (1, 21, 3)
+
+    def test_apply_stitching_fallback(self, syncer):
+        """Test that _apply_stitching handles errors gracefully."""
+        import numpy as np
+        
+        syncer.stitching_module = None  # Not loaded
+        
+        kp_source = np.zeros((1, 21, 3), dtype=np.float32)
+        kp_driving = np.ones((1, 21, 3), dtype=np.float32)
+        
+        # Should not raise, should return driving unchanged
+        result = syncer._apply_stitching(kp_source, kp_driving)
+        np.testing.assert_array_equal(result, kp_driving)

@@ -4,7 +4,9 @@ import cv2
 import numpy as np
 import logging
 import shutil
+import subprocess
 from pathlib import Path
+from typing import Optional, Any, Tuple, List, Union
 from tqdm import tqdm
 from huggingface_hub import hf_hub_download
 import onnxruntime as ort
@@ -14,7 +16,6 @@ from src.processing.wav2lip import Wav2LipSyncer
 
 logger = logging.getLogger(__name__)
 
-# Constants for LivePortrait face processing
 # Constants for LivePortrait face processing
 LIVE_PORTRAIT_FACE_SCALE = 2.3  # Standard scale for LivePortrait to match training distribution
 LIVE_PORTRAIT_INPUT_SIZE = 256  # Standard input size for ONNX models
@@ -262,46 +263,95 @@ class LivePortraitSyncer:
                 
         return output_path
 
-    def _animate_video(self, source_video, driving_video, output_path):
+    def _animate_video(self, source_video: str, driving_video: str, output_path: str) -> None:
         """
         Core animation loop.
+        
+        Args:
+            source_video: Path to source video (high quality original).
+            driving_video: Path to driving video (Wav2Lip output with lip motion).
+            output_path: Path for output video file.
         """
         cap_src = cv2.VideoCapture(source_video)
         cap_drv = cv2.VideoCapture(driving_video)
         writer = None
+        temp_raw_path = str(Path(output_path).with_suffix('.raw.mp4'))
         
         try:
             width = int(cap_src.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap_src.get(cv2.CAP_PROP_FRAME_HEIGHT))
             fps = cap_src.get(cv2.CAP_PROP_FPS)
             total_frames = int(cap_src.get(cv2.CAP_PROP_FRAME_COUNT))
+            total_drv = int(cap_drv.get(cv2.CAP_PROP_FRAME_COUNT))
             
-            writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+            if total_frames != total_drv:
+                logger.warning(f"Frame count mismatch: source={total_frames}, driving={total_drv}. Adjusting implementation.")
+
+            # improved codec compatibility by writing to temp and remuxing later
+            writer = cv2.VideoWriter(temp_raw_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
             
             pbar = tqdm(total=total_frames, desc="LivePortrait Inference")
             
+            # Cache for source face info to ensure consistent cropping region if detection jitters
+            source_face_info_cache = None
+            
+            # Frame sync helpers
+            last_drv_frame = None
+            drv_frame_idx = 0
+            
             while True:
                 ret_s, frame_s = cap_src.read()
-                ret_d, frame_d = cap_drv.read()
                 
-                if not ret_s or not ret_d:
+                if not ret_s:
                     break
+                
+                # Handle driving video logic (loop or hold last frame if shorter)
+                ret_d, frame_d = cap_drv.read()
+                if not ret_d:
+                     if last_drv_frame is not None:
+                         frame_d = last_drv_frame
+                         logger.debug(f"Driving video exhausted, reusing last frame.")
+                     else:
+                         # Use source frame as fallback? Or just stop? 
+                         # Stopping might shorten video. Let's use blank or break.
+                         logger.warning("Driving video ended before source. Stopping.")
+                         break
+                else:
+                    last_drv_frame = frame_d.copy()
+                    drv_frame_idx += 1
                     
                 # Process Frame
                 # 1. Detect Face & Crop
-                face_info = self._detect(frame_s)
+                # Detect independently!
+                face_info_s = self._detect(frame_s)
+                face_info_d = self._detect(frame_d)
                 
-                if face_info is None:
+                if face_info_s is None:
+                    # If we can't find face in source, we can't animate it.
                     writer.write(frame_s)
                     pbar.update(1)
                     continue
-                    
+                
+                # Update cache if we found a face
+                if source_face_info_cache is None:
+                    source_face_info_cache = face_info_s
+                
                 # 2. Prepare Inputs
-                # Use source face info for BOTH to ensure consistent cropping region
-                # This fixes the issue where driving video face scale mismatch causes 
-                # the pasted face to be the wrong size/position
-                crop_img, M = self._align_crop(frame_s, face_info)
-                crop_drv, _ = self._align_crop(frame_d, face_info)
+                # Use cached source face info for source crop to keep it stable
+                # Or use current frame's face info? Stable is better for background paste back.
+                # But if head moves significantly, cache might be invalid.
+                # LivePortrait is frame-by-frame. Let's use current frame's face info for alignment
+                # to track head movement, but we need to ensure the crop region is valid.
+                
+                crop_img, M = self._align_crop(frame_s, face_info_s)
+                
+                # For driving video, use its OWN face detection for alignment
+                if face_info_d is not None:
+                    crop_drv, _ = self._align_crop(frame_d, face_info_d)
+                else:
+                    # Fallback: if driving face lost, use source alignment or previous?
+                    # Using source alignment on driving frame might work if they are similar
+                    crop_drv, _ = self._align_crop(frame_d, face_info_s)
 
                 # 3. Inference
                 out_img = self._run_inference(crop_img, crop_drv)
@@ -311,6 +361,29 @@ class LivePortraitSyncer:
                 writer.write(final_frame)
                 pbar.update(1)
                 
+            writer.release()
+            writer = None # Set to None to avoid double release in finally
+            
+            # Remux with FFmpeg for H.264
+            # This ensures better browser compatibility than cv2's mp4v
+            logger.info("Remuxing output to H.264...")
+            try:
+                subprocess.run([
+                    "ffmpeg", "-y", "-v", "warning",
+                    "-i", temp_raw_path,
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                    "-pix_fmt", "yuv420p", # Important for widespread compatibility
+                    output_path
+                ], check=True)
+                # Remove temp file on success
+                if os.path.exists(temp_raw_path):
+                    os.remove(temp_raw_path)
+            except subprocess.CalledProcessError as e:
+                logger.error(f"FFmpeg remux failed: {e}. Moving temp file to output as fallback.")
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                os.rename(temp_raw_path, output_path)
+
         except Exception as e:
             logger.error(f"Animation loop error: {e}")
             raise
@@ -319,8 +392,20 @@ class LivePortraitSyncer:
             if cap_drv: cap_drv.release()
             if writer: writer.release()
             if 'pbar' in locals(): pbar.close()
+            # Cleanup temp if it exists and wasn't renamed
+            if 'temp_raw_path' in locals() and os.path.exists(temp_raw_path):
+                 os.remove(temp_raw_path)
 
-    def _detect(self, img):
+    def _detect(self, img: np.ndarray) -> Optional[Any]:
+        """
+        Detect the largest face in an image.
+        
+        Args:
+            img: BGR image as numpy array.
+            
+        Returns:
+            InsightFace detection object or None if no face found.
+        """
         faces = self.face_analysis.get(img)
         if not faces:
             return None
@@ -460,6 +545,10 @@ class LivePortraitSyncer:
         # we use the lip retargeting module to compute only the lip delta
         kp_driving = self._apply_lip_retargeting(kp_s, kp_d)
         
+        # Apply stitching if available (blends keypoints for seamless transition)
+        if self.stitching_module is not None:
+            kp_driving = self._apply_stitching(kp_s, kp_driving)
+
         # 4. Warping + SPADE
         warp_inputs = self.warping_module.get_inputs()
         
@@ -586,4 +675,37 @@ class LivePortraitSyncer:
                 kp_result[0, idx] = kp_source[0, idx] + delta * 0.8
         
         return kp_result.astype(np.float32)
+
+    def _apply_stitching(self, kp_source: np.ndarray, kp_driving: np.ndarray) -> np.ndarray:
+        """
+        Apply stitching module to blend driving keypoints with source for smooth transitions.
+        
+        Args:
+            kp_source: Source keypoints (1, 21, 3)
+            kp_driving: Driving keypoints after lip retargeting (1, 21, 3)
+            
+        Returns:
+            Stitched keypoints (1, 21, 3)
+        """
+        if self.stitching_module is None:
+             return kp_driving
+
+        try:
+            # Flatten and concatenate for stitching input
+            kp_s_flat = kp_source.reshape(1, -1).astype(np.float32)  # (1, 63)
+            kp_d_flat = kp_driving.reshape(1, -1).astype(np.float32)  # (1, 63)
+            
+            stitch_input = np.concatenate([kp_s_flat, kp_d_flat], axis=1)  # (1, 126)
+            
+            stitch_inputs = self.stitching_module.get_inputs()
+            feed_dict = {stitch_inputs[0].name: stitch_input}
+            
+            delta = self.stitching_module.run(None, feed_dict)[0]  # (1, 63)
+            delta = delta.reshape(1, 21, 3)
+            
+            return (kp_driving + delta * 0.5).astype(np.float32)  # Blend with dampening
+            
+        except Exception as e:
+            logger.warning(f"Stitching failed: {e}. Using unstitched keypoints.")
+            return kp_driving
 
