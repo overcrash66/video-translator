@@ -13,10 +13,36 @@ logger = logging.getLogger(__name__)
 # Initialize central controller
 video_translator = VideoTranslator()
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
+    print(f"DEBUG: video_path={video_path}")
+    print(f"DEBUG: source_language={source_language}")
+    print(f"DEBUG: target_language={target_language}")
+    print(f"DEBUG: audio_model={audio_model}")
+    print(f"DEBUG: tts_model={tts_model}")
+    print(f"DEBUG: translation_model={translation_model}")
+    print(f"DEBUG: context_model={context_model}")
+    print(f"DEBUG: transcription_model={transcription_model}")
+    print(f"DEBUG: optimize_translation={optimize_translation}")
+    print(f"DEBUG: enable_diarization={enable_diarization}")
+    print(f"DEBUG: diarization_model={diarization_model}")
+    print(f"DEBUG: min_speakers={min_speakers}")
+    print(f"DEBUG: max_speakers={max_speakers}")
+    print(f"DEBUG: enable_time_stretch={enable_time_stretch}")
+    print(f"DEBUG: enable_vad={enable_vad}")
+    print(f"DEBUG: vad_min_silence={vad_min_silence}")
+    print(f"DEBUG: enable_lipsync={enable_lipsync}")
+    print(f"DEBUG: lipsync_model={lipsync_model}")
+    print(f"DEBUG: live_portrait_mode={live_portrait_mode}")
+    print(f"DEBUG: enable_visual_translation={enable_visual_translation}")
+    print(f"DEBUG: ocr_model={ocr_model}")
+    print(f"DEBUG: tts_voice={tts_voice}")
+    print(f"DEBUG: transcription_beam_size={transcription_beam_size}")
+    print(f"DEBUG: tts_enable_cfg={tts_enable_cfg}")
+    print(f"DEBUG: enable_audio_enhancement={enable_audio_enhancement}")
+    
     if not video_path:
         return None, "Error: No video uploaded."
     
@@ -60,6 +86,7 @@ def process_video(video_path, source_language, target_language, audio_model, tts
 
         video_path = local_video_path
         update_log(f"Created local copy: {local_video_path.name}")
+        update_log(f"DEBUG: live_portrait_mode selected in UI: '{live_portrait_mode}'")
         
         # Delegate to VideoTranslator
         # Loop over the generator
@@ -88,7 +115,8 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             ocr_model_name=ocr_model,
             tts_voice=tts_voice,
             lipsync_model_name=lipsync_model,
-            enable_audio_enhancement=enable_audio_enhancement
+            enable_audio_enhancement=enable_audio_enhancement,
+            live_portrait_acceleration=live_portrait_mode
         )
         
         final_video_path = None
@@ -318,6 +346,24 @@ def create_ui():
                      outputs=[lipsync_model]
                 )
                 
+                live_portrait_mode = gr.Dropdown(
+                    choices=["ort", "tensorrt"],
+                    label="LivePortrait Acceleration",
+                    value="ort",
+                    visible=True,
+                    info="Use 'tensorrt' for GPU acceleration (Requires Setup). 'ort' is standard."
+                )
+                
+                def update_lp_mode_visibility(model_name):
+                    visible = "LivePortrait" in (model_name or "")
+                    return gr.update(visible=visible)
+
+                lipsync_model.change(
+                    fn=update_lp_mode_visibility,
+                    inputs=[lipsync_model],
+                    outputs=[live_portrait_mode]
+                )
+                
 
 
                 # Lip-Sync Model hidden/removed (Defaulting to Wav2Lip-GAN internal)
@@ -351,7 +397,7 @@ def create_ui():
         
         process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement],
             outputs=[video_output, logs_output]
         )
         

@@ -105,6 +105,8 @@ Batch-translate training videos while maintaining the presenter's voice for auth
 
 Use LivePortrait (HD) lip-sync for cinema-quality dubbing that doesn't look like a bad overdub.
 
+[LivePortrait GPU Acceleration](LivePortrait GPU Acceleration.md)
+
 ### 📢 Marketing & Advertising
 > "We need our 30-second ad in French, German, and Japanese by tomorrow."
 

@@ -14,6 +14,142 @@ import insightface
 from src.utils import config
 from src.processing.wav2lip import Wav2LipSyncer
 
+# Optional TensorRT imports
+# Optional TensorRT imports
+try:
+    import tensorrt as trt
+    import ctypes
+    TRT_AVAILABLE = True
+except ImportError:
+    trt = None
+    ctypes = None
+    TRT_AVAILABLE = False
+    logging.getLogger(__name__).warning("TensorRT or PyCUDA not found. TensorRT acceleration will be unavailable.")
+
+class TRTWrapper:
+    """
+    Wrapper for TensorRT engine to mimic ONNX Runtime InferenceSession interface.
+    Handles buffer allocation, data transfer, and execution using PyTorch (no PyCUDA).
+    """
+    def __init__(self, engine_path: str):
+        if not TRT_AVAILABLE:
+            raise ImportError("TensorRT dependencies not installed.")
+            
+        self.logger = trt.Logger(trt.Logger.WARNING)
+        self.runtime = trt.Runtime(self.logger)
+        
+        with open(engine_path, "rb") as f:
+            self.engine = self.runtime.deserialize_cuda_engine(f.read())
+            
+        if not self.engine:
+            raise RuntimeError(f"Failed to load TRT engine: {engine_path}")
+            
+        self.context = self.engine.create_execution_context()
+        self.stream = torch.cuda.Stream()
+        
+        # Handle both legacy (< 10.0) and modern (10.0+) TRT APIs
+        self.is_legacy = not hasattr(self.engine, "num_io_tensors")
+        self.tensor_names = []
+        
+        if self.is_legacy:
+            num_bindings = self.engine.num_bindings
+            self.tensor_names = [self.engine.get_binding_name(i) for i in range(num_bindings)]
+        else:
+            num_tensors = self.engine.num_io_tensors
+            self.tensor_names = [self.engine.get_tensor_name(i) for i in range(num_tensors)]
+        
+        # Allocate buffers using PyTorch
+        self.inputs = []
+        self.outputs = []
+        self.input_names = []
+        self.output_names = []
+        
+        # Mapping of name -> device tensor
+        self.tensors = {}
+        
+        for name in self.tensor_names:
+            if self.is_legacy:
+                # Legacy indexing
+                idx = self.engine.get_binding_index(name)
+                shape = self.engine.get_binding_shape(idx)
+                dtype_trt = self.engine.get_binding_dtype(idx)
+                is_input = self.engine.binding_is_input(idx)
+            else:
+                # Modern API
+                shape = self.engine.get_tensor_shape(name)
+                dtype_trt = self.engine.get_tensor_dtype(name)
+                is_input = (self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT)
+            
+            # Map TRT dtype to Torch dtype
+            dtype_map = {
+                trt.float32: torch.float32,
+                trt.float16: torch.float16,
+                trt.int32:   torch.int32,
+                trt.int8:    torch.int8,
+                trt.bool:    torch.bool,
+            }
+            torch_dtype = dtype_map.get(dtype_trt, torch.float32)
+            
+            # Create device buffer
+            safe_shape = tuple([s if s > 0 else 1 for s in shape])
+            device_tensor = torch.zeros(safe_shape, dtype=torch_dtype, device='cuda')
+            
+            self.tensors[name] = device_tensor
+            
+            if is_input:
+                self.inputs.append({'tensor': device_tensor, 'name': name})
+                self.input_names.append(name)
+            else:
+                self.outputs.append({'tensor': device_tensor, 'name': name})
+                self.output_names.append(name)
+
+    def get_inputs(self):
+        """Mock method to match ORT session.get_inputs()[0].name usage."""
+        class MockNode:
+            def __init__(self, name): self.name = name
+        return [MockNode(n) for n in self.input_names]
+
+    def run(self, output_names, input_feed):
+        """
+        Execute inference.
+        Args:
+            output_names: List of output names to return (ignored, returns all ordered by binding).
+            input_feed: Dict {input_name: numpy_array}.
+        """
+        # 1. Copy inputs to device tensors
+        for inp in self.inputs:
+            name = inp['name']
+            if name in input_feed:
+                data = input_feed[name]
+                if not data.flags['C_CONTIGUOUS']:
+                    data = np.ascontiguousarray(data)
+                
+                src_tensor = torch.from_numpy(data).to('cuda')
+                
+                # Cast if necessary
+                if src_tensor.dtype != inp['tensor'].dtype:
+                    src_tensor = src_tensor.to(inp['tensor'].dtype)
+                
+                inp['tensor'].copy_(src_tensor)
+                
+        # 2. Execute
+        if self.is_legacy:
+            bindings = [self.tensors[n].data_ptr() for n in self.tensor_names]
+            self.context.execute_async_v2(bindings=bindings, stream_handle=self.stream.cuda_stream)
+        else:
+            for name, tensor in self.tensors.items():
+                self.context.set_tensor_address(name, tensor.data_ptr())
+            self.context.execute_async_v3(stream_handle=self.stream.cuda_stream)
+        
+        # 3. Copy outputs back
+        results = []
+        for out in self.outputs:
+            host_data = out['tensor'].cpu().numpy()
+            results.append(host_data)
+            
+        self.stream.synchronize()
+        return results
+
 logger = logging.getLogger(__name__)
 
 # Constants for LivePortrait face processing
@@ -25,9 +161,14 @@ class LivePortraitSyncer:
     High-quality Lip Sync using LivePortrait (ONNX).
     Uses Wav2Lip to generate driving motion, then LivePortrait to animate the high-quality face.
     """
-    def __init__(self):
+    def __init__(self, acceleration: str = 'ort'):
         self.device_str = "cuda" if torch.cuda.is_available() else "cpu"
         self.providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if self.device_str == "cuda" else ['CPUExecutionProvider']
+        
+        self.acceleration = acceleration
+        if self.acceleration == 'tensorrt' and not TRT_AVAILABLE:
+            logger.warning("TensorRT acceleration requested but libraries missing. Falling back to ORT.")
+            self.acceleration = 'ort'
         
         # [WinFix] Register torch's library path so ONNX Runtime can find CUDA/cuDNN DLLs
         # IMPORTANT: We must keep the return values of add_dll_directory alive, otherwise 
@@ -119,11 +260,86 @@ class LivePortraitSyncer:
                         raise RuntimeError(f"Could not download LivePortrait model: {filename}")
 
     def load_models(self):
-        """Loads models into VRAM (ONNX Runtime Sessions)."""
+        """Loads models into VRAM (ONNX Runtime Sessions or TRT Engines)."""
         if self.appearance_extractor is not None:
             return
 
         self.download_models()
+        logger.info(f"Loading LivePortrait models on {self.device_str} (Mode: {self.acceleration})...")
+
+        if self.acceleration == 'tensorrt':
+             try:
+                 self._load_plugin()
+                 try:
+                    self._load_trt_models()
+                    logger.info(f"Successfully loaded all TensorRT engines. (Models used: {list(self.onnx_files.keys())})")
+                    # Load remaining small models (stitching) via ORT if needed, 
+                    # but usually we can wrap everything or mix.
+                    # For simplicity, let's load detection via InsightFace (standard)
+                    # and stitching via ORT (fallback/standard) as they are fast enough.
+                 except Exception as e:
+                     import traceback
+                     traceback.print_exc()
+                     logger.error(f"Failed to load TensorRT engines: {e}. Falling back to ONNX Runtime.")
+                     self.acceleration = 'ort' # Fallback
+             except Exception as e:
+                 logger.error(f"Failed to load TensorRT Plugin: {e}. Falling back to ONNX Runtime.")
+                 self.acceleration = 'ort'
+
+        if self.acceleration == 'ort':
+             self._load_ort_models()
+
+    def _load_plugin(self):
+        """Loads the GridSample3D TensorRT plugin."""
+        plugin_path = self.model_dir / "grid_sample_3d_plugin.dll"
+        if not plugin_path.exists():
+            raise FileNotFoundError(f"Plugin not found at {plugin_path}")
+        
+        logger.info(f"Loading TensorRT plugin: {plugin_path}")
+        ctypes.CDLL(str(plugin_path))
+        trt.init_libnvinfer_plugins(None, "")
+
+    def _load_trt_models(self):
+        """Loads TensorRT engines."""
+        # 1. InsightFace (still standard)
+        self.face_analysis = insightface.app.FaceAnalysis(
+            name='buffalo_l', 
+            providers=self.providers
+        )
+        self.face_analysis.prepare(ctx_id=0 if self.device_str == 'cuda' else -1, det_size=(640, 640))
+
+        # 2. Main Modules (TRT Wrappers)
+        # Assumes .engine files exist next to .onnx
+        def load_trt(name):
+            onnx_path = self.model_dir / self.onnx_files[name]
+            engine_path = onnx_path.with_suffix(".engine")
+            if not engine_path.exists():
+                raise FileNotFoundError(f"Engine not found: {engine_path}")
+            return TRTWrapper(str(engine_path))
+
+        self.appearance_extractor = load_trt("appearance")
+        self.motion_extractor = load_trt("motion")
+        # warping_spade is the key one needing plugin
+        self.warping_module = load_trt("warping_spade")
+        
+        # 3. Stitching/Retargeting (Keep as ORT for now as they are small MLPs)
+        sess_opts = ort.SessionOptions()
+        sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        
+        try:
+            path_stitch = str(self.model_dir / self.onnx_files["stitching"])
+            self.stitching_module = ort.InferenceSession(path_stitch, sess_opts, providers=['CPUExecutionProvider'])
+        except:
+             self.stitching_module = None
+             
+        try:
+             path_lip = str(self.model_dir / self.onnx_files["stitching_lip"])
+             self.lip_retargeting = ort.InferenceSession(path_lip, sess_opts, providers=['CPUExecutionProvider'])
+        except:
+             self.lip_retargeting = None
+
+    def _load_ort_models(self):
+        """Original ONNX Runtime loading logic."""
         logger.info(f"Loading LivePortrait ONNX models on {self.device_str}...")
 
         try:
@@ -139,9 +355,8 @@ class LivePortraitSyncer:
             sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
             
             # [Optimization] CPU Threading for warping_spade (forced to CPU)
-            # 5D GridSample on CPU benefits significantly from parallelism
-            sess_opts.intra_op_num_threads = 8  # Parallelize operators (like GridSample)
-            sess_opts.inter_op_num_threads = 2  # Run different nodes in parallel
+            sess_opts.intra_op_num_threads = 8 
+            sess_opts.inter_op_num_threads = 2 
             
             def load_ort(name):
                 path = str(self.model_dir / self.onnx_files[name])
@@ -160,37 +375,30 @@ class LivePortraitSyncer:
             self.appearance_extractor = load_ort("appearance")
             self.motion_extractor = load_ort("motion")
             
-            # [Fix] GridSample on CUDA only supports 4D tensors, but LivePortrait uses 5D (volumetric).
-            # We must force the Warping/SPADE module to run on CPU to avoid the crash.
-            # Extractors will still run on GPU for speed.
+            # Warping/SPADE (CPU Force)
             try:
                 path_warp = str(self.model_dir / self.onnx_files["warping_spade"])
                 if not Path(path_warp).exists():
                      raise FileNotFoundError(f"Model not found: {path_warp}")
-                logger.info(f"Loading warping_spade on CPU (Required for 5D GridSample support)...")
+                
+                logger.info("loading warping_spade with CPUExecutionProvider (Required for 5D GridSample support)...")
                 self.warping_module = ort.InferenceSession(path_warp, sess_opts, providers=['CPUExecutionProvider'])
             except Exception as e:
                 logger.error(f"Failed to load warping_spade on CPU: {e}")
                 raise
 
-            self.spade_generator = None # No longer separate
+            self.spade_generator = None 
             
-            # 3. Load Stitching and Retargeting Modules (small MLPs, fast on CPU)
+            # Stitching/Retargeting
             try:
                 self.stitching_module = load_ort("stitching")
-                logger.info("Loaded stitching module.")
-            except Exception as e:
-                logger.warning(f"Failed to load stitching module: {e}. Stitching disabled.")
+            except:
                 self.stitching_module = None
-                
             try:
                 self.lip_retargeting = load_ort("stitching_lip")
-                logger.info("Loaded lip retargeting module.")
-            except Exception as e:
-                logger.warning(f"Failed to load lip retargeting module: {e}. Lip retargeting disabled.")
+            except:
                 self.lip_retargeting = None
             
-            # Verify provider
             prov = self.appearance_extractor.get_providers()
             logger.info(f"LivePortrait models loaded successfully. Active providers: {prov}")
             
@@ -198,6 +406,7 @@ class LivePortraitSyncer:
             logger.error(f"Failed to load LivePortrait models: {e}")
             self.unload_models()
             raise
+
 
     def unload_models(self):
         """Unloads models to free VRAM."""
@@ -246,7 +455,8 @@ class LivePortraitSyncer:
             raise RuntimeError("Wav2Lip failed to generate driving video.")
 
         # 2. LivePortrait Animation (The "Real" Step)
-        logger.info("Step 2: Applied LivePortrait animation (ONNX)...")
+        accel_label = "TENSORRT" if self.acceleration == 'tensorrt' else "ONNX"
+        logger.info(f"Step 2: Applying LivePortrait animation ({accel_label})...")
         
         try:
             self._animate_video(

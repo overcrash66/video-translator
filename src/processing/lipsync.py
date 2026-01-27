@@ -12,13 +12,38 @@ class LipSyncer:
     Wrapper for Lip Syncing that supports multiple engines (Wav2Lip, LivePortrait).
     """
     
-    def __init__(self):
+    def __init__(self, acceleration: str = "ort"):
+        self._acceleration = acceleration
         self.engines = {
             "wav2lip": Wav2LipSyncer(),
-            "live_portrait": LivePortraitSyncer()
+            "live_portrait": LivePortraitSyncer(acceleration=self._acceleration)
         }
         self.current_engine_name = "wav2lip"
         self.engine = self.engines["wav2lip"]
+
+    @property
+    def acceleration(self) -> str:
+        return self._acceleration
+
+    @acceleration.setter
+    def acceleration(self, value: str):
+        if self._acceleration == value:
+            return
+            
+        self._acceleration = value
+        if "live_portrait" in self.engines:
+            lp_engine = self.engines["live_portrait"]
+            
+            # Check if engine is already loaded
+            is_loaded = hasattr(lp_engine, 'appearance_extractor') and lp_engine.appearance_extractor is not None
+            
+            lp_engine.acceleration = value
+            
+            if is_loaded:
+                 logger.info(f"DEBUG: Acceleration changed to {value}. Unloading LivePortrait to trigger reload.")
+                 lp_engine.unload_models()
+            
+            logger.info(f"DEBUG: Propagated acceleration={value} to LivePortrait engine")
         
     def load_model(self, model_name: str = "wav2lip") -> bool:
         """Loads the specified lip-sync model."""
