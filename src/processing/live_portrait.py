@@ -700,7 +700,12 @@ class LivePortraitSyncer:
             stitch_inputs = self.stitching_module.get_inputs()
             feed_dict = {stitch_inputs[0].name: stitch_input}
             
-            delta = self.stitching_module.run(None, feed_dict)[0]  # (1, 63)
+            delta = self.stitching_module.run(None, feed_dict)[0]
+            
+            # [Fix] Handle output size 65 (63 params + 2 ratios?)
+            if delta.size > 63:
+                delta = delta[:, :63]
+                
             delta = delta.reshape(1, 21, 3)
             
             return (kp_driving + delta * 0.5).astype(np.float32)  # Blend with dampening

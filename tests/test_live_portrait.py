@@ -172,3 +172,23 @@ class TestLivePortraitSyncer:
         # Should not raise, should return driving unchanged
         result = syncer._apply_stitching(kp_source, kp_driving)
         np.testing.assert_array_equal(result, kp_driving)
+
+    def test_apply_stitching_with_extra_outputs(self, syncer):
+        """Test that _apply_stitching handles output shape of 65 (keypoints + ratios)."""
+        import numpy as np
+        
+        # Mock stitching module to return 65 elements
+        syncer.stitching_module = MagicMock()
+        # Mock run method to return list of numpy arrays, first item having 65 elements
+        # Shape must be (1, 65)
+        mock_output = np.zeros((1, 65), dtype=np.float32)
+        syncer.stitching_module.run.return_value = [mock_output]
+        
+        kp_source = np.zeros((1, 21, 3), dtype=np.float32)
+        kp_driving = np.ones((1, 21, 3), dtype=np.float32)
+        
+        # Should not raise exception and should produce correct shape
+        result = syncer._apply_stitching(kp_source, kp_driving)
+        
+        # Result should be correctly reshaped to (1, 21, 3)
+        assert result.shape == (1, 21, 3)
