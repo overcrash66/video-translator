@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 import os
 import logging
+import subprocess
 from tqdm import tqdm
 from pathlib import Path
 import face_alignment
@@ -12,6 +13,11 @@ from src.processing.wav2lip_core import audio as audio_utils
 from src.utils import config
 
 logger = logging.getLogger(__name__)
+
+# Constants for face detection and lip sync
+FACE_DETECTION_MAX_DIM = 640  # Maximum dimension for face detection (speeds up CPU detection)
+FACE_CROP_SCALE = 1.6  # Expansion factor for face bounding box in Wav2Lip
+MEL_STEP_SIZE = 16  # Number of mel spectrogram frames per inference window
 
 class Wav2LipSyncer:
     def __init__(self):
@@ -40,9 +46,9 @@ class Wav2LipSyncer:
             # upscale=1 because we just want restoration, not full image upscaling (we do resizing later)
             self.restorer = GFPGANer(model_path='https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth', 
                                      upscale=1, arch='clean', channel_multiplier=2, bg_upsampler=None)
-            print("GFPGAN Face Restorer Loaded.")
+            logger.info("GFPGAN Face Restorer Loaded.")
         except Exception as e:
-            print(f"Failed to load GFPGAN: {e}")
+            logger.warning(f"Failed to load GFPGAN: {e}")
             self.restorer = None
 
     def load_model(self):
@@ -150,11 +156,10 @@ class Wav2LipSyncer:
                 
                 # Optimization: Downscale if image is too large (speeds up CPU detection significantly)
                 h, w = rgb_frame.shape[:2]
-                max_dim = 640 # Sufficient for face detection
                 scale_factor = 1.0
                 
-                if max(h, w) > max_dim:
-                    scale_factor = max_dim / float(max(h, w))
+                if max(h, w) > FACE_DETECTION_MAX_DIM:
+                    scale_factor = FACE_DETECTION_MAX_DIM / float(max(h, w))
                     new_w = int(w * scale_factor)
                     new_h = int(h * scale_factor)
                     rgb_frame = cv2.resize(rgb_frame, (new_w, new_h))
@@ -181,8 +186,8 @@ class Wav2LipSyncer:
                         if area > max_area:
                             max_area = area
                             
-                            # Expand box
-                            scale = 1.6 # typical scaling for Wav2Lip crop
+                            # Expand box using Wav2Lip scaling factor
+                            scale = FACE_CROP_SCALE
                             
                             cx = (x_min + x_max) / 2
                             cy = (y_min + y_max) / 2
@@ -250,12 +255,19 @@ class Wav2LipSyncer:
                  
         return results
 
-    def sync_lips(self, video_path: str, audio_path: str, output_path: str, enhance_face: bool = False):
+    def sync_lips(self, video_path: str, audio_path: str, output_path: str, enhance_face: bool = False) -> str:
         """
-        Synchronizes lips.
-        enhance_face: If True, uses GFPGAN to restore the face before blending.
+        Synchronizes lips in video to match the provided audio.
+        
+        Args:
+            video_path: Path to the input video file.
+            audio_path: Path to the audio file to sync lips to.
+            output_path: Path where the output video will be saved.
+            enhance_face: If True, uses GFPGAN to restore the face before blending.
+            
+        Returns:
+            Path to the output video file.
         """
-        # ... existing logic ...
         if enhance_face and self.restorer is None:
              self.load_gfpgan()
         self.load_model()
@@ -277,10 +289,10 @@ class Wav2LipSyncer:
             raise ValueError("No frames extracted from video")
 
         # 2. Process Audio (Mel)
-        mel = audio_utils.wav2mel(str(audio_path)) # (T, 80)
+        mel = audio_utils.wav2mel(str(audio_path))  # (T, 80)
         
         # Wav2Lip Params
-        mel_step_size = 16
+        mel_step_size = MEL_STEP_SIZE
         mel_idx_multiplier = 80.0 / fps 
         
         # 3. Detect Faces
@@ -301,20 +313,19 @@ class Wav2LipSyncer:
                 
         if curr_box is None:
              logger.error("No faces detected in ANY frame. Skipping Wav2Lip processing (returning original).")
-             # Returing None or skipping? We should probably just copy original video to output
-             # Doing center crop creates terrible artifacts.
-             import shutil
              # If audio was different, we need to merge audio but keep video frames
              # But sync_lips contract implies lip sync. If we can't sync, we can't sync.
-             # Better to fail loud or return original with new audio?
-             # Let's return original video frames merged with new audio.
+             # Return original video frames merged with new audio.
              
-             # ffmpeg merge video + audio
-             cmd = f'ffmpeg -y -v warning -i "{str(video_path)}" -i "{str(audio_path)}" -c:v copy -c:a aac "{output_path}"'
-             os.system(cmd)
+             # ffmpeg merge video + audio (using subprocess for security)
+             subprocess.run([
+                 "ffmpeg", "-y", "-v", "warning",
+                 "-i", str(video_path),
+                 "-i", str(audio_path),
+                 "-c:v", "copy", "-c:a", "aac",
+                 output_path
+             ], check=True)
              return output_path
-             
-        # Forward Fill
              
         # Forward Fill
         for i in range(len(face_boxes)):
@@ -323,17 +334,9 @@ class Wav2LipSyncer:
             else:
                 curr_box = face_boxes[i]
                 
-        # Backward Fill (for leading None frames)
-        for i in range(len(face_boxes)-1, -1, -1):
-            if face_boxes[i] is None:
-                # Should not happen due to forward fill unless start was None and we used the 'first valid' logic
-                # But if we did forward fill with initial curr_box, we are good.
-                # Just in case:
-                 pass
+        # Backward Fill (for leading None frames) - already handled by forward fill with initial curr_box
 
         # 4. Batch Inference
-        mel_chunks = []
-        mel_bs = [] # Batch indices corresponding to frames
         
         # Generate Audio Chunks aligned with Frames
         # Frame i corresponds to audio window centered around i?
@@ -559,18 +562,23 @@ class Wav2LipSyncer:
                     frame[y1:y2, x1:x2] = blended
 
             except Exception as e:
-                # Ultimate fallback
+                # Ultimate fallback: simple paste without blending
                 try:
                     frame[y1:y2, x1:x2] = cv2.resize(g_crop, (w_box, h_box))
-                except:
-                    pass
+                except Exception as resize_err:
+                    logger.debug(f"Fallback resize also failed: {resize_err}")
                 
             out.write(frame)
             
         out.release()
         
-        # Merge Audio using FFMPEG
-        cmd = f'ffmpeg -y -v warning -i "{final_video_path}" -i "{str(audio_path)}" -c:v copy -c:a aac "{output_path}"'
-        os.system(cmd)
+        # Merge Audio using FFMPEG (using subprocess for security)
+        subprocess.run([
+            "ffmpeg", "-y", "-v", "warning",
+            "-i", final_video_path,
+            "-i", str(audio_path),
+            "-c:v", "copy", "-c:a", "aac",
+            output_path
+        ], check=True)
         
         return output_path

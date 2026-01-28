@@ -12,6 +12,7 @@ from src.synthesis.backends.edge_tts import EdgeTTSBackend
 from src.synthesis.backends.piper_tts import PiperTTSBackend
 from src.synthesis.backends.xtts import XttsBackend
 from src.synthesis.backends.f5_tts import F5TTSBackend
+from src.synthesis.backends.vibevoice_tts import VibeVoiceBackend
 from typing import TypedDict, Literal
 
 # Type Definitions
@@ -74,7 +75,9 @@ class TTSEngine:
             "edge": EdgeTTSBackend(languages.EDGE_TTS_VOICE_MAP),
             "piper": PiperTTSBackend(languages.PIPER_MODEL_MAP),
             "xtts": XttsBackend(self.device),
-            "f5": F5TTSBackend()
+            "f5": F5TTSBackend(),
+            "vibevoice": VibeVoiceBackend("vibevoice"),       # Default 1.5B
+            "vibevoice-7b": VibeVoiceBackend("vibevoice-7b")  # Large 7B
         }
 
     def get_available_voices(self, model_name: str, language_code: str) -> list:
@@ -97,6 +100,11 @@ class TTSEngine:
             
         elif model_name in ["xtts", "f5"]:
             return ["Cloning (Reference Audio)"]
+
+        elif "vibevoice" in model_name:
+             # VibeVoice supports arbitrary speaker names or predefined ones.
+             # Return valid suggestions.
+             return ["Alice", "Bob", "Carol", "Dave", "Frank"]
             
         return []
 
@@ -110,11 +118,15 @@ class TTSEngine:
             self.backends["xtts"].load_model()
         elif model_name == "f5":
             self.backends["f5"].load_model()
+        elif "vibevoice" in model_name:
+            self.backends[model_name].load_model()
     
     def unload_model(self):
         """Unload heavy models."""
         self.backends["xtts"].unload_model()
         self.backends["f5"].unload_model()
+        self.backends["vibevoice"].unload_model()
+        self.backends["vibevoice-7b"].unload_model()
 
     def _sanitize_text(self, text):
         """

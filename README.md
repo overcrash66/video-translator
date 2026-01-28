@@ -68,6 +68,7 @@ All local models support **context-aware mode** using full-transcript context fo
 | **Piper TTS** | Local | Robust offline neural TTS (auto-downloaded) |
 | **XTTS-v2** | Local | High-fidelity voice cloning with emotion control (Happy, Sad, Angry) |
 | **F5-TTS** | Local | Ultra-fast zero-shot voice cloning with Sway Sampling |
+| **VibeVoice** | Local | Microsoft's frontier long-form multi-speaker TTS (1.5B/7B) |
 
 ### Visual Enhancements
 | Feature | Technology | Description |
@@ -103,6 +104,8 @@ Batch-translate training videos while maintaining the presenter's voice for auth
 > "I want my indie film to premiere at international festivals."
 
 Use LivePortrait (HD) lip-sync for cinema-quality dubbing that doesn't look like a bad overdub.
+
+[LivePortrait GPU Acceleration](LivePortrait GPU Acceleration.md)
 
 ### 📢 Marketing & Advertising
 > "We need our 30-second ad in French, German, and Japanese by tomorrow."

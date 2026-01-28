@@ -192,3 +192,11 @@ cython_debug/
 /.agent
 /gfpgan
 /output
+self_attention_megatron_basic_test.onnx
+test_types_BFLOAT16.onnx
+test_types_FLOAT16.onnx
+/onnxruntime_src
+bart_mlp_megatron_basic_test.onnx
+bart_self_attention_megatron_basic_test.onnx
+mlp_megatron_basic_test.onnx
+/cudnn_temp

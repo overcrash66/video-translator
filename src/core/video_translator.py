@@ -37,7 +37,8 @@ class VideoTranslator:
                  diarizer: Diarizer | None = None,
                  lipsyncer: LipSyncer | None = None,
                  visual_translator: VisualTranslator | None = None,
-                 voice_enhancer: VoiceEnhancer | None = None) -> None:
+                 voice_enhancer: VoiceEnhancer | None = None,
+                 live_portrait_acceleration: str = "ort") -> None:
         
         self.separator = separator or AudioSeparator()
         self.transcriber = transcriber or Transcriber()
@@ -46,7 +47,7 @@ class VideoTranslator:
         self.synchronizer = synchronizer or AudioSynchronizer()
         self.processor = processor or VideoProcessor()
         self.diarizer = diarizer or Diarizer()
-        self.lipsyncer = lipsyncer or LipSyncer()
+        self.lipsyncer = lipsyncer or LipSyncer(acceleration=live_portrait_acceleration)
         self.visual_translator = visual_translator or VisualTranslator()
         self.voice_enhancer = voice_enhancer or VoiceEnhancer()
         
@@ -236,13 +237,15 @@ class VideoTranslator:
                       max_speakers: int = 10,
                       ocr_model_name: str = "PaddleOCR",
                       tts_voice: str | None = None,
-                      lipsync_model_name: str | None = None) -> Generator[tuple[Literal["log", "progress", "result"], Any] | list, None, None]:
+                      lipsync_model_name: str | None = None,
+                      live_portrait_acceleration: str = "ort") -> Generator[tuple[Literal["log", "progress", "result"], Any] | list, None, None]:
         """
         Orchestrates the full pipeline as a generator.
         Yields: ("log", message) or ("progress", value, desc) or ("result", path)
         """
         
         # 0. Setup and Validation
+        logger.info(f"DEBUG: VideoTranslator received live_portrait_acceleration='{live_portrait_acceleration}'")
         video_path = config.validate_path(video_path, must_exist=True)
         
         # ---------------------------------------------------------------------
@@ -380,12 +383,21 @@ class VideoTranslator:
                      yield ("log", "Visual translation complete.")
              except Exception as e:
                 logger.error(f"Visual translation failed: {e}")
-                
-        if enable_lipsync:
-            yield ("progress", 0.9, "Lip-Syncing (Experimental)...")
+        if enable_lipsync and lipsync_model_name:
             self.load_model("lipsync")
+            
+            # [Update] Propagate configuration to existing lipsyncer
+            if hasattr(self.lipsyncer, 'acceleration') and live_portrait_acceleration:
+                 if self.lipsyncer.acceleration != live_portrait_acceleration:
+                     logger.info(f"Switching LivePortrait acceleration from {self.lipsyncer.acceleration} to {live_portrait_acceleration}")
+                     self.lipsyncer.acceleration = live_portrait_acceleration
+                     # Might typically need to reload if model was already loaded, but load_models handles it
+            
+            yield ("progress", 0.9, f"Lip-Syncing ({lipsync_model_name})...")
             out_path = self._step_lipsync(
-                video_path, merged_speech, lipsync_model_name
+                video_path,
+                merged_speech, 
+                lipsync_model_name
             )
             if out_path:
                 # Use result as video source (silent)
