@@ -33,7 +33,7 @@ def _patch_torchaudio_load():
             normalize = kwargs.get('normalize', True)
             
             # Load with soundfile
-            data, samplerate = sf.read(filepath)
+            data, samplerate = sf.read(filepath, dtype='float32')
             
             # Convert to Tensor
             tensor = torch.from_numpy(data)
