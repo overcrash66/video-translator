@@ -13,6 +13,15 @@ logger = logging.getLogger(__name__)
 # Initialize central controller
 video_translator = VideoTranslator()
 
+def estimate_remaining_time(progress: float, elapsed_seconds: float) -> str:
+    if progress <= 0:
+        return "Calculating..."
+    total_est = elapsed_seconds / progress
+    remaining = total_est - elapsed_seconds
+    if remaining < 60:
+        return f"~{int(remaining)}s remaining"
+    return f"~{int(remaining/60)}m remaining"
+
 def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, progress=gr.Progress()):
     """
     Main pipeline entry point.
@@ -121,6 +130,9 @@ def process_video(video_path, source_language, target_language, audio_model, tts
         
         final_video_path = None
         
+        
+        start_time = time.time()
+        
         for item in iterator:
             msg_type = item[0]
             
@@ -130,13 +142,17 @@ def process_video(video_path, source_language, target_language, audio_model, tts
                 
             elif msg_type == "progress":
                 # item = ("progress", val, desc)
-                progress(item[1], desc=item[2])
+                val, desc = item[1], item[2]
+                elapsed = time.time() - start_time
+                eta = estimate_remaining_time(val, elapsed)
+                progress(val, desc=f"{desc} ({int(val*100)}% - {eta})")
                 
             elif msg_type == "result":
                 final_video_path = item[1]
                 
         if final_video_path:
-            update_log(f"Processing Complete! Saved to {final_video_path}")
+            total_time = time.time() - start_time
+            update_log(f"Processing Complete in {int(total_time)}s! Saved to {final_video_path}")
             yield final_video_path, "\n".join(logs)
         else:
             yield None, update_log("Error: Pipeline finished but returned no video.")
@@ -390,16 +406,19 @@ def create_ui():
                 )
 
                 process_btn = gr.Button("Process Video", variant="primary")
+                cancel_btn = gr.Button("Cancel", variant="stop")
             
             with gr.Column():
                 video_output = gr.Video(label="Translated Video")
                 logs_output = gr.Textbox(label="Processing Logs", lines=10)
         
-        process_btn.click(
+        process_event = process_btn.click(
             fn=process_video,
             inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement],
             outputs=[video_output, logs_output]
         )
+        
+        cancel_btn.click(fn=None, inputs=None, outputs=None, cancels=[process_event])
         
     return app
 

@@ -160,6 +160,7 @@ class VisualTranslator:
         except:
             return "unknown"
 
+    @lru_cache(maxsize=1000)
     def _translate_text(self, text: str, target_lang: str, source_lang: str = None) -> str:
         """Translate text if it matches source language or if source is unknown."""
         if not text or len(text.strip()) < 2:

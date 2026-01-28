@@ -81,8 +81,12 @@ All local models support **context-aware mode** using full-transcript context fo
 ### Production-Ready
 - 🖥️ **Friendly Gradio UI** — Easy drag-and-drop interface
 - 🎛️ **Fine-Grained Control** — Beam size, VAD settings, voice selection, and more
+- 👤 **LivePortrait Lip-Sync** — State-of-the-art lip synchronizer with TensorRT acceleration support
+- 🖼️ **Visual Text Translation** — Detects, translates, and seamlessly replaces text in video frames (cached for speed)
 - 📝 **Auto-Generated Subtitles** — Exports `.srt` files alongside translated videos
 - 🔄 **Smart Segment Merging** — Combines choppy phrases into natural sentences
+- ⏳ **Real-time Progress & ETA** — Track detailed progress with estimated time remaining
+- 🧹 **VoiceFixer Enhancement** — Restores and cleans up generated audio for studio quality
 - ⚡ **GPU Optimized** — One-model-at-a-time policy for maximum VRAM efficiency
 - 🛡️ **Global CPU Fallback** — Automatically switches to CPU if GPU fails
 
