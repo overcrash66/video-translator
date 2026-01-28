@@ -195,6 +195,29 @@ pip install -r requirements.txt
 | **LivePortrait** | ~2GB VRAM, auto-downloads to `models/live_portrait` |
 | **Llama 3.1 / NeMo** | HuggingFace token (`HF_TOKEN` env variable) |
 
+### 🐳 Docker Deployment (GPU)
+
+For containerized deployment with NVIDIA GPU support:
+
+```bash
+cd deploy/docker
+
+# Create .env file with your HuggingFace token (optional)
+echo "HF_TOKEN=your_token_here" > .env
+
+# Build and run
+docker compose up --build -d
+
+# View logs
+docker compose logs -f
+
+# Access the UI at http://localhost:7860
+```
+
+**Requirements:**
+- Docker with NVIDIA Container Toolkit (`nvidia-docker2`)
+- NVIDIA GPU with CUDA 12.1+ support
+
 ---
 
 ## 🖥️ Usage

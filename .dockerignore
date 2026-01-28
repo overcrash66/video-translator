@@ -1,0 +1,13 @@
+venv/
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+temp/
+output/
+models/
+debug_download/
+.vscode/
+.env

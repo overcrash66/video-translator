@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  video-translator:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile
+    image: video-translator:latest
+    container_name: video-translator
+    ports:
+      - "7860:7860"
+    volumes:
+      # Persist models to avoid re-downloading
+      - ./models:/app/models
+      # Persist output files
+      - ./output:/app/output
+      # Temp files (optional, can be ephemeral)
+      - ./temp:/app/temp
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s

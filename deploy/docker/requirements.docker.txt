@@ -41,3 +41,9 @@ psutil
 aiohttp
 rich
 colorama
+insightface>=0.7.3
+onnxruntime-gpu
+f5-tts
+pysbd
+deep-translator
+langdetect
