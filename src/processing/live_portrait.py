@@ -572,7 +572,7 @@ class LivePortraitSyncer:
                 out_img = self._run_inference(crop_img, crop_drv)
                 
                 # 4. Paste Back
-                final_frame = self._paste_back(out_img, frame_s, M)
+                final_frame = self._paste_back(out_img, frame_s, M, face_info_s)
                 writer.write(final_frame)
                 pbar.update(1)
                 
@@ -671,49 +671,135 @@ class LivePortraitSyncer:
         
         return crop_resized, M_inv
 
-    def _paste_back(self, pred_img, bg_img, M_inv):
+    def _paste_back(self, pred_img, bg_img, M_inv, face_info=None):
         """
-        Pastes the predicted face back onto the background image.
+        Pastes the predicted face back onto the background image using Poisson Blending.
         
         Args:
             pred_img: Generated face image (256x256).
             bg_img: Original background frame.
             M_inv: Inverse affine matrix from _align_crop (maps crop → original).
+            face_info: InsightFace detection object containing landmarks (kps).
             
         Returns:
             Blended output frame with same dimensions as bg_img.
         """
-        # Warp the predicted face to original image coordinates
-        # M_inv already maps from crop space to original space
-        output = cv2.warpAffine(
-            pred_img, M_inv, (bg_img.shape[1], bg_img.shape[0]), 
-            flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT
-        )
-        
-        # Create mask for blending
-        # Use a feathered mask to avoid hard square edges
-        h, w = pred_img.shape[:2]
-        mask_crop = np.zeros((h, w), dtype=np.float32)
-        
-        # Define a center rectangle with margin to blur edges
-        margin = int(min(h, w) * 0.05) # 5% margin
-        cv2.rectangle(mask_crop, (margin, margin), (w-margin, h-margin), 1.0, -1)
-        
-        # Apply Gaussian blur to soften the transition
-        mask_crop = cv2.GaussianBlur(mask_crop, (51, 51), 0)
-        
-        # Expand to 3 channels and scale to 255
-        mask_crop = np.stack([mask_crop]*3, axis=-1) * 255
+        try:
+             # 1. Extract Original Background Crop (Target for Blending)
+             # Invert M_inv to get M (Original -> Crop)
+             M_fwd = cv2.invertAffineTransform(M_inv)
+             
+             crop_h, crop_w = pred_img.shape[:2]
+             
+             # Extract the original face crop from bg_img
+             bg_crop = cv2.warpAffine(
+                 bg_img, M_fwd, (crop_w, crop_h),
+                 flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE
+             )
+             
+             # 2. Generate Mouth Mask for Seamless Cloning
+             # The mask determines WHICH part of pred_img is cloned into bg_crop.
+             # It must be a binary mask (255 where we want the update).
+             mask_clone = np.zeros((crop_h, crop_w), dtype=np.uint8)
+             center_clone = (crop_w // 2, crop_h // 2)
+             
+             use_seamless = False
+             
+             if face_info is not None and hasattr(face_info, 'kps'):
+                try:
+                    # Map landmarks to crop space
+                    kps_orig = face_info.kps
+                    ones = np.ones((kps_orig.shape[0], 1))
+                    kps_homo = np.concatenate([kps_orig, ones], axis=1)
+                    kps_crop = np.dot(kps_homo, M_fwd.T) # (5, 2)
+                    
+                    # Define mouth region (Mouth corners + Nose hint)
+                    mouth_left = kps_crop[3]
+                    mouth_right = kps_crop[4]
+                    
+                    # Calculate center and axes
+                    mouth_center = (mouth_left + mouth_right) / 2
+                    width = np.linalg.norm(mouth_left - mouth_right)
+                    
+                    center_x = int(mouth_center[0])
+                    center_y = int(mouth_center[1] + width * 0.1) # Slightly lower
+                    
+                    # Ellipse size (Reduced to ensure it doesn't touch borders)
+                    axis_x = int(width * 0.85) 
+                    axis_y = int(width * 0.6)
+                    
+                    # Draw filled ellipse (white)
+                    # cv2.ellipse(img, center, axes, angle, startAngle, endAngle, color, thickness)
+                    cv2.ellipse(mask_clone, (center_x, center_y), (axis_x, axis_y), 0, 0, 360, 255, -1)
+                    
+                    # IMPORTANT: seamlessClone requires mask to NOT touch borders.
+                    # Zero out a safe margin (4 pixels)
+                    mask_clone[:4, :] = 0
+                    mask_clone[-4:, :] = 0
+                    mask_clone[:, :4] = 0
+                    mask_clone[:, -4:] = 0
+                    
+                    # CORRECTION: The source and dest are already aligned. 
+                    # We want to place the source exactly on top of the dest.
+                    # seamlessClone 'center' is where the CENTER of 'src' should be placed in 'dst'.
+                    center_clone = (crop_w // 2, crop_h // 2)
+                    use_seamless = True
+                except Exception as e:
+                    logger.warning(f"Mask generation failed: {e}")
+            
+             if not use_seamless:
+                 # Fallback: Center circle
+                 cv2.circle(mask_clone, (crop_w//2, crop_h//2 + 20), 80, 255, -1)
+                 center_clone = (crop_w//2, crop_h//2 + 20)
+             
+             # 3. Apply Poisson Blending (Seamless Clone)
+             # src: pred_img (The new mouth)
+             # dst: bg_crop (The original face)
+             # mask: mask_clone (Where to paste)
+             # center: Center of the mask in dst
+             
+             # Ensure types
+             pred_img = pred_img.astype(np.uint8)
+             bg_crop = bg_crop.astype(np.uint8)
+             
+             try:
+                 # NORMAL_CLONE is best for inserting objects with different lighting
+                 blended_crop = cv2.seamlessClone(pred_img, bg_crop, mask_clone, center_clone, cv2.NORMAL_CLONE)
+             except Exception as e:
+                 logger.warning(f"Seamless clone failed: {e}. Falling back to alpha blend.")
+                 # Fallback manual blend
+                 mask_f = cv2.GaussianBlur(mask_clone, (51, 51), 0).astype(float) / 255.0
+                 mask_f = np.stack([mask_f]*3, axis=-1)
+                 blended_crop = (bg_crop * (1 - mask_f) + pred_img * mask_f).astype(np.uint8)
 
-        mask_full = cv2.warpAffine(
-             mask_crop, M_inv, (bg_img.shape[1], bg_img.shape[0]),
-             flags=cv2.INTER_LINEAR
-        )
-        
-        # Blend using the mask
-        mask_norm = mask_full.astype(float) / 255.0
-        final = bg_img.astype(float) * (1 - mask_norm) + output.astype(float) * mask_norm
-        return final.astype(np.uint8)
+             # 4. Warp the fully blended crop back to original space
+             # Since 'blended_crop' now matches the original 'bg_crop' at the edges perfectly,
+             # we can just paste it back. But to be safe vs alignment jitter, we use a soft mask for the whole crop.
+             
+             output_full = cv2.warpAffine(
+                blended_crop, M_inv, (bg_img.shape[1], bg_img.shape[0]), 
+                flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT
+             )
+             
+             # Create a full-crop transparency mask (Soft box)
+             mask_box = np.zeros((crop_h, crop_w), dtype=np.float32)
+             margin = int(crop_w * 0.02)
+             cv2.rectangle(mask_box, (margin, margin), (crop_w-margin, crop_h-margin), 1.0, -1)
+             mask_box = cv2.GaussianBlur(mask_box, (21, 21), 0)
+             mask_box = np.stack([mask_box]*3, axis=-1)
+             
+             mask_full_box = cv2.warpAffine(
+                 mask_box, M_inv, (bg_img.shape[1], bg_img.shape[0]),
+                 flags=cv2.INTER_LINEAR
+             )
+             
+             # Final Blend
+             final = bg_img.astype(float) * (1 - mask_full_box) + output_full.astype(float) * mask_full_box
+             return final.astype(np.uint8)
+
+        except Exception as e:
+            logger.error(f"Paste back failed: {e}")
+            return bg_img 
 
     def _run_inference(self, src_img, drv_img):
         """
