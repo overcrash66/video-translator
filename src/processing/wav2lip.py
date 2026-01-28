@@ -50,6 +50,10 @@ class Wav2LipSyncer:
         except Exception as e:
             logger.warning(f"Failed to load GFPGAN: {e}")
             self.restorer = None
+        except ImportError as e:
+            logger.warning(f"Failed to import GFPGAN dependencies: {e}")
+            self.restorer = None
+
 
     def load_model(self):
         if self.model is not None:

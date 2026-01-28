@@ -7,12 +7,9 @@ import torchaudio
 import re
 
 from src.utils import config
+from src.utils import config
 from src.utils import languages
-from src.synthesis.backends.edge_tts import EdgeTTSBackend
-from src.synthesis.backends.piper_tts import PiperTTSBackend
-from src.synthesis.backends.xtts import XttsBackend
-from src.synthesis.backends.f5_tts import F5TTSBackend
-from src.synthesis.backends.vibevoice_tts import VibeVoiceBackend
+# Lazy imports for backends
 from typing import TypedDict, Literal
 
 # Type Definitions
@@ -33,44 +30,18 @@ class TTSTask(TypedDict, total=False):
 # logging.basicConfig(level=logging.INFO) # Centralized in app.py
 logger = logging.getLogger(__name__)
 
-
-
-# [Fix] Enforce soundfile backend to avoid TorchCodec errors via monkey-patching
-# Post-2.x torchaudio on Windows is unstable with backends. We bypass it using soundfile directly.
-try:
-    import soundfile as sf
-    import torch
-    
-    _original_load = torchaudio.load
-    def _safe_load(filepath, **kwargs):
-        # Ignore backend args, strictly use soundfile
-        try:
-            # sf.read returns (frames, channels) or (frames,)
-            data, samplerate = sf.read(str(filepath), dtype='float32')
-            
-            # torchaudio.load returns (channels, time) tensor
-            if data.ndim == 1:
-                # Mono: (T,) -> (1, T)
-                tensor = torch.from_numpy(data).unsqueeze(0)
-            else:
-                # Multi-channel: (T, C) -> (C, T)
-                tensor = torch.from_numpy(data.T)
-                
-            return tensor, samplerate
-        except Exception as e:
-            logger.warning(f"Soundfile fallback failed calling original load: {e}")
-            return _original_load(filepath, **kwargs)
-        
-    torchaudio.load = _safe_load
-    logger.info("Monkey-patched torchaudio.load to use soundfile library directly.")
-except Exception as e:
-    logger.warning(f"Failed to patch torchaudio.load: {e}")
-
 class TTSEngine:
     def __init__(self):
         self.device = config.DEVICE
         
-        # Initialize Backends
+        # Imports here to avoid circular dep or heavy load at module level
+        from src.synthesis.backends.edge_tts import EdgeTTSBackend
+        from src.synthesis.backends.piper_tts import PiperTTSBackend
+        from src.synthesis.backends.xtts import XttsBackend
+        from src.synthesis.backends.f5_tts import F5TTSBackend
+        from src.synthesis.backends.vibevoice_tts import VibeVoiceBackend
+        
+        # Initialize Backends (Still eager init of classes, but modules lazy loaded)
         self.backends = {
             "edge": EdgeTTSBackend(languages.EDGE_TTS_VOICE_MAP),
             "piper": PiperTTSBackend(languages.PIPER_MODEL_MAP),

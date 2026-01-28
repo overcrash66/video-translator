@@ -18,9 +18,14 @@ from src.audio.diarization import Diarizer
 from src.processing.lipsync import LipSyncer
 from src.translation.visual_translator import VisualTranslator
 from src.processing.voice_enhancement import VoiceEnhancer
-from typing import Generator, Literal, Any
+from typing import Generator, Literal, Any, Optional
+
+from src.utils import patches
 
 logger = logging.getLogger(__name__)
+
+# Apply global patches
+patches.apply_patches()
 
 class VideoTranslator:
     """
@@ -76,7 +81,7 @@ class VideoTranslator:
         idx = len(self.session.speaker_voice_map) % len(available_voices)
         return available_voices[idx]
 
-    def _resolve_speaker_reference(self, speaker_id, speaker_profiles, vocals_path, tts_model_name):
+    def _resolve_speaker_reference(self, speaker_id: Optional[str], speaker_profiles: dict, vocals_path: str | Path, tts_model_name: str) -> tuple[Optional[str], bool]:
         """
         Determines the best reference audio for a speaker.
         Returns: (path_to_wav, is_fallback)
@@ -99,7 +104,7 @@ class VideoTranslator:
         logger.warning(f"No clean profile for {speaker_id}. Fallback to generic voice.")
         return None, False  # Return None to signal use of generic voice, NOT full vocals
 
-    def _extract_fallback_reference(self, vocals_path):
+    def _extract_fallback_reference(self, vocals_path: str | Path) -> Optional[str]:
         """
         Extracts a valid speech clip from the first 30 seconds of the audio
         to use as a desperate fallback when no other reference is found.
