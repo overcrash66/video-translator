@@ -405,8 +405,9 @@ def create_ui():
                     outputs=[ocr_model]
                 )
 
-                process_btn = gr.Button("Process Video", variant="primary")
-                cancel_btn = gr.Button("Cancel", variant="stop")
+                with gr.Row():
+                    process_btn = gr.Button("Process Video", variant="primary", scale=3)
+                    cancel_btn = gr.Button("Cancel", variant="stop", scale=1)
             
             with gr.Column():
                 video_output = gr.Video(label="Translated Video")
