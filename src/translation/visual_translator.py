@@ -85,11 +85,38 @@ class VisualTranslator:
                 }
                 ocr_lang = paddle_lang_map.get(source_lang, 'en')
                 
-                # use_angle_cls=True for robust detection of rotated text
-                # enable_mkldnn=False to fix oneDNN crash on Windows
-                self.ocr_model = PaddleOCR(use_angle_cls=True, lang=ocr_lang, enable_mkldnn=False)
-                self.model_loaded = True
-                logger.info("PaddleOCR loaded successfully.")
+                # Try HPI -> GPU -> CPU fallback chain for best performance
+                # HPI: High Performance Inference with OpenVINO/ONNX Runtime
+                # GPU: Basic CUDA acceleration
+                # CPU: Slow fallback
+                try:
+                    self.ocr_model = PaddleOCR(
+                        use_angle_cls=True,
+                        lang=ocr_lang,
+                        use_gpu=True,
+                        enable_hpi=True,  # Auto-selects OpenVINO/ONNX Runtime
+                    )
+                    self.model_loaded = True
+                    logger.info("PaddleOCR loaded with HPI acceleration.")
+                except Exception as hpi_err:
+                    logger.warning(f"HPI mode failed ({hpi_err}). Trying GPU-only...")
+                    try:
+                        self.ocr_model = PaddleOCR(
+                            use_angle_cls=True,
+                            lang=ocr_lang,
+                            use_gpu=True,
+                        )
+                        self.model_loaded = True
+                        logger.info("PaddleOCR loaded with GPU acceleration.")
+                    except Exception as gpu_err:
+                        logger.warning(f"GPU mode failed ({gpu_err}). Falling back to CPU...")
+                        self.ocr_model = PaddleOCR(
+                            use_angle_cls=True,
+                            lang=ocr_lang,
+                            enable_mkldnn=False,  # Disable oneDNN to avoid Windows crash
+                        )
+                        self.model_loaded = True
+                        logger.info("PaddleOCR loaded with CPU mode (slower).")
             except Exception as e:
                 logger.error(f"Failed to load PaddleOCR: {e}")
                 raise
