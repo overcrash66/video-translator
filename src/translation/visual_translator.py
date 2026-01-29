@@ -3,8 +3,14 @@ Visual Text Translation module.
 
 Detects text in video frames using PaddleOCR, translates it, 
 and overlays the translated text using OpenCV inpainting and PIL for text rendering.
+
+Memory Optimization Notes:
+- Frames are resized before OCR to reduce VRAM usage
+- LRU caches are bounded to prevent RAM growth
+- Periodic GC is performed during video processing
 """
 
+import gc
 import logging
 import cv2
 import numpy as np
@@ -29,6 +35,10 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Memory optimization constants
+MAX_OCR_WIDTH = 1280  # Max width for OCR processing (reduces VRAM significantly)
+GC_INTERVAL_FRAMES = 100  # Run GC every N frames (was 500)
+
 
 class VisualTranslator:
     """
@@ -43,6 +53,7 @@ class VisualTranslator:
         self.translator_cache = {}
         self.current_engine = None
         self.font_path = self._find_font()
+        self._ocr_scale_factor = 1.0  # Track scaling for coordinate mapping
         
     def _find_font(self):
         """Find a suitable Unicode font on Windows."""
@@ -164,7 +175,7 @@ class VisualTranslator:
             self.translator_cache[target_lang] = GoogleTranslator(source='auto', target=target_lang)
         return self.translator_cache[target_lang]
 
-    @lru_cache(maxsize=2000)
+    @lru_cache(maxsize=500)  # Reduced from 2000 to prevent RAM growth
     def _cached_translate(self, text: str, target_lang: str) -> str:
         """Cached translation."""
         try:
@@ -189,7 +200,7 @@ class VisualTranslator:
         except:
             return "unknown"
 
-    @lru_cache(maxsize=1000)
+    @lru_cache(maxsize=200)  # Reduced from 1000 to prevent RAM growth
     def _translate_text(self, text: str, target_lang: str, source_lang: str = None) -> str:
         """Translate text if it matches source language or if source is unknown."""
         if not text or len(text.strip()) < 2:
@@ -218,6 +229,35 @@ class VisualTranslator:
         
         translated = self._cached_translate(text, target_lang)
         return translated if translated else text
+
+    def _resize_for_ocr(self, frame: np.ndarray) -> tuple[np.ndarray, float]:
+        """
+        Resize frame for OCR processing to reduce VRAM usage.
+        Returns resized frame and scale factor for coordinate mapping.
+        """
+        h, w = frame.shape[:2]
+        if w <= MAX_OCR_WIDTH:
+            return frame, 1.0
+        
+        scale = MAX_OCR_WIDTH / w
+        new_w = MAX_OCR_WIDTH
+        new_h = int(h * scale)
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        return resized, scale
+
+    def _scale_boxes(self, boxes: list, scale: float) -> list:
+        """
+        Scale bounding boxes back to original frame coordinates.
+        """
+        if scale == 1.0:
+            return boxes
+        
+        inv_scale = 1.0 / scale
+        scaled_boxes = []
+        for box in boxes:
+            scaled_box = [[pt[0] * inv_scale, pt[1] * inv_scale] for pt in box]
+            scaled_boxes.append(scaled_box)
+        return scaled_boxes
 
     def _create_text_mask(self, frame: np.ndarray, boxes: list) -> np.ndarray:
         """Create a binary mask for detected text regions."""
@@ -334,6 +374,10 @@ class VisualTranslator:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if fps <= 0: fps = 30.0
         
+        # Log memory optimization info
+        if width > MAX_OCR_WIDTH:
+            logger.info(f"Frame size {width}x{height} exceeds MAX_OCR_WIDTH ({MAX_OCR_WIDTH}). OCR will use resized frames.")
+        
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
         
@@ -348,6 +392,13 @@ class VisualTranslator:
         last_translated_valid = [] # Subset of texts that were valid for translation
         last_boxes_valid = []      # Subset of boxes corresponding to valid texts
         
+        # Pre-import torch for CUDA cleanup (avoid repeated imports in loop)
+        try:
+            import torch
+            has_torch = torch.cuda.is_available()
+        except ImportError:
+            has_torch = False
+        
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret: break
@@ -358,8 +409,11 @@ class VisualTranslator:
                     boxes = []
                     original_texts = []
                     
+                    # [MEMORY OPT] Resize frame for OCR to reduce VRAM usage
+                    ocr_frame, scale_factor = self._resize_for_ocr(frame)
+                    
                     if ocr_engine == "PaddleOCR":
-                        result = self.ocr_model.ocr(frame)
+                        result = self.ocr_model.ocr(ocr_frame)
                         if result and result[0]:
                              for line in result[0]:
                                 boxes.append(line[0])
@@ -367,11 +421,17 @@ class VisualTranslator:
                                 original_texts.append(line[1][0])
                                 
                     elif ocr_engine == "EasyOCR":
-                        results = self.ocr_model.readtext(frame)
+                        results = self.ocr_model.readtext(ocr_frame)
                         for (bbox, text, prob) in results:
                             if prob > 0.4:
                                 boxes.append(bbox)
                                 original_texts.append(text)
+                    
+                    # [MEMORY OPT] Scale boxes back to original frame coordinates
+                    boxes = self._scale_boxes(boxes, scale_factor)
+                    
+                    # Cleanup resized frame immediately
+                    del ocr_frame
                     
                     # Filter and Translate
                     valid_translations = []
@@ -430,14 +490,11 @@ class VisualTranslator:
             frame_count += 1
             if frame_count % 100 == 0: logger.info(f"Processed {frame_count}/{total_frames}...")
             
-            # Periodic VRAM cleanup
-            if frame_count % 500 == 0:
-                import gc
+            # [MEMORY OPT] Periodic VRAM cleanup - now uses constant (every 100 frames vs 500)
+            if frame_count % GC_INTERVAL_FRAMES == 0:
                 gc.collect()
-                try:
-                    import torch
-                    if torch.cuda.is_available(): torch.cuda.empty_cache()
-                except: pass
+                if has_torch:
+                    torch.cuda.empty_cache()
             
         cap.release()
         out.release()
