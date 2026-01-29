@@ -79,6 +79,7 @@ All local models support **context-aware mode** using full-transcript context fo
 | **Visual Text Translation** | PaddleOCR / EasyOCR | Detects and replaces on-screen text with OpenCV inpainting |
 
 # Notes: if you have issues with PaddleOCR, try this:
+
 ```
 pip uninstall paddlepaddle -y
 
