@@ -89,22 +89,23 @@ class VisualTranslator:
                 # HPI: High Performance Inference with OpenVINO/ONNX Runtime
                 # GPU: Basic CUDA acceleration
                 # CPU: Slow fallback
+                # Note: PaddleOCR 3.x uses 'device' instead of 'use_gpu'
                 try:
                     self.ocr_model = PaddleOCR(
                         use_angle_cls=True,
                         lang=ocr_lang,
-                        use_gpu=True,
+                        device='gpu',
                         enable_hpi=True,  # Auto-selects OpenVINO/ONNX Runtime
                     )
                     self.model_loaded = True
-                    logger.info("PaddleOCR loaded with HPI acceleration.")
+                    logger.info("PaddleOCR loaded with HPI + GPU acceleration.")
                 except Exception as hpi_err:
                     logger.warning(f"HPI mode failed ({hpi_err}). Trying GPU-only...")
                     try:
                         self.ocr_model = PaddleOCR(
                             use_angle_cls=True,
                             lang=ocr_lang,
-                            use_gpu=True,
+                            device='gpu',
                         )
                         self.model_loaded = True
                         logger.info("PaddleOCR loaded with GPU acceleration.")
@@ -113,6 +114,7 @@ class VisualTranslator:
                         self.ocr_model = PaddleOCR(
                             use_angle_cls=True,
                             lang=ocr_lang,
+                            device='cpu',
                             enable_mkldnn=False,  # Disable oneDNN to avoid Windows crash
                         )
                         self.model_loaded = True
