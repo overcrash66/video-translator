@@ -22,7 +22,7 @@ def estimate_remaining_time(progress: float, elapsed_seconds: float) -> str:
         return f"~{int(remaining)}s remaining"
     return f"~{int(remaining/60)}m remaining"
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, chunk_duration, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -50,7 +50,9 @@ def process_video(video_path, source_language, target_language, audio_model, tts
     print(f"DEBUG: tts_voice={tts_voice}")
     print(f"DEBUG: transcription_beam_size={transcription_beam_size}")
     print(f"DEBUG: tts_enable_cfg={tts_enable_cfg}")
+    print(f"DEBUG: tts_enable_cfg={tts_enable_cfg}")
     print(f"DEBUG: enable_audio_enhancement={enable_audio_enhancement}")
+    print(f"DEBUG: chunk_duration={chunk_duration}")
     
     if not video_path:
         return None, "Error: No video uploaded."
@@ -125,7 +127,8 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             tts_voice=tts_voice,
             lipsync_model_name=lipsync_model,
             enable_audio_enhancement=enable_audio_enhancement,
-            live_portrait_acceleration=live_portrait_mode
+            live_portrait_acceleration=live_portrait_mode,
+            chunk_duration=chunk_duration
         )
         
         final_video_path = None
@@ -213,6 +216,12 @@ def create_ui():
                     value="Tencent HY-MT1.5 (Local, Better Context)",
                     visible=False,
                     info="Select the LLM to use for context-aware translation."
+                )
+
+                chunk_duration = gr.Slider(
+                    minimum=60, maximum=900, value=300, step=30,
+                    label="Chunk Duration (High RAM Safety)",
+                    info="If video length exceeds this (seconds), it will be split processed. Default: 300s (5min)."
                 )
 
                 optimize_translation.change(
@@ -415,7 +424,7 @@ def create_ui():
         
         process_event = process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, chunk_duration],
             outputs=[video_output, logs_output]
         )
         

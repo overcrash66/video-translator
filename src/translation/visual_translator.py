@@ -401,6 +401,15 @@ class VisualTranslator:
             frame_count += 1
             if frame_count % 100 == 0: logger.info(f"Processed {frame_count}/{total_frames}...")
             
+            # Periodic VRAM cleanup
+            if frame_count % 500 == 0:
+                import gc
+                gc.collect()
+                try:
+                    import torch
+                    if torch.cuda.is_available(): torch.cuda.empty_cache()
+                except: pass
+            
         cap.release()
         out.release()
         return output_path

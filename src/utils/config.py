@@ -81,6 +81,10 @@ DEMUCS_OVERLAP_SECONDS = 1
 
 WAV2LIP_BOX_SMOOTH_WINDOW = 5
 
+# Chunking (seconds)
+CHUNK_DURATION = int(os.getenv("CHUNK_DURATION", "300"))  # 5 minutes default
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "2"))  # 2 second overlap
+
 OCR_INTERVAL_DEFAULT = 1.0
 
 def validate_path(path: str | Path, must_exist: bool = False, allowed_dirs: list[Path] | None = None) -> Path:
