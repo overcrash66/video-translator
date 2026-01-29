@@ -78,6 +78,14 @@ All local models support **context-aware mode** using full-transcript context fo
 | **Lip-Sync (Cinema)** | LivePortrait | State-of-the-art cinematic lip sync with natural facial animation |
 | **Visual Text Translation** | PaddleOCR / EasyOCR | Detects and replaces on-screen text with OpenCV inpainting |
 
+# Notes: if you have issues with PaddleOCR, try this:
+```
+pip uninstall paddlepaddle -y
+
+pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+
+```
+
 ### Production-Ready
 - 🖥️ **Friendly Gradio UI** — Easy drag-and-drop interface
 - 🎛️ **Fine-Grained Control** — Beam size, VAD settings, voice selection, and more
