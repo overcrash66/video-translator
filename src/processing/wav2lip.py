@@ -82,6 +82,24 @@ class Wav2LipSyncer:
         self.detector = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, 
                                                      flip_input=False, device=str(self.device).split(":")[0])
                                                      
+    def unload_model(self):
+        """Unload models to free VRAM."""
+        if self.model:
+            del self.model
+            self.model = None
+        if self.detector:
+            del self.detector
+            self.detector = None
+        if self.restorer:
+            del self.restorer
+            self.restorer = None
+            
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+        logger.info("Wav2Lip models unloaded.")
     def get_smooth_box(self, boxes, window_size=config.WAV2LIP_BOX_SMOOTH_WINDOW):
         """
         Smooths face bounding boxes over time using a moving average window.

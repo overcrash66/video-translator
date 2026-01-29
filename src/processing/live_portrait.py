@@ -439,7 +439,6 @@ class LivePortraitSyncer:
         Returns:
             Path to the output video file.
         """
-        self.load_models()
         
         # 1. Generate driving video using Wav2Lip
         # We need a temp path for the driving video
@@ -451,10 +450,15 @@ class LivePortraitSyncer:
         # and enhancement is slow/unnecessary for the driving video.
         self.wav2lip_driver.sync_lips(video_path, audio_path, str(temp_wav2lip_out), enhance_face=False)
         
+        # Unload Wav2Lip to free VRAM for LivePortrait
+        self.wav2lip_driver.unload_model()
+        
         if not temp_wav2lip_out.exists():
             raise RuntimeError("Wav2Lip failed to generate driving video.")
 
         # 2. LivePortrait Animation (The "Real" Step)
+        self.load_models() # Load LP models ONLY after Wav2Lip is done
+        
         accel_label = "TENSORRT" if self.acceleration == 'tensorrt' else "ONNX"
         logger.info(f"Step 2: Applying LivePortrait animation ({accel_label})...")
         
