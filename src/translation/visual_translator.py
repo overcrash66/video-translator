@@ -96,17 +96,24 @@ class VisualTranslator:
                 }
                 ocr_lang = paddle_lang_map.get(source_lang, 'en')
                 
+                # Disable PaddlePaddle experimental IR to avoid oneDNN conversion errors
+                import os
+                os.environ['FLAGS_enable_pir_api'] = '0'
+                os.environ['FLAGS_enable_pir_in_executor'] = '0'
+                
                 # Try HPI -> GPU -> CPU fallback chain for best performance
                 # HPI: High Performance Inference with OpenVINO/ONNX Runtime
                 # GPU: Basic CUDA acceleration
                 # CPU: Slow fallback
                 # Note: PaddleOCR 3.x uses 'device' instead of 'use_gpu'
+                # Note: Always disable enable_mkldnn to avoid Windows oneDNN crashes
                 try:
                     self.ocr_model = PaddleOCR(
                         use_angle_cls=True,
                         lang=ocr_lang,
                         device='gpu',
                         enable_hpi=True,  # Auto-selects OpenVINO/ONNX Runtime
+                        enable_mkldnn=False,  # Disable oneDNN (Windows compatibility)
                     )
                     self.model_loaded = True
                     logger.info("PaddleOCR loaded with HPI + GPU acceleration.")
@@ -117,6 +124,7 @@ class VisualTranslator:
                             use_angle_cls=True,
                             lang=ocr_lang,
                             device='gpu',
+                            enable_mkldnn=False,  # Disable oneDNN (Windows compatibility)
                         )
                         self.model_loaded = True
                         logger.info("PaddleOCR loaded with GPU acceleration.")
