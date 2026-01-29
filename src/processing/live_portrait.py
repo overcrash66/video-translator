@@ -31,9 +31,38 @@ class TRTWrapper:
     Wrapper for TensorRT engine to mimic ONNX Runtime InferenceSession interface.
     Handles buffer allocation, data transfer, and execution using PyTorch (no PyCUDA).
     """
+    
+    # Class-level flag to ensure TF32 override is set only once per process
+    _tf32_override_set = False
+    
+    @staticmethod
+    def _ensure_tf32_consistency():
+        """
+        Ensures consistent NVIDIA_TF32_OVERRIDE setting between engine build and runtime.
+        
+        TensorRT engines cache the TF32 mode setting at build time. If this environment
+        variable differs at runtime, TensorRT will fail with:
+        "Inconsistent setting of NVIDIA_TF32_OVERRIDE env var at build X and execution Y"
+        
+        The engines were typically built with TF32_OVERRIDE unset (-1), so we need to
+        ensure it's also unset at runtime.
+        """
+        if not TRTWrapper._tf32_override_set:
+            # Remove the environment variable if set, to match build-time state (unset = -1)
+            if 'NVIDIA_TF32_OVERRIDE' in os.environ:
+                logging.getLogger(__name__).info(
+                    f"Removing NVIDIA_TF32_OVERRIDE env var (was: {os.environ['NVIDIA_TF32_OVERRIDE']}) "
+                    "to match TensorRT engine build-time settings."
+                )
+                del os.environ['NVIDIA_TF32_OVERRIDE']
+            TRTWrapper._tf32_override_set = True
+    
     def __init__(self, engine_path: str):
         if not TRT_AVAILABLE:
             raise ImportError("TensorRT dependencies not installed.")
+        
+        # Ensure TF32 override consistency BEFORE loading/deserializing any TRT engine
+        TRTWrapper._ensure_tf32_consistency()
             
         self.logger = trt.Logger(trt.Logger.WARNING)
         self.runtime = trt.Runtime(self.logger)
