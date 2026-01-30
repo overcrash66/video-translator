@@ -251,7 +251,7 @@ def create_ui():
 
                 with gr.Row(visible=True) as diarization_params:
                     min_speakers = gr.Slider(1, 10, value=1, step=1, label="Min Speakers")
-                    max_speakers = gr.Slider(1, 20, value=5, step=1, label="Max Speakers")
+                    max_speakers = gr.Slider(1, 20, value=1, step=1, label="Max Speakers")
 
                 def update_diarization_visibility(enabled):
                     return gr.update(visible=enabled), gr.update(visible=enabled)
@@ -275,9 +275,9 @@ def create_ui():
                 )
 
                 transcription_beam_size = gr.Slider(
-                    minimum=1, maximum=10, step=1, value=5, 
+                    minimum=1, maximum=10, step=1, value=7, 
                     label="Beam Size (Accuracy vs Speed)",
-                    info="Higher values improve accuracy but slow down transcription. (Default: 5)"
+                    info="Higher values improve accuracy but slow down transcription. (Default: 7)"
                 )
                 
                 tts_model = gr.Dropdown(
@@ -294,7 +294,7 @@ def create_ui():
 
                 enable_audio_enhancement = gr.Checkbox(
                     label="Enhance Audio (VoiceFixer)",
-                    value=False,
+                    value=True,
                     info="Uses VoiceFixer to remove noise and restore speech quality in the finale output. (Recommended for Piper/Edge)"
                 )
                 
@@ -360,7 +360,7 @@ def create_ui():
                 lipsync_model = gr.Dropdown(
                     choices=["Wav2Lip-GAN (Low Quality - Fast)", "Wav2Lip + GFPGAN (Low Quality - Medium)", "LivePortrait (High Quality - Slow)"],
                     label="Lip-Sync Model",
-                    value="LivePortrait (High Quality - Slow)",
+                    value="Wav2Lip-GAN (Low Quality - Fast)",
                     visible=False,
                     info="Select 'LivePortrait' for the best visual quality."
                 )
@@ -374,7 +374,7 @@ def create_ui():
                 live_portrait_mode = gr.Dropdown(
                     choices=["ort", "tensorrt"],
                     label="LivePortrait Acceleration",
-                    value="ort",
+                    value="tensorrt",
                     visible=True,
                     info="Use 'tensorrt' for GPU acceleration (Requires Setup). 'ort' is standard."
                 )
@@ -403,7 +403,7 @@ def create_ui():
                 ocr_model = gr.Dropdown(
                     choices=["PaddleOCR", "EasyOCR"],
                     label="OCR Model",
-                    value="PaddleOCR",
+                    value="EasyOCR",
                     visible=False,
                     info="Select OCR engine. EasyOCR is more robust on Windows. PaddleOCR is faster."
                 )
