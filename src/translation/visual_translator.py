@@ -19,6 +19,19 @@ from src.utils import config
 from deep_translator import GoogleTranslator
 from functools import lru_cache
 from PIL import Image, ImageDraw, ImageFont
+import sys
+import os
+
+# Note: PaddlePaddle is now CPU-only to avoid cuDNN conflicts with PyTorch
+# Set PaddlePaddle flags BEFORE importing to suppress oneDNN/PIR warnings
+# Version 3.3.0 has a regression on Windows; disabling PIR and New Executor helps.
+os.environ['FLAGS_enable_pir_api'] = '0'
+os.environ['FLAGS_enable_pir_in_executor'] = '0'
+os.environ['FLAGS_enable_new_executor'] = '0'
+os.environ['FLAGS_use_mkldnn'] = '0'
+os.environ['FLAGS_cpu_deterministic'] = '1'
+os.environ['GLOG_minloglevel'] = '2'  # Suppress verbose paddle logging
+os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'  # Skip connectivity check
 
 try:
     from paddleocr import PaddleOCR
@@ -87,59 +100,31 @@ class VisualTranslator:
                 logger.warning("PaddleOCR not installed. Visual translation disabled.")
                 return
 
-            logger.info(f"Loading PaddleOCR model for language: {source_lang}...")
+            logger.info(f"Initializing PaddleOCR (CPU mode) for language: {source_lang}...")
+            
             try:
-                # Map common language codes to PaddleOCR lang codes
+                # Map common language codes
                 paddle_lang_map = {
                     'en': 'en', 'ar': 'ar', 'zh': 'ch', 'fr': 'fr', 'de': 'german',
                     'es': 'es', 'it': 'it', 'ja': 'japan', 'ko': 'korean', 'ru': 'ru', 'pt': 'pt',
                 }
                 ocr_lang = paddle_lang_map.get(source_lang, 'en')
                 
-                # Disable PaddlePaddle experimental IR to avoid oneDNN conversion errors
-                import os
-                os.environ['FLAGS_enable_pir_api'] = '0'
-                os.environ['FLAGS_enable_pir_in_executor'] = '0'
-                
-                # Try HPI -> GPU -> CPU fallback chain for best performance
-                # HPI: High Performance Inference with OpenVINO/ONNX Runtime
-                # GPU: Basic CUDA acceleration
-                # CPU: Slow fallback
-                # Note: PaddleOCR 3.x uses 'device' instead of 'use_gpu'
-                # Note: Always disable enable_mkldnn to avoid Windows oneDNN crashes
-                try:
-                    self.ocr_model = PaddleOCR(
-                        use_angle_cls=True,
-                        lang=ocr_lang,
-                        device='gpu',
-                        enable_hpi=True,  # Auto-selects OpenVINO/ONNX Runtime
-                        enable_mkldnn=False,  # Disable oneDNN (Windows compatibility)
-                    )
-                    self.model_loaded = True
-                    logger.info("PaddleOCR loaded with HPI + GPU acceleration.")
-                except Exception as hpi_err:
-                    logger.warning(f"HPI mode failed ({hpi_err}). Trying GPU-only...")
-                    try:
-                        self.ocr_model = PaddleOCR(
-                            use_angle_cls=True,
-                            lang=ocr_lang,
-                            device='gpu',
-                            enable_mkldnn=False,  # Disable oneDNN (Windows compatibility)
-                        )
-                        self.model_loaded = True
-                        logger.info("PaddleOCR loaded with GPU acceleration.")
-                    except Exception as gpu_err:
-                        logger.warning(f"GPU mode failed ({gpu_err}). Falling back to CPU...")
-                        self.ocr_model = PaddleOCR(
-                            use_angle_cls=True,
-                            lang=ocr_lang,
-                            device='cpu',
-                            enable_mkldnn=False,  # Disable oneDNN to avoid Windows crash
-                        )
-                        self.model_loaded = True
-                        logger.info("PaddleOCR loaded with CPU mode (slower).")
+                # [FIX] Simplified loader: Force CPU immediately
+                # This avoids the complex GPU/HPI detection which hangs on some Windows setups
+                # with PaddlePaddle 3.x.
+                self.ocr_model = PaddleOCR(
+                    use_angle_cls=True,
+                    lang=ocr_lang,
+                    device='cpu',
+                    enable_mkldnn=False # Stabilizes Windows CPU inference
+                )
+                self.model_loaded = True
+                self.current_engine = ocr_engine
+                logger.info(f"PaddleOCR (engine={ocr_engine}, lang={ocr_lang}) loaded successfully.")
             except Exception as e:
-                logger.error(f"Failed to load PaddleOCR: {e}")
+                logger.error(f"Critical failure loading PaddleOCR: {e}")
+                self.model_loaded = False
                 raise
                 
         elif ocr_engine == "EasyOCR":
@@ -217,25 +202,17 @@ class VisualTranslator:
         # Language filtering
         detected = self._detect_language(text)
         
-        # If source_lang is specified, only translate if detected matches source
-        # But 'unknown' should probably pass through or be skipped depending on strictness
-        # Here we translate if detected matches source OR detected is 'unknown' 
-        # (to avoid missing short text) OR if source_lang is not strictly enforced.
-        
-        # Simplification: If detected is explicitly the TARGET language, skip it.
-        # This prevents translating French back to French (glitch).
+        # Relaxed filtering: Only skip if it's DEFINITELY the target language.
+        # Short strings often lead to incorrect language detection.
         if detected == target_lang:
+            logger.info(f"[VisualTranslator] Text='{text}' is already in target language ({target_lang}), skipping.")
             return text
             
-        # If source_lang provided, and detected is a DIFFERENT known language, skip
-        if source_lang and detected != "unknown" and detected != source_lang and detected != 'en': 
-            # Allow EN as universal fallback or if user said source=EN?
-            # If user said source=EN, and we detect AR, we should skip? Yes.
-            if detected != source_lang:
-                 # Special case: 'en' often detects as other latins if short, but let's trust detector
-                 return text
+        # [REMOVED] Strict source_lang check as it was too aggressive for short OCR snippets.
         
         translated = self._cached_translate(text, target_lang)
+        if translated and translated != text:
+            logger.info(f"[VisualTranslator] Translated '{text}' -> '{translated}'")
         return translated if translated else text
 
     def _resize_for_ocr(self, frame: np.ndarray) -> tuple[np.ndarray, float]:
@@ -375,6 +352,8 @@ class VisualTranslator:
             import shutil
             shutil.copy(video_path, output_path)
             return output_path
+        
+        logger.info(f"Successfully opened video for OCR: {video_path}")
             
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -388,6 +367,15 @@ class VisualTranslator:
         
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+        
+        if not out.isOpened():
+             logger.error(f"Failed to initialize VideoWriter for: {output_path}")
+             cap.release()
+             import shutil
+             shutil.copy(video_path, output_path)
+             return output_path
+             
+        logger.info(f"VideoWriter initialized: {width}x{height} at {fps} FPS")
         
         # Calculate frame interval
         interval_frames = max(1, int(fps * ocr_interval_sec))
@@ -407,6 +395,8 @@ class VisualTranslator:
         except ImportError:
             has_torch = False
         
+        logger.info(f"Visual Translation Loop Starting: {total_frames} frames to process at 2s OCR interval...")
+        
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret: break
@@ -422,11 +412,36 @@ class VisualTranslator:
                     
                     if ocr_engine == "PaddleOCR":
                         result = self.ocr_model.ocr(ocr_frame)
-                        if result and result[0]:
-                             for line in result[0]:
-                                boxes.append(line[0])
-                                # line[1][0] is text, line[1][1] is confidence
-                                original_texts.append(line[1][0])
+                        
+                        # Parse PaddleOCR result - handle both old list format and new HPI dict format
+                        if result:
+                            # Handle nested list format: [[[[box], (text, conf)], ...]]
+                            if result[0] is not None:
+                                for line in result[0]:
+                                    try:
+                                        # New HPI/dict format: {'text': str, 'confidence': float, 'text_region': list}
+                                        if isinstance(line, dict):
+                                            if 'text_region' in line and 'text' in line:
+                                                boxes.append(line['text_region'])
+                                                original_texts.append(line['text'])
+                                        # Old list format: [[box], (text, confidence)]
+                                        elif isinstance(line, (list, tuple)) and len(line) >= 2:
+                                            box_data = line[0]
+                                            text_data = line[1]
+                                            
+                                            # text_data can be tuple (text, conf) or just text
+                                            if isinstance(text_data, (list, tuple)):
+                                                text = text_data[0]
+                                            else:
+                                                text = str(text_data)
+                                            
+                                            boxes.append(box_data)
+                                            original_texts.append(text)
+                                    except (IndexError, KeyError, TypeError) as parse_err:
+                                        logger.warning(f"[VisualTranslator] Failed to parse OCR line: {parse_err}")
+                        
+                        if boxes:
+                            logger.info(f"[VisualTranslator] Frame {frame_count}: Detected {len(boxes)} text regions")
                                 
                     elif ocr_engine == "EasyOCR":
                         results = self.ocr_model.readtext(ocr_frame)
@@ -434,6 +449,7 @@ class VisualTranslator:
                             if prob > 0.4:
                                 boxes.append(bbox)
                                 original_texts.append(text)
+                        logger.info(f"[VisualTranslator] Frame {frame_count}: EasyOCR detected {len(boxes)} text regions")
                     
                     # [MEMORY OPT] Scale boxes back to original frame coordinates
                     boxes = self._scale_boxes(boxes, scale_factor)
@@ -450,28 +466,16 @@ class VisualTranslator:
                              # Translate with language checking
                              translated = self._translate_text(text, target_lang, source_lang)
                              
-                             # Only keep if translation occurred (and isn't same as original) 
-                             # OR if we want to overwrite even identical text (to fix style)?
-                             # Usually we overwrite to ensure consistent look.
-                             
-                             # Filter: If translated == original, it might be a name or untranslated.
-                             # If we detected it was NOT source language, _translate_text returns original.
-                             # We should check if we want to overlay original text? 
-                             # Probably NOT. We only want to overlay TRANSLATED text.
-                             # If text was skipped due to language mismatch, we shouldn't draw over it.
-                             
-                             if translated != text:
+                             # [FIX] Always include detected text for overlay
+                             # Even if translation == original (proper names, numbers), we still
+                             # want to render it with consistent styling over the inpainted area
+                             if translated and len(translated.strip()) > 0:
                                   valid_translations.append(translated)
                                   valid_boxes.append(box)
                     
                     if valid_boxes:
-                         # Create mask from ALL boxes (to remove original text)
-                         # Wait, if we only translate SOME text, we should only inpaint SOME text?
-                         # Ideally yes. If we have English and French on screen, and we translate EN->FR.
-                         # We should Inpaint EN, write FR. Leave original FR alone.
-                         # So we should use 'valid_boxes' for mask too?
-                         # Yes, otherwise we delete the FR text and don't write anything back.
-                         
+                         logger.info(f"[VisualTranslator] Frame {frame_count}: Overlaying {len(valid_boxes)} translated texts")
+                         # Create mask only for boxes we're replacing
                          last_mask = self._create_text_mask(frame, valid_boxes)
                          last_boxes_valid = valid_boxes
                          last_translated_valid = valid_translations
@@ -496,7 +500,7 @@ class VisualTranslator:
                        
             out.write(frame)
             frame_count += 1
-            if frame_count % 100 == 0: logger.info(f"Processed {frame_count}/{total_frames}...")
+            if frame_count % 50 == 0: logger.info(f"Visual Progress: {frame_count}/{total_frames} frames ({frame_count/total_frames:.1%})")
             
             # [MEMORY OPT] Periodic VRAM cleanup - now uses constant (every 100 frames vs 500)
             if frame_count % GC_INTERVAL_FRAMES == 0:
@@ -506,4 +510,5 @@ class VisualTranslator:
             
         cap.release()
         out.release()
+        logger.info(f"Visual translation processing complete. Output saved to: {output_path}")
         return output_path

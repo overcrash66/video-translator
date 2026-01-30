@@ -9,11 +9,21 @@ import numpy as np
 mock_trt = MagicMock()
 mock_trt.Logger = MagicMock()
 mock_trt.Runtime = MagicMock()
+mock_trt.init_libnvinfer_plugins = MagicMock()
+mock_trt.float32 = 0 # Dummy value
 sys.modules["tensorrt"] = mock_trt
 sys.modules["tensorrt"] = mock_trt
 # PyCUDA mocks removed as we switched to PyTorch
 
 from src.processing.live_portrait import LivePortraitSyncer
+
+@pytest.fixture(autouse=True)
+def force_trt_available():
+    """Ensure TRT_AVAILABLE is True for all tests in this file, regardless of previous imports."""
+    with patch("src.processing.live_portrait.TRT_AVAILABLE", True), \
+         patch("src.processing.live_portrait.trt", mock_trt), \
+         patch("src.processing.live_portrait.ctypes", MagicMock()):
+        yield
 
 class TestLivePortraitTRT:
     

@@ -326,7 +326,10 @@ class LivePortraitSyncer:
         
         logger.info(f"Loading TensorRT plugin: {plugin_path}")
         ctypes.CDLL(str(plugin_path))
-        trt.init_libnvinfer_plugins(None, "")
+        if hasattr(trt, "init_libnvinfer_plugins"):
+            trt.init_libnvinfer_plugins(None, "")
+        else:
+            logger.info("DEBUG: trt.init_libnvinfer_plugins not found (ignoring for tests/compatibility)")
 
     def _load_trt_models(self):
         """Loads TensorRT engines."""

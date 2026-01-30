@@ -7,6 +7,14 @@ librosa==0.10.2.post1
 soundfile==0.12.1
 ffmpeg-python==0.2.0
 opencv-python==4.10.0.84
+
+# PyTorch with CUDA 12.8 (required for RTX 50 series / Blackwell architecture)
+# Install with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch>=2.7.0
+torchvision>=0.20.0
+torchaudio>=2.7.0
+
 torchmetrics==1.4.0.post0
 transformers==4.41.2
 accelerate==0.31.0
@@ -33,8 +41,11 @@ face-alignment==1.4.1
 basicsr==1.4.2
 kornia==0.7.3
 gfpgan==1.3.8
-paddlepaddle-gpu==2.6.1
-paddleocr==2.7.3
+# PaddleOCR dependencies
+# NOTE: Using CPU paddlepaddle to avoid cuDNN conflicts with PyTorch
+# (paddlepaddle-gpu and PyTorch both bundle cuDNN 9 and conflict on Windows)
+paddlepaddle==3.2.2
+paddleocr==3.4.0
 paddlex[ocr]
 psutil==5.9.8
 aiohttp==3.9.5

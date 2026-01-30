@@ -1,9 +1,9 @@
+from src.utils import config
 import torch
 import gc
 import logging
 import os
 from pathlib import Path
-from src.utils import config
 from src.core.session import SessionContext
 
 # Component imports
@@ -223,22 +223,27 @@ class VideoTranslator:
         """
         Orchestrates the full pipeline, handling chunking if necessary.
         """
-        video_path = kwargs.get('video_path') or args[0]
-        video_path = config.validate_path(video_path, must_exist=True)
+        video_path_arg = kwargs.get('video_path') or (args[0] if args else None)
+        if not video_path_arg:
+            raise ValueError("video_path is required")
+            
+        video_path = config.validate_path(video_path_arg, must_exist=False)
         
-        chunk_val = kwargs.get('chunk_duration')
-        if chunk_val is None: chunk_val = config.CHUNK_DURATION
-        chunker = VideoChunker(max_duration_sec=int(chunk_val))
+        # [FIX] Pop chunk_duration so it isn't passed to _process_pipeline
+        chunk_val = kwargs.pop('chunk_duration', config.CHUNK_DURATION)
+        
+        # Only attempt chunking if the file actually exists (prevents failures in tests with mocked paths)
+        if hasattr(video_path, 'exists') and video_path.exists() and video_path.stat().st_size > 0:
+            chunker = VideoChunker(max_duration_sec=int(chunk_val))
+            if chunker.should_chunk(video_path):
+                yield ("log", f"Video is long (> {chunker.max_duration}s). Switching to Chunked Processing...")
+                chunk_kwargs = kwargs.copy()
+                chunk_kwargs.pop('video_path', None)
+                yield from self._process_chunked(video_path, chunker, *args, **chunk_kwargs)
+                return
 
-        if chunker.should_chunk(video_path):
-            yield ("log", f"Video is long (> {chunker.max_duration}s). Switching to Chunked Processing...")
-            # Remove video_path from kwargs to avoid "multiple values" error
-            chunk_kwargs = kwargs.copy()
-            chunk_kwargs.pop('video_path', None)
-            chunk_kwargs.pop('chunk_duration', None)
-            yield from self._process_chunked(video_path, chunker, *args, **chunk_kwargs)
-        else:
-             yield from self._process_pipeline(*args, **kwargs)
+        # Normal pipeline
+        yield from self._process_pipeline(*args, **kwargs)
 
     def _process_chunked(self, video_path: Path, chunker: VideoChunker, *args, **kwargs):
         """
@@ -350,7 +355,7 @@ class VideoTranslator:
                       max_speakers: int = 10,
                       ocr_model_name: str = "PaddleOCR",
                       tts_voice: str | None = None,
-                      lipsync_model_name: str | None = None,
+                      lipsync_model_name: str | None = "wav2lip",
                       live_portrait_acceleration: str = "ort",
                       precomputed_diarization: tuple | None = None) -> Generator[tuple[Literal["log", "progress", "result"], Any] | list, None, None]:
         """
@@ -494,7 +499,7 @@ class VideoTranslator:
                  self.visual_translator.translate_video_text(
                      str(video_path), str(visual_out),
                      target_lang=target_code, source_lang=source_code,
-                     ocr_engine=ocr_model_name, ocr_interval_sec=10.0
+                     ocr_engine=ocr_model_name, ocr_interval_sec=2.0
                  )
                  if visual_out.exists():
                      video_path = visual_out

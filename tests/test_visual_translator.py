@@ -63,14 +63,15 @@ class TestVisualTranslatorLanguageDetection:
             # Should return original
             assert result == "Bonjour"
             
-    def test_translate_text_skips_different_source(self, translator):
-        """Should skip translation if detected != source (and source is enforced)."""
+    def test_translate_text_proceeds_even_if_mismatch(self, translator):
+        """Should PROCEED even if detected != source (relaxed filtering)."""
         # User says Source is EN.
         # Detector says text is AR.
-        # Should SKIP (return original text).
-        with patch.object(translator, '_detect_language', return_value='ar'):
+        # Should now PROCEED (return translated text).
+        with patch.object(translator, '_detect_language', return_value='ar'), \
+             patch.object(translator, '_cached_translate', return_value='Un peu de texte arabe'):
             result = translator._translate_text("Some Arabic Text", target_lang='fr', source_lang='en')
-            assert result == "Some Arabic Text"
+            assert result == "Un peu de texte arabe"
 
     def test_translate_text_proceeds_if_source_match(self, translator):
         """Proceeds if detected == source."""
