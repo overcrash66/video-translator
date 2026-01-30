@@ -107,6 +107,9 @@ class TestVisualTranslatorProcess:
         mock_writer = MagicMock()
         mock_cv2.VideoWriter.return_value = mock_writer
         
+        # Mock boundingRect to return proper values
+        mock_cv2.boundingRect.return_value = (10, 10, 10, 10)
+        
         # Mock OCR instance
         mock_ocr = MagicMock()
         mock_ocr_cls.return_value = mock_ocr
@@ -164,3 +167,122 @@ class TestVisualTranslatorProcess:
                 
                 # Verify inpaint called 10 times (persisted)
                 assert mock_inpaint.call_count == 10
+
+
+class TestVisualTranslatorConfidenceFiltering:
+    """Tests for OCR confidence filtering (improvement #4)."""
+    
+    @patch('src.translation.visual_translator.PADDLE_AVAILABLE', True)
+    @patch('src.translation.visual_translator.cv2')
+    @patch('src.translation.visual_translator.PaddleOCR')
+    def test_low_confidence_detections_filtered(self, mock_ocr_cls, mock_cv2, translator, mock_pil):
+        """Verify that low-confidence OCR detections are skipped."""
+        mock_cap = MagicMock()
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda x: {
+            mock_cv2.CAP_PROP_FPS: 30.0,
+            mock_cv2.CAP_PROP_FRAME_COUNT: 2
+        }.get(x, 0)
+        
+        # 2 frames
+        mock_cap.read.side_effect = [(True, np.zeros((100,100,3), dtype=np.uint8)) for _ in range(2)] + [(False, None)]
+        
+        mock_writer = MagicMock()
+        mock_cv2.VideoWriter.return_value = mock_writer
+        
+        # Mock boundingRect to return proper values
+        mock_cv2.boundingRect.return_value = (10, 10, 10, 10)
+        
+        mock_ocr = MagicMock()
+        mock_ocr_cls.return_value = mock_ocr
+        # Return mix of high and low confidence results
+        mock_ocr.ocr.return_value = [[
+            ([[10,10],[20,10],[20,20],[10,20]], ("HighConf", 0.95)),  # Should be kept
+            ([[30,30],[40,30],[40,40],[30,40]], ("LowConf", 0.2)),    # Should be filtered
+        ]]
+        
+        translator.load_model()
+        
+        with patch.object(translator, '_translate_text') as mock_translate:
+            mock_translate.return_value = "Translated"
+            translator.translate_video_text("in.mp4", "out.mp4", ocr_interval_sec=0.1)
+            
+            # Should only be called once (for HighConf), LowConf should be filtered
+            # Note: _translate_text is called per text, not per detection
+            call_texts = [call[0][0] for call in mock_translate.call_args_list]
+            assert "HighConf" in call_texts
+            assert "LowConf" not in call_texts
+
+
+class TestVisualTranslatorCJKFonts:
+    """Tests for CJK font selection (improvement #3)."""
+    
+    def test_get_font_for_japanese(self, translator):
+        """Verify Japanese language gets CJK font candidates."""
+        with patch.object(translator, '_find_font') as mock_find:
+            mock_find.return_value = "msgothic.ttc"
+            font = translator._get_font_for_language('ja')
+            # Verify CJK candidates were passed
+            mock_find.assert_called_once()
+            candidates = mock_find.call_args[0][0]
+            assert 'msgothic.ttc' in candidates
+    
+    def test_get_font_for_chinese(self, translator):
+        """Verify Chinese language gets CJK font candidates."""
+        with patch.object(translator, '_find_font') as mock_find:
+            mock_find.return_value = "simsun.ttc"
+            font = translator._get_font_for_language('zh')
+            mock_find.assert_called_once()
+            candidates = mock_find.call_args[0][0]
+            assert 'simsun.ttc' in candidates
+    
+    def test_get_font_for_non_cjk(self, translator):
+        """Verify non-CJK language returns default font path."""
+        translator.font_path = "arial.ttf"
+        font = translator._get_font_for_language('fr')
+        assert font == "arial.ttf"
+
+
+class TestVisualTranslatorThreadSafety:
+    """Tests for thread-safe caching (improvement #1)."""
+    
+    def test_cache_operations_thread_safe(self, translator):
+        """Verify cache operations don't raise under concurrent access."""
+        import threading
+        import random
+        
+        errors = []
+        
+        def cache_operation(thread_id):
+            try:
+                for i in range(10):
+                    text = f"text_{thread_id}_{i}"
+                    # Mock the actual translation
+                    with patch.object(translator, '_get_translator') as mock_trans:
+                        mock_trans.return_value.translate.return_value = f"translated_{text}"
+                        result = translator._cached_translate(text, 'fr')
+                        assert result == f"translated_{text}"
+            except Exception as e:
+                errors.append(e)
+        
+        threads = [threading.Thread(target=cache_operation, args=(i,)) for i in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        
+        assert len(errors) == 0, f"Thread errors: {errors}"
+    
+    def test_cache_clear_thread_safe(self, translator):
+        """Verify unload_model clears cache without errors."""
+        # Pre-populate cache
+        with patch.object(translator, '_get_translator') as mock_trans:
+            mock_trans.return_value.translate.return_value = "cached"
+            translator._cached_translate("hello", "fr")
+        
+        # Should not raise
+        translator.unload_model()
+        
+        # Verify cache is empty
+        assert len(translator._translation_cache) == 0

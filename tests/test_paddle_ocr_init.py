@@ -130,20 +130,21 @@ class TestMemoryOptimizations:
                 assert pt[1] == pytest.approx(expected[i][j][1])
 
     def test_lru_cache_sizes_are_bounded(self):
-        """LRU caches should have bounded sizes to prevent RAM growth."""
+        """Translation caches should have bounded sizes to prevent RAM growth."""
+        from src.translation.visual_translator import TRANSLATION_CACHE_MAXSIZE, TRANSLATION_CACHE_TTL
+        
         translator = VisualTranslator()
         
-        # Check cache info for both cached methods
-        cached_translate_info = translator._cached_translate.cache_info()
-        translate_text_info = translator._translate_text.cache_info()
+        # Verify TTLCache maxsize is bounded (not unlimited)
+        assert translator._translation_cache.maxsize is not None
+        assert translator._translation_cache.maxsize <= 500
         
-        # Verify maxsize is bounded (not unlimited)
-        assert cached_translate_info.maxsize is not None
-        assert translate_text_info.maxsize is not None
+        # Verify TTL is reasonable (not too short for long videos)
+        assert TRANSLATION_CACHE_TTL >= 3600  # At least 1 hour
+        assert TRANSLATION_CACHE_TTL <= 8 * 3600  # At most 8 hours
         
-        # Verify reasonable bounds
-        assert cached_translate_info.maxsize <= 500
-        assert translate_text_info.maxsize <= 200
+        # Verify constants match what's set on the cache
+        assert translator._translation_cache.maxsize == TRANSLATION_CACHE_MAXSIZE
 
 
 class TestVisualTranslatorScaleFactorTracking:

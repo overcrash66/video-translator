@@ -12,12 +12,15 @@ Memory Optimization Notes:
 
 import gc
 import logging
+import threading
 import cv2
+# Save cv2.error reference at import time (before any mocking in tests)
+OpenCVError = cv2.error
 import numpy as np
 from pathlib import Path
 from src.utils import config
 from deep_translator import GoogleTranslator
-from functools import lru_cache
+from cachetools import TTLCache
 from PIL import Image, ImageDraw, ImageFont
 import sys
 import os
@@ -51,6 +54,9 @@ logger = logging.getLogger(__name__)
 # Memory optimization constants
 MAX_OCR_WIDTH = 1280  # Max width for OCR processing (reduces VRAM significantly)
 GC_INTERVAL_FRAMES = 100  # Run GC every N frames (was 500)
+MIN_OCR_CONFIDENCE = 0.4  # Minimum confidence threshold for OCR detections
+TRANSLATION_CACHE_TTL = 4 * 3600  # 4 hours TTL for translation cache (supports long videos)
+TRANSLATION_CACHE_MAXSIZE = 500  # Max entries in translation cache
 
 
 class VisualTranslator:
@@ -67,19 +73,62 @@ class VisualTranslator:
         self.current_engine = None
         self.font_path = self._find_font()
         self._ocr_scale_factor = 1.0  # Track scaling for coordinate mapping
+        # Thread-safe translation cache with TTL
+        self._translation_cache = TTLCache(maxsize=TRANSLATION_CACHE_MAXSIZE, ttl=TRANSLATION_CACHE_TTL)
+        self._cache_lock = threading.Lock()
+        # CJK font paths for Asian language support
+        self._cjk_fonts = {
+            'ja': ['msgothic.ttc', 'meiryo.ttc', 'yugothic.ttc'],  # Japanese
+            'zh': ['simsun.ttc', 'msyh.ttc', 'simhei.ttf'],  # Chinese
+            'ko': ['malgun.ttf', 'gulim.ttc'],  # Korean
+        }
         
-    def _find_font(self):
-        """Find a suitable Unicode font on Windows."""
-        # Common Windows fonts with good Unicode support
-        candidates = ["arial.ttf", "segoeui.ttf", "tahoma.ttf", "msgothic.ttc"]
+    def _find_font(self, candidates: list = None) -> str:
+        """
+        Find a suitable Unicode font on Windows.
+        
+        Args:
+            candidates: Optional list of font names to try. Defaults to common Unicode fonts.
+            
+        Returns:
+            The first loadable font name, or 'arial.ttf' as fallback.
+        """
+        if candidates is None:
+            # Common Windows fonts with good Unicode support
+            candidates = ["arial.ttf", "segoeui.ttf", "tahoma.ttf", "msgothic.ttc"]
+        
         for font in candidates:
-             try:
-                 # Check if loadable (PIL searches system path on Windows)
-                 ImageFont.truetype(font, 10)
-                 return font
-             except:
-                 continue
-        return "arial.ttf" # Fallback
+            try:
+                # Check if loadable (PIL searches system path on Windows)
+                ImageFont.truetype(font, 10)
+                return font
+            except OSError:
+                continue
+        return "arial.ttf"  # Fallback
+    
+    def _get_font_for_language(self, target_lang: str) -> str:
+        """
+        Get the best font for a specific target language.
+        
+        For CJK languages (Chinese, Japanese, Korean), tries language-specific fonts first.
+        Falls back to the default font path for other languages.
+        
+        Args:
+            target_lang: Target language code ('ja', 'zh', 'ko', etc.)
+            
+        Returns:
+            Font path suitable for the target language.
+        """
+        # Check if CJK language
+        if target_lang in self._cjk_fonts:
+            cjk_candidates = self._cjk_fonts[target_lang]
+            font = self._find_font(cjk_candidates)
+            if font != "arial.ttf":  # Found a CJK font
+                return font
+            # CJK font not found, log warning
+            logger.warning(f"No CJK font found for language '{target_lang}'. Using fallback: {self.font_path}")
+        
+        return self.font_path
 
     def load_model(self, source_lang: str = 'en', ocr_engine: str = "PaddleOCR"):
         """
@@ -158,8 +207,9 @@ class VisualTranslator:
         self.model_loaded = False
         self.current_engine = None
         self.translator_cache = {}
-        # Clear LRU cache
-        self._cached_translate.cache_clear()
+        # Clear translation cache (thread-safe)
+        with self._cache_lock:
+            self._translation_cache.clear()
         logger.info("VisualTranslator model unloaded.")
 
     def _get_translator(self, target_lang: str) -> GoogleTranslator:
@@ -168,15 +218,40 @@ class VisualTranslator:
             self.translator_cache[target_lang] = GoogleTranslator(source='auto', target=target_lang)
         return self.translator_cache[target_lang]
 
-    @lru_cache(maxsize=500)  # Reduced from 2000 to prevent RAM growth
     def _cached_translate(self, text: str, target_lang: str) -> str:
-        """Cached translation."""
+        """
+        Thread-safe cached translation using TTLCache.
+        
+        Args:
+            text: Text to translate.
+            target_lang: Target language code.
+            
+        Returns:
+            Translated text, or original text on failure.
+        """
+        cache_key = (text, target_lang)
+        
+        # Check cache first (thread-safe read)
+        with self._cache_lock:
+            if cache_key in self._translation_cache:
+                return self._translation_cache[cache_key]
+        
+        # Perform translation outside lock to avoid blocking
         try:
             translator = self._get_translator(target_lang)
-            return translator.translate(text)
-        except Exception as e:
-            logger.warning(f"Translation failed for '{text}': {e}")
+            translated = translator.translate(text)
+        except ConnectionError as e:
+            logger.error(f"Network error during translation for '{text}': {type(e).__name__}: {e}")
             return text
+        except Exception as e:
+            logger.warning(f"Translation failed for '{text}': {type(e).__name__}: {e}")
+            return text
+        
+        # Store in cache (thread-safe write)
+        with self._cache_lock:
+            self._translation_cache[cache_key] = translated
+        
+        return translated
 
     def _detect_language(self, text: str) -> str:
         """Detect language of text using langdetect."""
@@ -193,7 +268,6 @@ class VisualTranslator:
         except:
             return "unknown"
 
-    @lru_cache(maxsize=200)  # Reduced from 1000 to prevent RAM growth
     def _translate_text(self, text: str, target_lang: str, source_lang: str = None) -> str:
         """Translate text if it matches source language or if source is unknown."""
         if not text or len(text.strip()) < 2:
@@ -253,7 +327,25 @@ class VisualTranslator:
         return mask
 
     def _inpaint_text_regions(self, frame: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        """Use OpenCV inpainting to remove text from frame."""
+        """
+        Use OpenCV inpainting to remove text from frame.
+        
+        Uses the TELEA algorithm (Fast Marching Method) which provides good results
+        for small text regions. For higher quality results on larger regions,
+        consider integrating GAN-based inpainting models like:
+        - LaMa (https://github.com/advimman/lama) - Large Mask Inpainting
+        - MAT (Mask-Aware Transformer)
+        
+        Note: GAN-based models require additional model downloads and GPU resources.
+        The TELEA algorithm is used by default for speed and simplicity.
+        
+        Args:
+            frame: Input BGR frame.
+            mask: Binary mask where 255 indicates regions to inpaint.
+            
+        Returns:
+            Inpainted frame with text regions filled.
+        """
         # Dilate mask slightly for better inpainting
         kernel = np.ones((3, 3), np.uint8)
         dilated_mask = cv2.dilate(mask, kernel, iterations=2)
@@ -263,7 +355,7 @@ class VisualTranslator:
         return inpainted
 
     def _overlay_translated_text_pil(self, frame: np.ndarray, boxes: list, 
-                                  translated_texts: list) -> np.ndarray:
+                                  translated_texts: list, target_lang: str = 'en') -> np.ndarray:
         """Overlay translated text using PIL for Unicode support."""
         
         # Convert to PIL Image
@@ -282,9 +374,12 @@ class VisualTranslator:
              font_size = int(target_height) 
              if font_size < 8: font_size = 8
              
+             # Select font based on target language (CJK support)
+             font_path = self._get_font_for_language(target_lang)
              try:
-                font = ImageFont.truetype(self.font_path, font_size)
-             except:
+                font = ImageFont.truetype(font_path, font_size)
+             except OSError:
+                logger.warning(f"Failed to load font '{font_path}', using default.")
                 font = ImageFont.load_default()
 
              # Measure text
@@ -297,8 +392,9 @@ class VisualTranslator:
              while text_w > w and font_size > 8:
                  font_size -= 2
                  try:
-                    font = ImageFont.truetype(self.font_path, font_size)
-                 except: break # generic default font doesn't scale
+                    font = ImageFont.truetype(font_path, font_size)
+                 except OSError:
+                    break  # Font doesn't scale, use current size
                  left, top, right, bottom = font.getbbox(text)
                  text_w = right - left
                  text_h = bottom - top
@@ -422,6 +518,10 @@ class VisualTranslator:
                                         # New HPI/dict format: {'text': str, 'confidence': float, 'text_region': list}
                                         if isinstance(line, dict):
                                             if 'text_region' in line and 'text' in line:
+                                                confidence = line.get('confidence', 1.0)
+                                                if confidence < MIN_OCR_CONFIDENCE:
+                                                    logger.debug(f"[VisualTranslator] Skipping low-confidence detection: '{line['text']}' (conf={confidence:.2f})")
+                                                    continue
                                                 boxes.append(line['text_region'])
                                                 original_texts.append(line['text'])
                                         # Old list format: [[box], (text, confidence)]
@@ -432,13 +532,20 @@ class VisualTranslator:
                                             # text_data can be tuple (text, conf) or just text
                                             if isinstance(text_data, (list, tuple)):
                                                 text = text_data[0]
+                                                confidence = text_data[1] if len(text_data) > 1 else 1.0
                                             else:
                                                 text = str(text_data)
+                                                confidence = 1.0
+                                            
+                                            # Apply confidence filter
+                                            if confidence < MIN_OCR_CONFIDENCE:
+                                                logger.debug(f"[VisualTranslator] Skipping low-confidence detection: '{text}' (conf={confidence:.2f})")
+                                                continue
                                             
                                             boxes.append(box_data)
                                             original_texts.append(text)
                                     except (IndexError, KeyError, TypeError) as parse_err:
-                                        logger.warning(f"[VisualTranslator] Failed to parse OCR line: {parse_err}")
+                                        logger.warning(f"[VisualTranslator] Failed to parse OCR line: {type(parse_err).__name__}: {parse_err}")
                         
                         if boxes:
                             logger.info(f"[VisualTranslator] Frame {frame_count}: Detected {len(boxes)} text regions")
@@ -481,20 +588,25 @@ class VisualTranslator:
                          last_translated_valid = valid_translations
                          
                          frame = self._inpaint_text_regions(frame, last_mask)
-                         frame = self._overlay_translated_text_pil(frame, last_boxes_valid, last_translated_valid)
+                         frame = self._overlay_translated_text_pil(frame, last_boxes_valid, last_translated_valid, target_lang)
                     else:
                         last_mask = None # Clear mask if no text to translate
                         last_boxes_valid = []
                         last_translated_valid = []
                         
+                except OpenCVError as e:
+                    # OpenCV errors are critical - log and continue
+                    logger.error(f"[VisualTranslator] OpenCV error in frame {frame_count}: {type(e).__name__}: {e}")
                 except Exception as e:
-                     logger.warning(f"Error processing frame {frame_count}: {e}")
+                    logger.warning(f"[VisualTranslator] Error processing frame {frame_count}: {type(e).__name__}: {e}")
             else:
                  # Apply cached (hold the translation)
                  if last_mask is not None and last_boxes_valid:
                       try:
                           frame = self._inpaint_text_regions(frame, last_mask)
-                          frame = self._overlay_translated_text_pil(frame, last_boxes_valid, last_translated_valid)
+                          frame = self._overlay_translated_text_pil(frame, last_boxes_valid, last_translated_valid, target_lang)
+                      except OpenCVError as e:
+                          logger.error(f"[VisualTranslator] OpenCV error applying cached mask: {type(e).__name__}: {e}")
                       except Exception as e:
                           pass # If painting fails, just output original frame
                        

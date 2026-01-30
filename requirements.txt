@@ -53,3 +53,4 @@ rich==13.7.1
 colorama==0.4.6
 insightface>=0.7.3
 onnxruntime-gpu
+cachetools>=5.3.0
