@@ -62,6 +62,19 @@ class VideoTranslator:
         
         # Session state
         self.session = SessionContext()
+        
+        # Abort flag
+        self.cancel_requested = False
+
+    def abort(self):
+        """Signals the pipeline to stop at the next safe cancellation point."""
+        logger.warning("Pipeline cancel requested.")
+        self.cancel_requested = True
+        
+    def _check_cancel(self):
+        """Raises Exception if cancellation is requested."""
+        if self.cancel_requested:
+            raise Exception("Processing Cancelled by User")
 
     def _get_assigned_voice(self, speaker_id, available_voices):
         """
@@ -242,6 +255,9 @@ class VideoTranslator:
                 yield from self._process_chunked(video_path, chunker, *args, **chunk_kwargs)
                 return
 
+        # Reset cancel flag
+        self.cancel_requested = False
+        
         # Normal pipeline
         yield from self._process_pipeline(*args, **kwargs)
 
@@ -373,6 +389,9 @@ class VideoTranslator:
         # ---------------------------------------------------------------------
         yield ("progress", 0.1, "Extracting Audio...")
         extracted_path = self._step_extraction(video_path)
+        yield ("progress", 0.1, "Extracting Audio...")
+        self._check_cancel()
+        extracted_path = self._step_extraction(video_path)
         yield ("log", "Audio extracted.")
              
         # ---------------------------------------------------------------------
@@ -381,6 +400,9 @@ class VideoTranslator:
         # ---------------------------------------------------------------------
         self.load_model("demucs") 
         yield ("progress", 0.2, "Separating Vocals...")
+        self.load_model("demucs") 
+        yield ("progress", 0.2, "Separating Vocals...")
+        self._check_cancel()
         vocals_path, bg_path = self._step_separation(extracted_path, audio_model_name)
         yield ("log", f"Separation complete. Vocals: {Path(vocals_path).name}")
         
@@ -399,6 +421,9 @@ class VideoTranslator:
             else:
                 self.load_model("diarization")
                 yield ("progress", 0.25, "Diarizing...")
+                self.load_model("diarization")
+                yield ("progress", 0.25, "Diarizing...")
+                self._check_cancel()
                 diarization_segments, speaker_map, speaker_profiles = self._step_diarization(
                     vocals_path, video_path, diarization_model, min_speakers, max_speakers
                 )
@@ -631,11 +656,13 @@ class VideoTranslator:
             elif "Llama" in effective_model: trans_key = "llama"
             elif "ALMA" in effective_model: trans_key = "alma"
             
+            # Pass cancel callback to translator
             translated = self.translator.translate_segments(
                 segments, target_code, model=trans_key, 
-                source_lang=source_code, optimize=optimize
+                source_lang=source_code, optimize=optimize,
+                check_cancel_callback=self._check_cancel
             )
-        
+
         # Export SRT
         try:
             from src.utils.srt_generator import generate_srt
@@ -680,6 +707,7 @@ class VideoTranslator:
         total_segs = len(translated_segments)
         
         for i, seg in enumerate(translated_segments):
+             if i % 5 == 0: self._check_cancel()
              text = seg["translated_text"]
              if not text: continue
              
@@ -731,7 +759,8 @@ class VideoTranslator:
         # Execute Batch
         yield ("progress", 0.5, "Generating Speech (Batch)...")
         
-        generated_paths = self.tts_engine.generate_batch(tasks, model=model_name)
+        self._check_cancel()
+        generated_paths = self.tts_engine.generate_batch(tasks, model=model_name, check_cancel_callback=self._check_cancel)
         
         msg_count = 0
         for idx, (orig_i, path) in enumerate(zip(original_indices, generated_paths)):

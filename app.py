@@ -26,33 +26,33 @@ def process_video(video_path, source_language, target_language, audio_model, tts
     """
     Main pipeline entry point.
     """
-    print(f"DEBUG: video_path={video_path}")
-    print(f"DEBUG: source_language={source_language}")
-    print(f"DEBUG: target_language={target_language}")
-    print(f"DEBUG: audio_model={audio_model}")
-    print(f"DEBUG: tts_model={tts_model}")
-    print(f"DEBUG: translation_model={translation_model}")
-    print(f"DEBUG: context_model={context_model}")
-    print(f"DEBUG: transcription_model={transcription_model}")
-    print(f"DEBUG: optimize_translation={optimize_translation}")
-    print(f"DEBUG: enable_diarization={enable_diarization}")
-    print(f"DEBUG: diarization_model={diarization_model}")
-    print(f"DEBUG: min_speakers={min_speakers}")
-    print(f"DEBUG: max_speakers={max_speakers}")
-    print(f"DEBUG: enable_time_stretch={enable_time_stretch}")
-    print(f"DEBUG: enable_vad={enable_vad}")
-    print(f"DEBUG: vad_min_silence={vad_min_silence}")
-    print(f"DEBUG: enable_lipsync={enable_lipsync}")
-    print(f"DEBUG: lipsync_model={lipsync_model}")
-    print(f"DEBUG: live_portrait_mode={live_portrait_mode}")
-    print(f"DEBUG: enable_visual_translation={enable_visual_translation}")
-    print(f"DEBUG: ocr_model={ocr_model}")
-    print(f"DEBUG: tts_voice={tts_voice}")
-    print(f"DEBUG: transcription_beam_size={transcription_beam_size}")
-    print(f"DEBUG: tts_enable_cfg={tts_enable_cfg}")
-    print(f"DEBUG: tts_enable_cfg={tts_enable_cfg}")
-    print(f"DEBUG: enable_audio_enhancement={enable_audio_enhancement}")
-    print(f"DEBUG: chunk_duration={chunk_duration}")
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"DEBUG: video_path={video_path}")
+        logger.debug(f"DEBUG: source_language={source_language}")
+        logger.debug(f"DEBUG: target_language={target_language}")
+        logger.debug(f"DEBUG: audio_model={audio_model}")
+        logger.debug(f"DEBUG: tts_model={tts_model}")
+        logger.debug(f"DEBUG: translation_model={translation_model}")
+        logger.debug(f"DEBUG: context_model={context_model}")
+        logger.debug(f"DEBUG: transcribe_model={transcription_model}")
+        logger.debug(f"DEBUG: optimize_translation={optimize_translation}")
+        logger.debug(f"DEBUG: enable_diarization={enable_diarization}")
+        logger.debug(f"DEBUG: diarization_model={diarization_model}")
+        logger.debug(f"DEBUG: min_speakers={min_speakers}")
+        logger.debug(f"DEBUG: max_speakers={max_speakers}")
+        logger.debug(f"DEBUG: enable_time_stretch={enable_time_stretch}")
+        logger.debug(f"DEBUG: enable_vad={enable_vad}")
+        logger.debug(f"DEBUG: vad_min_silence={vad_min_silence}")
+        logger.debug(f"DEBUG: enable_lipsync={enable_lipsync}")
+        logger.debug(f"DEBUG: lipsync_model={lipsync_model}")
+        logger.debug(f"DEBUG: live_portrait_mode={live_portrait_mode}")
+        logger.debug(f"DEBUG: enable_visual_translation={enable_visual_translation}")
+        logger.debug(f"DEBUG: ocr_model={ocr_model}")
+        logger.debug(f"DEBUG: tts_voice={tts_voice}")
+        logger.debug(f"DEBUG: transcription_beam_size={transcription_beam_size}")
+        logger.debug(f"DEBUG: tts_enable_cfg={tts_enable_cfg}")
+        logger.debug(f"DEBUG: enable_audio_enhancement={enable_audio_enhancement}")
+        logger.debug(f"DEBUG: chunk_duration={chunk_duration}")
     
     if not video_path:
         return None, "Error: No video uploaded."
@@ -428,7 +428,18 @@ def create_ui():
             outputs=[video_output, logs_output]
         )
         
-        cancel_btn.click(fn=None, inputs=None, outputs=None, cancels=[process_event])
+        def abort_processing():
+            """Signals the translator to stop."""
+            logger.info("User requested cancellation.")
+            video_translator.abort()
+            return "Cancellation requested..."
+        
+        cancel_btn.click(
+            fn=abort_processing, 
+            inputs=None, 
+            outputs=[logs_output], # Optional: update log to say "Cancelling..."
+            cancels=[process_event]
+        )
         
     return app
 

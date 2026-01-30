@@ -326,7 +326,7 @@ class Diarizer:
             logger.error(f"PyAnnote diarization failed: {e}")
             return []
 
-    def diarize(self, audio_path, backend="speechbrain", min_speakers=1, max_speakers=None):
+    def diarize(self, audio_path: str | Path, backend: str = "speechbrain", min_speakers: int = 1, max_speakers: int | None = None) -> list[dict]:
         """
         Perform speaker diarization.
         backend: 'speechbrain' or 'nemo'
@@ -420,7 +420,7 @@ class Diarizer:
                 merged.append(seg)
         return merged
 
-    def _cluster_embeddings(self, embeddings, max_speakers=None):
+    def _cluster_embeddings(self, embeddings: np.ndarray, max_speakers: int | None = None) -> np.ndarray:
         from sklearn.cluster import SpectralClustering, AgglomerativeClustering
         from sklearn.metrics import silhouette_score
         from sklearn.preprocessing import normalize
@@ -491,7 +491,7 @@ class Diarizer:
             
         return genders
 
-    def extract_speaker_profiles(self, audio_path, segments, output_dir):
+    def extract_speaker_profiles(self, audio_path: str | Path, segments: list[dict], output_dir: str | Path) -> dict[str, str]:
         """
         Extracts clean audio samples (10-15s) for each speaker.
         Calculates SNR to pick best segments.

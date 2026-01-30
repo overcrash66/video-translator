@@ -9,11 +9,34 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-def apply_patches():
+def _patch_windows_encoding():
     """
-    Applies necessary runtime patches to libraries.
+    On Windows, open() defaults to cp1252. This breaks many ML libraries (like transformers) 
+    that expect UTF-8. We monkey-patch open to default to UTF-8.
     """
-    _patch_torchaudio_load()
+    import sys
+    if sys.platform != "win32":
+        return
+
+    import builtins
+    _original_open = builtins.open
+
+    def _utf8_open(*args, **kwargs):
+        # Inspect mode to see if it's binary
+        mode = 'r' # default
+        if 'mode' in kwargs:
+            mode = kwargs['mode']
+        elif len(args) > 1:
+            mode = args[1]
+            
+        # Only enforce UTF-8 if not in binary mode and encoding not specified
+        if 'b' not in mode and 'encoding' not in kwargs:
+            kwargs['encoding'] = 'utf-8'
+            
+        return _original_open(*args, **kwargs)
+
+    builtins.open = _utf8_open
+    logger.info("Monkey-patched builtins.open to force UTF-8 encoding on Windows.")
 
 def _patch_torchaudio_load():
     """
@@ -63,3 +86,10 @@ def _patch_torchaudio_load():
         logger.info("Monkey-patched torchaudio.load to use soundfile library directly.")
     except Exception as e:
         logger.warning(f"Failed to patch torchaudio.load: {e}")
+
+def apply_patches():
+    """
+    Applies necessary runtime patches to libraries.
+    """
+    _patch_windows_encoding() # CRITICAL: Must be first
+    _patch_torchaudio_load()

@@ -522,7 +522,7 @@ class Wav2LipSyncer:
         # Enhancement (GFPGAN)
         if enhance_face and self.restorer is not None:
             try:
-                _, restored_faces, _ = self.restorer.enhance(g_crop, has_aligned=False, only_center_face=False, paste_back=False)
+                _, restored_faces, _ = self.restorer.enhance(g_crop, has_aligned=True, only_center_face=True, paste_back=False)
                 if restored_faces:
                     g_crop = restored_faces[0]
             except Exception as e:

@@ -5,14 +5,16 @@ except ImportError:
 
 import os
 import sys
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file if it exists
 load_dotenv()
 
 # Windows DLL loading fix for CUDA conflicts between torch and ctranslate2
-# This MUST happen before any CUDA library imports
 # Base directory
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -33,7 +35,8 @@ def setup_cuda_dlls():
     if _nvidia_cudnn_bin.exists():
         try:
             os.add_dll_directory(str(_nvidia_cudnn_bin))
-        except Exception: pass
+        except Exception as e:
+            logger.warning(f"Could not add DLL directory {_nvidia_cudnn_bin}: {e}")
     
     # Add CUDA toolkit bin paths to DLL search path (detect common versions)
     cuda_paths = [
@@ -45,10 +48,8 @@ def setup_cuda_dlls():
         if cuda_path.exists():
             try:
                 os.add_dll_directory(str(cuda_path))
-            except Exception: pass
-
-# Base directory
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
+            except Exception as e:
+                logger.warning(f"Could not add DLL directory {cuda_path}: {e}")
 
 # Directories
 TEMP_DIR = BASE_DIR / "temp"
@@ -67,7 +68,7 @@ DIARIZATION_MODEL_PATH = os.getenv("DIARIZATION_MODEL_PATH") # Optional: Local p
 
 import torch
 # Device configuration
-def get_device():
+def get_device() -> str:
     """
     Determines the best available device.
     Checks if CUDA is available AND functional (compatible with installed PyTorch).
@@ -116,7 +117,7 @@ DUMMY_AUDIO_DURATION_MAX = 5.0 # seconds
 
 from src.utils import languages
 
-def get_language_code(name):
+def get_language_code(name: str) -> str:
     return languages.get_language_code(name)
 
 # -----------------------------

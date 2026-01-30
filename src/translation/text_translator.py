@@ -315,10 +315,11 @@ class Translator:
             self.translator_cache[code] = GoogleTranslator(source='auto', target=code)
         return self.translator_cache[code], code
 
-    def translate_segments(self, segments, target_lang, model="google", source_lang="auto", optimize=False):
+    def translate_segments(self, segments, target_lang, model="google", source_lang="auto", optimize=False, check_cancel_callback=None):
         """
         Translates segments using selected model.
         optimize: If True, uses sequential context-aware translation (slower but better).
+        check_cancel_callback: Function to call to check for cancellation.
         """
         if not segments: return []
         
@@ -331,6 +332,8 @@ class Translator:
         
         # Check Cache
         for i, seg in enumerate(segments):
+            if check_cancel_callback and i % 10 == 0: check_cancel_callback()
+            
             key = f"{source_code}|{target_code}|{seg['text'].strip()}|{model}"
             if key in self.cache:
                 s = seg.copy()
@@ -345,6 +348,24 @@ class Translator:
         if not segments_to_trans:
             return translated_segments
             
+        # Optimization: Context-Aware Translation (Loop)
+        if optimize and hasattr(self, 'llm_translator'):
+            logger.info("Using Context-Aware Translation (Sequential)...")
+            
+            # Context window
+            context_history = []
+            
+            for j, seg in enumerate(segments_to_trans):
+                if check_cancel_callback: check_cancel_callback()
+                
+                # ... (rest of implementation would be here, but we are just injecting check)
+                # We need to implement the check inside the batch processing below too.
+                pass 
+                
+        # Batch Processing
+        batch_size = 10 if model == "google" else 4
+        
+        # Log stats
         logger.info(f"Translating {len(segments_to_trans)}/{len(segments)} items (Cache Hit: {len(segments)-len(segments_to_trans)})")
         
         newly_translated = []
@@ -369,6 +390,7 @@ class Translator:
                 # Sequential Context-Aware Mode
                 prev_text = None
                 for i, seg in enumerate(segments):
+                    if check_cancel_callback: check_cancel_callback()
                     logger.info(f"Translating segment {i+1}/{len(segments)} (Context-Aware)...")
                     trans_text = self.llm_translator.translate_context_aware(
                         seg['text'], source_code, target_code, prev_text=prev_text
@@ -382,16 +404,20 @@ class Translator:
                     prev_text = trans_text
             else:
                 # Fast Batch Mode (No inter-segment context)
-                texts = [s['text'] for s in segments]
+                texts = [s['text'] for s in segments_to_trans] # FIX: Use segments_to_trans, not segments (which includes cached ones that we skip)
+                # Wait, 'segments' logic earlier populated 'translated_segments' with cached ones.
+                # So we only need to translate 'segments_to_trans'.
+                
                 # Smaller chunks for Llama
                 chunk_size = 4 if "llama" in model or "alma" in model else 8 
                 
                 trans_texts = []
                 for i in range(0, len(texts), chunk_size):
+                    if check_cancel_callback: check_cancel_callback()
                     chunk = texts[i:i+chunk_size]
                     trans_texts.extend(self.llm_translator.translate_batch(chunk, source_code, target_code))
                     
-                for i, seg in enumerate(segments):
+                for i, seg in enumerate(segments_to_trans):
                     new_s = seg.copy()
                     new_s['translated_text'] = trans_texts[i]
                     newly_translated.append(new_s)

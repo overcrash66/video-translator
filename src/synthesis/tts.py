@@ -323,7 +323,7 @@ class TTSEngine:
             logger.info("Generating placeholder dummy audio.")
             return self._generate_dummy_audio(sanitized_text, output_path)
 
-    def generate_batch(self, tasks: list[TTSTask], model="edge") -> list:
+    def generate_batch(self, tasks: list[TTSTask], model="edge", check_cancel_callback=None) -> list:
         """
         Synthesizes a batch of text segments into audio.
         Delegates to the backend's `generate_batch` for optimized processing (e.g., parallel async requests).
@@ -332,6 +332,7 @@ class TTSEngine:
         :param tasks: List of dictionaries containing TTS parameters per segment.
                       Keys: text, output_path, language, speaker_wav, etc.
         :param model: The TTS model identifier (e.g., 'edge', 'xtts').
+        :param check_cancel_callback: Function to check for user abortion.
         :return: List of paths to generated audio files (or fallback dummy audio).
         """
         # 1. Select Backend
@@ -348,6 +349,8 @@ class TTSEngine:
         results = [None] * len(tasks)
         
         for i, t in enumerate(tasks):
+             if check_cancel_callback and i % 10 == 0: check_cancel_callback()
+             
              safe_text = self._sanitize_text(t['text'])
              if not safe_text:
                  results[i] = self._generate_dummy_audio("silence", t['output_path'])
