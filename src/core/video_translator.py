@@ -1,9 +1,9 @@
+from src.utils import config
 import torch
 import gc
 import logging
 import os
 from pathlib import Path
-from src.utils import config
 from src.core.session import SessionContext
 
 # Component imports
@@ -21,6 +21,7 @@ from src.processing.voice_enhancement import VoiceEnhancer
 from typing import Generator, Literal, Any, Optional
 
 from src.utils import patches
+from src.utils.chunker import VideoChunker
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +219,119 @@ class VideoTranslator:
         """Wrapper to get available voices from TTSEngine."""
         return self.tts_engine.get_available_voices(model_name, language_code)
 
-    def process_video(self, 
+    def process_video(self, *args, **kwargs) -> Generator[tuple[Literal["log", "progress", "result"], Any] | list, None, None]:
+        """
+        Orchestrates the full pipeline, handling chunking if necessary.
+        """
+        video_path_arg = kwargs.get('video_path') or (args[0] if args else None)
+        if not video_path_arg:
+            raise ValueError("video_path is required")
+            
+        video_path = config.validate_path(video_path_arg, must_exist=False)
+        
+        # [FIX] Pop chunk_duration so it isn't passed to _process_pipeline
+        chunk_val = kwargs.pop('chunk_duration', config.CHUNK_DURATION)
+        
+        # Only attempt chunking if the file actually exists (prevents failures in tests with mocked paths)
+        if hasattr(video_path, 'exists') and video_path.exists() and video_path.stat().st_size > 0:
+            chunker = VideoChunker(max_duration_sec=int(chunk_val))
+            if chunker.should_chunk(video_path):
+                yield ("log", f"Video is long (> {chunker.max_duration}s). Switching to Chunked Processing...")
+                chunk_kwargs = kwargs.copy()
+                chunk_kwargs.pop('video_path', None)
+                yield from self._process_chunked(video_path, chunker, *args, **chunk_kwargs)
+                return
+
+        # Normal pipeline
+        yield from self._process_pipeline(*args, **kwargs)
+
+    def _process_chunked(self, video_path: Path, chunker: VideoChunker, *args, **kwargs):
+        """
+        Handles splitting, processing, and merging for long videos.
+        """
+        # 1. Global Diarization (if enabled)
+        # We run this on the Full Audio to ensure speaker IDs are consistent across chunks.
+        precomputed_diarization = None
+        if kwargs.get('enable_diarization', False):
+             yield ("progress", 0.05, "Global Diarization (Full Audio)...")
+             yield ("log", "Running global diarization on full audio for consistency...")
+             
+             # Extract full audio temporarily
+             full_audio = self._step_extraction(video_path)
+             
+             # Run Diarization Step
+             self.load_model("diarization")
+             # Use same params as pipeline
+             precomputed_diarization = self._step_diarization(
+                 full_audio, video_path, 
+                 kwargs.get('diarization_model', "pyannote/SpeechBrain (Default)"),
+                 kwargs.get('min_speakers', 1),
+                 kwargs.get('max_speakers', 10)
+             )
+             self.unload_all_models()
+             yield ("log", "Global diarization complete.")
+
+        # 2. Split Video & Audio
+        yield ("log", "Splitting video into chunks...")
+        video_chunks = chunker.split_video(video_path)
+        
+        # We need audio chunks too? 
+        # Actually _process_pipeline extracts audio from the video chunk passed to it.
+        # So we just need video chunks.
+        
+        processed_chunks = []
+        
+        for i, chunk in enumerate(video_chunks):
+            yield ("log", f"Refining Chunk {i+1}/{len(video_chunks)}...")
+            yield ("progress", (i / len(video_chunks)), f"Processing Chunk {i+1}/{len(video_chunks)}")
+            
+            # Prepare kwargs for chunk
+            chunk_kwargs = kwargs.copy()
+            chunk_kwargs['video_path'] = chunk
+            # Inject precomputed diarization
+            chunk_kwargs['precomputed_diarization'] = precomputed_diarization
+            
+            # Run pipeline for chunk
+            chunk_result = None
+            
+            # We strictly yield from _process_pipeline but we filter 'result'
+            # We also might want to silence some logs or progress to avoid spam?
+            # For now let's pass everything but capture the result.
+            
+            iterator = self._process_pipeline(**chunk_kwargs)
+            for item in iterator:
+                if isinstance(item, tuple):
+                    if item[0] == "result":
+                        chunk_result = item[1]
+                    elif item[0] == "log":
+                        # Indent logs for clarity
+                        yield ("log", f"  [Chunk {i+1}] {item[1]}")
+                    # Skip progress updates from sub-pipeline to avoid jumping 0-100
+                elif isinstance(item, list):
+                    # TTS segments list, ignore
+                    pass
+            
+            if chunk_result:
+                processed_chunks.append(Path(chunk_result))
+            else:
+                yield ("log", f"Error: Chunk {i+1} failed to produce result.")
+                # Proceed? Or fail? failing 1 chunk ruins the video.
+                raise Exception(f"Chunk {i+1} processing failed.")
+                
+            # Critical: Clear VRAM between chunks
+            self.unload_all_models()
+            
+        # 3. Merge Results
+        yield ("progress", 0.95, "Merging Chunks...")
+        yield ("log", "Merging processed chunks...")
+        
+        final_output = config.OUTPUT_DIR / f"translated_{video_path.name}"
+        chunker.merge_videos(processed_chunks, final_output)
+        
+        yield ("result", str(final_output))
+
+
+    def _process_pipeline(self, 
                       video_path: str | Path, 
                       source_lang: str, 
                       target_lang: str, 
@@ -242,11 +355,12 @@ class VideoTranslator:
                       max_speakers: int = 10,
                       ocr_model_name: str = "PaddleOCR",
                       tts_voice: str | None = None,
-                      lipsync_model_name: str | None = None,
-                      live_portrait_acceleration: str = "ort") -> Generator[tuple[Literal["log", "progress", "result"], Any] | list, None, None]:
+                      lipsync_model_name: str | None = "wav2lip",
+                      live_portrait_acceleration: str = "ort",
+                      precomputed_diarization: tuple | None = None) -> Generator[tuple[Literal["log", "progress", "result"], Any] | list, None, None]:
         """
-        Orchestrates the full pipeline as a generator.
-        Yields: ("log", message) or ("progress", value, desc) or ("result", path)
+        Internal pipeline logic (renamed from process_video).
+        Supports precomputed_diarization for chunked execution.
         """
         
         # 0. Setup and Validation
@@ -279,12 +393,16 @@ class VideoTranslator:
         
         diarization_segments, speaker_map, speaker_profiles = [], {}, {}
         if enable_diarization:
-            self.load_model("diarization")
-            yield ("progress", 0.25, "Diarizing...")
-            diarization_segments, speaker_map, speaker_profiles = self._step_diarization(
-                vocals_path, video_path, diarization_model, min_speakers, max_speakers
-            )
-            yield ("log", f"Diarization complete. Speakers: {len(speaker_map)}")
+            if precomputed_diarization:
+                 yield ("log", "Using precomputed global diarization...")
+                 diarization_segments, speaker_map, speaker_profiles = precomputed_diarization
+            else:
+                self.load_model("diarization")
+                yield ("progress", 0.25, "Diarizing...")
+                diarization_segments, speaker_map, speaker_profiles = self._step_diarization(
+                    vocals_path, video_path, diarization_model, min_speakers, max_speakers
+                )
+                yield ("log", f"Diarization complete. Speakers: {len(speaker_map)}")
             
         # ---------------------------------------------------------------------
         # 4. Transcription Stage
@@ -381,7 +499,7 @@ class VideoTranslator:
                  self.visual_translator.translate_video_text(
                      str(video_path), str(visual_out),
                      target_lang=target_code, source_lang=source_code,
-                     ocr_engine=ocr_model_name, ocr_interval_sec=10.0
+                     ocr_engine=ocr_model_name, ocr_interval_sec=2.0
                  )
                  if visual_out.exists():
                      video_path = visual_out

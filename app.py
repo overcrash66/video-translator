@@ -22,7 +22,7 @@ def estimate_remaining_time(progress: float, elapsed_seconds: float) -> str:
         return f"~{int(remaining)}s remaining"
     return f"~{int(remaining/60)}m remaining"
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, chunk_duration, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -50,7 +50,9 @@ def process_video(video_path, source_language, target_language, audio_model, tts
     print(f"DEBUG: tts_voice={tts_voice}")
     print(f"DEBUG: transcription_beam_size={transcription_beam_size}")
     print(f"DEBUG: tts_enable_cfg={tts_enable_cfg}")
+    print(f"DEBUG: tts_enable_cfg={tts_enable_cfg}")
     print(f"DEBUG: enable_audio_enhancement={enable_audio_enhancement}")
+    print(f"DEBUG: chunk_duration={chunk_duration}")
     
     if not video_path:
         return None, "Error: No video uploaded."
@@ -125,7 +127,8 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             tts_voice=tts_voice,
             lipsync_model_name=lipsync_model,
             enable_audio_enhancement=enable_audio_enhancement,
-            live_portrait_acceleration=live_portrait_mode
+            live_portrait_acceleration=live_portrait_mode,
+            chunk_duration=chunk_duration
         )
         
         final_video_path = None
@@ -215,6 +218,12 @@ def create_ui():
                     info="Select the LLM to use for context-aware translation."
                 )
 
+                chunk_duration = gr.Slider(
+                    minimum=60, maximum=900, value=300, step=30,
+                    label="Chunk Duration (High RAM Safety)",
+                    info="If video length exceeds this (seconds), it will be split processed. Default: 300s (5min)."
+                )
+
                 optimize_translation.change(
                     fn=lambda x: gr.update(visible=x),
                     inputs=[optimize_translation],
@@ -242,7 +251,7 @@ def create_ui():
 
                 with gr.Row(visible=True) as diarization_params:
                     min_speakers = gr.Slider(1, 10, value=1, step=1, label="Min Speakers")
-                    max_speakers = gr.Slider(1, 20, value=5, step=1, label="Max Speakers")
+                    max_speakers = gr.Slider(1, 20, value=1, step=1, label="Max Speakers")
 
                 def update_diarization_visibility(enabled):
                     return gr.update(visible=enabled), gr.update(visible=enabled)
@@ -266,9 +275,9 @@ def create_ui():
                 )
 
                 transcription_beam_size = gr.Slider(
-                    minimum=1, maximum=10, step=1, value=5, 
+                    minimum=1, maximum=10, step=1, value=7, 
                     label="Beam Size (Accuracy vs Speed)",
-                    info="Higher values improve accuracy but slow down transcription. (Default: 5)"
+                    info="Higher values improve accuracy but slow down transcription. (Default: 7)"
                 )
                 
                 tts_model = gr.Dropdown(
@@ -285,7 +294,7 @@ def create_ui():
 
                 enable_audio_enhancement = gr.Checkbox(
                     label="Enhance Audio (VoiceFixer)",
-                    value=False,
+                    value=True,
                     info="Uses VoiceFixer to remove noise and restore speech quality in the finale output. (Recommended for Piper/Edge)"
                 )
                 
@@ -351,7 +360,7 @@ def create_ui():
                 lipsync_model = gr.Dropdown(
                     choices=["Wav2Lip-GAN (Low Quality - Fast)", "Wav2Lip + GFPGAN (Low Quality - Medium)", "LivePortrait (High Quality - Slow)"],
                     label="Lip-Sync Model",
-                    value="LivePortrait (High Quality - Slow)",
+                    value="Wav2Lip-GAN (Low Quality - Fast)",
                     visible=False,
                     info="Select 'LivePortrait' for the best visual quality."
                 )
@@ -365,7 +374,7 @@ def create_ui():
                 live_portrait_mode = gr.Dropdown(
                     choices=["ort", "tensorrt"],
                     label="LivePortrait Acceleration",
-                    value="ort",
+                    value="tensorrt",
                     visible=True,
                     info="Use 'tensorrt' for GPU acceleration (Requires Setup). 'ort' is standard."
                 )
@@ -394,7 +403,7 @@ def create_ui():
                 ocr_model = gr.Dropdown(
                     choices=["PaddleOCR", "EasyOCR"],
                     label="OCR Model",
-                    value="PaddleOCR",
+                    value="EasyOCR",
                     visible=False,
                     info="Select OCR engine. EasyOCR is more robust on Windows. PaddleOCR is faster."
                 )
@@ -415,7 +424,7 @@ def create_ui():
         
         process_event = process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, chunk_duration],
             outputs=[video_output, logs_output]
         )
         

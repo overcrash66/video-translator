@@ -31,9 +31,38 @@ class TRTWrapper:
     Wrapper for TensorRT engine to mimic ONNX Runtime InferenceSession interface.
     Handles buffer allocation, data transfer, and execution using PyTorch (no PyCUDA).
     """
+    
+    # Class-level flag to ensure TF32 override is set only once per process
+    _tf32_override_set = False
+    
+    @staticmethod
+    def _ensure_tf32_consistency():
+        """
+        Ensures consistent NVIDIA_TF32_OVERRIDE setting between engine build and runtime.
+        
+        TensorRT engines cache the TF32 mode setting at build time. If this environment
+        variable differs at runtime, TensorRT will fail with:
+        "Inconsistent setting of NVIDIA_TF32_OVERRIDE env var at build X and execution Y"
+        
+        The engines were typically built with TF32_OVERRIDE unset (-1), so we need to
+        ensure it's also unset at runtime.
+        """
+        if not TRTWrapper._tf32_override_set:
+            # Remove the environment variable if set, to match build-time state (unset = -1)
+            if 'NVIDIA_TF32_OVERRIDE' in os.environ:
+                logging.getLogger(__name__).info(
+                    f"Removing NVIDIA_TF32_OVERRIDE env var (was: {os.environ['NVIDIA_TF32_OVERRIDE']}) "
+                    "to match TensorRT engine build-time settings."
+                )
+                del os.environ['NVIDIA_TF32_OVERRIDE']
+            TRTWrapper._tf32_override_set = True
+    
     def __init__(self, engine_path: str):
         if not TRT_AVAILABLE:
             raise ImportError("TensorRT dependencies not installed.")
+        
+        # Ensure TF32 override consistency BEFORE loading/deserializing any TRT engine
+        TRTWrapper._ensure_tf32_consistency()
             
         self.logger = trt.Logger(trt.Logger.WARNING)
         self.runtime = trt.Runtime(self.logger)
@@ -297,7 +326,10 @@ class LivePortraitSyncer:
         
         logger.info(f"Loading TensorRT plugin: {plugin_path}")
         ctypes.CDLL(str(plugin_path))
-        trt.init_libnvinfer_plugins(None, "")
+        if hasattr(trt, "init_libnvinfer_plugins"):
+            trt.init_libnvinfer_plugins(None, "")
+        else:
+            logger.info("DEBUG: trt.init_libnvinfer_plugins not found (ignoring for tests/compatibility)")
 
     def _load_trt_models(self):
         """Loads TensorRT engines."""
@@ -439,7 +471,6 @@ class LivePortraitSyncer:
         Returns:
             Path to the output video file.
         """
-        self.load_models()
         
         # 1. Generate driving video using Wav2Lip
         # We need a temp path for the driving video
@@ -451,10 +482,15 @@ class LivePortraitSyncer:
         # and enhancement is slow/unnecessary for the driving video.
         self.wav2lip_driver.sync_lips(video_path, audio_path, str(temp_wav2lip_out), enhance_face=False)
         
+        # Unload Wav2Lip to free VRAM for LivePortrait
+        self.wav2lip_driver.unload_model()
+        
         if not temp_wav2lip_out.exists():
             raise RuntimeError("Wav2Lip failed to generate driving video.")
 
         # 2. LivePortrait Animation (The "Real" Step)
+        self.load_models() # Load LP models ONLY after Wav2Lip is done
+        
         accel_label = "TENSORRT" if self.acceleration == 'tensorrt' else "ONNX"
         logger.info(f"Step 2: Applying LivePortrait animation ({accel_label})...")
         

@@ -2,6 +2,10 @@ import logging
 import soundfile as sf
 import torch
 import torchaudio
+try:
+    import ctranslate2 # Pre-import to avoid Windows DLL shadowing with Paddle
+except ImportError:
+    pass
 
 logger = logging.getLogger(__name__)
 

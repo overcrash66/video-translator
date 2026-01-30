@@ -1,9 +1,51 @@
+try:
+    import ctranslate2 # Pre-import to avoid Windows DLL shadowing
+except ImportError:
+    pass
+
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables from .env file if it exists
 load_dotenv()
+
+# Windows DLL loading fix for CUDA conflicts between torch and ctranslate2
+# This MUST happen before any CUDA library imports
+# Base directory
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+# Windows DLL loading fix for CUDA conflicts between torch and ctranslate2
+def setup_cuda_dlls():
+    """
+    Registers CUDA and cuDNN DLL paths. 
+    Called before model initialization to avoid shadowing issues during early imports.
+    """
+    if sys.platform != "win32":
+        return
+        
+    # Get the venv site-packages directory
+    _site_packages = BASE_DIR / "venv" / "Lib" / "site-packages"
+    
+    # Add nvidia-cudnn-cu12 package DLL path FIRST (has full cuDNN implementation)
+    _nvidia_cudnn_bin = _site_packages / "nvidia" / "cudnn" / "bin"
+    if _nvidia_cudnn_bin.exists():
+        try:
+            os.add_dll_directory(str(_nvidia_cudnn_bin))
+        except Exception: pass
+    
+    # Add CUDA toolkit bin paths to DLL search path (detect common versions)
+    cuda_paths = [
+        Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin"),
+        Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2\bin"),
+        Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.1\bin"),
+    ]
+    for cuda_path in cuda_paths:
+        if cuda_path.exists():
+            try:
+                os.add_dll_directory(str(cuda_path))
+            except Exception: pass
 
 # Base directory
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -19,6 +61,10 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 # Configuration
 HF_TOKEN = os.getenv("HF_TOKEN")
 DIARIZATION_MODEL_PATH = os.getenv("DIARIZATION_MODEL_PATH") # Optional: Local path to model folder/yaml
+
+# CRITICAL: Import ctranslate2 BEFORE torch on Windows to prevent cuDNN DLL conflicts
+# Moved to top for maximum priority
+
 import torch
 # Device configuration
 def get_device():
@@ -80,6 +126,10 @@ DEMUCS_CHUNK_SECONDS = 10
 DEMUCS_OVERLAP_SECONDS = 1
 
 WAV2LIP_BOX_SMOOTH_WINDOW = 5
+
+# Chunking (seconds)
+CHUNK_DURATION = int(os.getenv("CHUNK_DURATION", "300"))  # 5 minutes default
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "2"))  # 2 second overlap
 
 OCR_INTERVAL_DEFAULT = 1.0
 
