@@ -25,16 +25,9 @@ from PIL import Image, ImageDraw, ImageFont
 import sys
 import os
 
-# Note: PaddlePaddle is now CPU-only to avoid cuDNN conflicts with PyTorch
-# Set PaddlePaddle flags BEFORE importing to suppress oneDNN/PIR warnings
-# Version 3.3.0 has a regression on Windows; disabling PIR and New Executor helps.
-os.environ['FLAGS_enable_pir_api'] = '0'
-os.environ['FLAGS_enable_pir_in_executor'] = '0'
-os.environ['FLAGS_enable_new_executor'] = '0'
-os.environ['FLAGS_use_mkldnn'] = '0'
-os.environ['FLAGS_cpu_deterministic'] = '1'
+# Note: PaddlePaddle runs CPU-only to avoid cuDNN conflicts with PyTorch
+os.environ['FLAGS_use_mkldnn'] = '0'  # Disable MKL-DNN for stability on Windows
 os.environ['GLOG_minloglevel'] = '2'  # Suppress verbose paddle logging
-os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'  # Skip connectivity check
 
 try:
     from paddleocr import PaddleOCR
@@ -146,8 +139,8 @@ class VisualTranslator:
         
         if ocr_engine == "PaddleOCR":
             if not PADDLE_AVAILABLE:
-                logger.warning("PaddleOCR not installed. Visual translation disabled.")
-                return
+                logger.warning("PaddleOCR not installed. Falling back to EasyOCR.")
+                return self.load_model(source_lang, "EasyOCR")
 
             logger.info(f"Initializing PaddleOCR (CPU mode) for language: {source_lang}...")
             
@@ -159,22 +152,19 @@ class VisualTranslator:
                 }
                 ocr_lang = paddle_lang_map.get(source_lang, 'en')
                 
-                # [FIX] Simplified loader: Force CPU immediately
-                # This avoids the complex GPU/HPI detection which hangs on some Windows setups
-                # with PaddlePaddle 3.x.
+                # PaddleOCR 2.8.1 is stable on Windows - no timeout workaround needed
                 self.ocr_model = PaddleOCR(
                     use_angle_cls=True,
                     lang=ocr_lang,
-                    device='cpu',
-                    enable_mkldnn=False # Stabilizes Windows CPU inference
+                    use_gpu=False,  # Force CPU mode
+                    enable_mkldnn=False  # Disable MKL-DNN for stability
                 )
                 self.model_loaded = True
                 self.current_engine = ocr_engine
-                logger.info(f"PaddleOCR (engine={ocr_engine}, lang={ocr_lang}) loaded successfully.")
+                logger.info(f"PaddleOCR (lang={ocr_lang}) loaded successfully.")
             except Exception as e:
-                logger.error(f"Critical failure loading PaddleOCR: {e}")
-                self.model_loaded = False
-                raise
+                logger.error(f"PaddleOCR initialization failed: {e}. Falling back to EasyOCR.")
+                return self.load_model(source_lang, "EasyOCR")
                 
         elif ocr_engine == "EasyOCR":
             logger.info(f"Loading EasyOCR model for language: {source_lang}...")
@@ -185,7 +175,15 @@ class VisualTranslator:
                 
                 self.ocr_model = easyocr.Reader([source_lang, 'en'], gpu=True) 
                 self.model_loaded = True
-                logger.info("EasyOCR loaded successfully.")
+                
+                # [OPTION A] Explicit device logging
+                device = getattr(self.ocr_model, 'device', 'unknown')
+                logger.info(f"EasyOCR loaded successfully on device: {device}")
+                if str(device) == 'cuda':
+                    logger.info("EasyOCR is running on GPU - optimal performance enabled.")
+                else:
+                    logger.warning(f"EasyOCR is running on {device} - GPU acceleration not active!")
+                    
             except ImportError:
                  logger.error("EasyOCR not installed. Run `pip install easyocr`.")
                  raise
@@ -194,7 +192,7 @@ class VisualTranslator:
                 try:
                     self.ocr_model = easyocr.Reader([source_lang, 'en'], gpu=False)
                     self.model_loaded = True
-                    logger.info("EasyOCR loaded successfully (CPU mode).")
+                    logger.warning("EasyOCR loaded in CPU mode - performance will be slower.")
                 except Exception as e_cpu:
                     logger.error(f"Failed to load EasyOCR with CPU: {e_cpu}")
                     raise
@@ -425,7 +423,7 @@ class VisualTranslator:
 
     def translate_video_text(self, video_path: str, output_path: str, 
                               target_lang: str = 'fr', source_lang: str = 'en',
-                              ocr_engine: str = "PaddleOCR",
+                              ocr_engine: str = "EasyOCR",  # [OPTION B] Default to EasyOCR for GPU support
                               ocr_interval_sec: float = 1.0) -> str: # DEFAULT interval 1.0s or user defined
         """
         Process video to detect and translate text.

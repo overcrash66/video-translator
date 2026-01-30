@@ -117,11 +117,11 @@ class TestVisualTranslatorProcess:
         mock_ocr.ocr.return_value = [[([[10,10],[20,10],[20,20],[10,20]], ("Hello", 0.9))]]
         
         # Run with interval 1.0s (every 30 frames)
-        translator.load_model()
+        translator.load_model(ocr_engine="PaddleOCR")
         
         # Mock translation to always return changed text
         with patch.object(translator, '_translate_text', return_value="Bonjour"):
-            translator.translate_video_text("in.mp4", "out.mp4", ocr_interval_sec=1.0)
+            translator.translate_video_text("in.mp4", "out.mp4", ocr_engine="PaddleOCR", ocr_interval_sec=1.0)
         
         # OCR should be called twice (Frame 0 and Frame 30) for 60 frames (0..59)
         assert mock_ocr.ocr.call_count == 2
@@ -153,14 +153,14 @@ class TestVisualTranslatorProcess:
         mock_ocr.ocr.return_value = [[([[10,10],[20,10],[20,20],[10,20]], ("Hello", 0.9))]]
         
         # Interval 10s (300 frames) -> OCR runs only on frame 0
-        translator.load_model()
+        translator.load_model(ocr_engine="PaddleOCR")
         
         with patch.object(translator, '_inpaint_text_regions') as mock_inpaint:
             # Mock overlay too to avoid PIL issues here if not fully mocked
             with patch.object(translator, '_overlay_translated_text_pil') as mock_overlay:
                  # Mock translation to ensure it triggers inpaint
                 with patch.object(translator, '_translate_text', return_value="Bonjour"):
-                    translator.translate_video_text("in.mp4", "out.mp4", ocr_interval_sec=10.0)
+                    translator.translate_video_text("in.mp4", "out.mp4", ocr_engine="PaddleOCR", ocr_interval_sec=10.0)
                 
                 # Verify OCR called once
                 assert mock_ocr.ocr.call_count == 1
@@ -202,11 +202,11 @@ class TestVisualTranslatorConfidenceFiltering:
             ([[30,30],[40,30],[40,40],[30,40]], ("LowConf", 0.2)),    # Should be filtered
         ]]
         
-        translator.load_model()
+        translator.load_model(ocr_engine="PaddleOCR")
         
         with patch.object(translator, '_translate_text') as mock_translate:
             mock_translate.return_value = "Translated"
-            translator.translate_video_text("in.mp4", "out.mp4", ocr_interval_sec=0.1)
+            translator.translate_video_text("in.mp4", "out.mp4", ocr_engine="PaddleOCR", ocr_interval_sec=0.1)
             
             # Should only be called once (for HighConf), LowConf should be filtered
             # Note: _translate_text is called per text, not per detection
