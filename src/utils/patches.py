@@ -87,9 +87,42 @@ def _patch_torchaudio_load():
     except Exception as e:
         logger.warning(f"Failed to patch torchaudio.load: {e}")
 
+def _patch_transformers_qwen2_tokenizer():
+    """
+    Create compatibility shim for vibevoice's usage of internal transformers path.
+    VibeVoice imports from 'transformers.models.qwen2.tokenization_qwen2_fast'
+    which doesn't exist in transformers 5.x. We create a fake module with the right export.
+    """
+    import sys
+    import types
+    
+    try:
+        # Check if the problematic path exists
+        from transformers.models.qwen2 import tokenization_qwen2_fast
+        return  # Already exists, nothing to do
+    except ImportError:
+        pass
+    
+    try:
+        # Import the working top-level class
+        from transformers import Qwen2TokenizerFast
+        
+        # Create a fake module
+        fake_module = types.ModuleType('transformers.models.qwen2.tokenization_qwen2_fast')
+        fake_module.Qwen2TokenizerFast = Qwen2TokenizerFast
+        
+        # Register it in sys.modules so future imports work
+        sys.modules['transformers.models.qwen2.tokenization_qwen2_fast'] = fake_module
+        
+        logger.info("Created compatibility shim for transformers.models.qwen2.tokenization_qwen2_fast")
+    except ImportError as e:
+        logger.warning(f"Could not create Qwen2 tokenizer shim: {e}")
+
 def apply_patches():
     """
     Applies necessary runtime patches to libraries.
     """
     _patch_windows_encoding() # CRITICAL: Must be first
     _patch_torchaudio_load()
+    _patch_transformers_qwen2_tokenizer()  # Fix VibeVoice import
+

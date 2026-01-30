@@ -92,6 +92,15 @@ class EdgeTTSBackend(TTSBackend):
                         voice = voice_list[voice_index]
                         logger.info(f"Switching to alternate voice: {voice}")
         
+        raise RuntimeError(f"Edge-TTS failed after {max_retries} attempts: {last_error}")
+
+    def generate_batch(self, tasks):
+        """
+        Batch generation using async parallelism.
+        
+        :param tasks: List of task dicts with keys: text, output_path, language, gender, speaker_id, preferred_voice, voice_selector
+        :return: List of output paths (or None for failures)
+        """
         MAX_RETRIES = 3
         
         async def _process_single(task):
@@ -165,3 +174,4 @@ class EdgeTTSBackend(TTSBackend):
             return await asyncio.gather(*coroutines)
             
         return asyncio.run(_run_batch())
+
