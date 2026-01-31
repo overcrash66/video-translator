@@ -2,7 +2,27 @@ import gradio as gr
 import os
 import shutil
 from pathlib import Path
+from src.utils.patches import apply_encoding_patch, apply_transformers_patch, apply_late_patches
+
+# 1. Encoding patches (Critical for Windows)
+apply_encoding_patch()
+
+# 2. Config (Loads environment + CTranslate2 DLLs)
+# MUST happen before 'transformers' or 'torch' are imported to prevent DLL conflicts (WinError 127)
 from src.utils import config, languages
+
+# 3. Transformers/Torch patches
+apply_transformers_patch()
+
+
+
+# 2. Config implicitly runs setup_cuda_dlls() and pre-loads CTranslate2
+if hasattr(config, 'setup_cuda_dlls'):
+    config.setup_cuda_dlls()
+    
+# 3. Late patches (Need Torch/libraries loaded)
+apply_late_patches()
+    
 import logging
 from src.core.video_translator import VideoTranslator
 

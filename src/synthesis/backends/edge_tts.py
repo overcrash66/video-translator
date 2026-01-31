@@ -53,7 +53,8 @@ class EdgeTTSBackend(TTSBackend):
                 except (ValueError, IndexError):
                     voice = voice_list[0]
         
-        logger.info(f"Generating TTS (Edge): lang='{language}', voice='{voice}'")
+        logger.info(f"Generating TTS (Edge): lang='{language}', voice='{voice}', text='{text[:50]}...'")
+        
         
         # Retry logic
         max_retries = 3

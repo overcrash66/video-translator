@@ -1,70 +1,97 @@
-try:
-    import ctranslate2 # Pre-import to avoid Windows DLL shadowing
-except ImportError:
-    pass
-
 import os
 import sys
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load environment variables from .env file if it exists
-load_dotenv()
-
-# Windows DLL loading fix for CUDA conflicts between torch and ctranslate2
 # Base directory
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+load_dotenv()
+
+# Directories
+TEMP_DIR = BASE_DIR / "temp"
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+OUTPUT_DIR = BASE_DIR / "output"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# Environment Variables
+HF_TOKEN = os.getenv("HF_TOKEN")
+
 
 # Windows DLL loading fix for CUDA conflicts between torch and ctranslate2
-def setup_cuda_dlls():
+def setup_zlib_dll():
+    """Adds src/lib (zlibwapi) to DLL path for CTranslate2."""
+    if sys.platform != "win32": return
+    
+    _src_lib = BASE_DIR / "src" / "lib"
+    print(f"[Config] Checking src/lib: {_src_lib}")
+    if _src_lib.exists():
+        try:
+            os.add_dll_directory(str(_src_lib))
+            print(f"[Config] Added DLL directory: {_src_lib}")
+        except Exception as e:
+            print(f"[Config] Failed to add src/lib: {e}")
+    else:
+        print(f"[Config] src/lib not found!")
+
+def setup_nvidia_dlls():
     """
-    Registers CUDA and cuDNN DLL paths. 
-    Called before model initialization to avoid shadowing issues during early imports.
+    Adds torch/lib paths for dependencies.
     """
-    if sys.platform != "win32":
-        return
-        
-    # Get the venv site-packages directory
+    if sys.platform != "win32": return
+    
     _site_packages = BASE_DIR / "venv" / "Lib" / "site-packages"
     
-    # Add nvidia-cudnn-cu12 package DLL path FIRST (has full cuDNN implementation)
-    _nvidia_cudnn_bin = _site_packages / "nvidia" / "cudnn" / "bin"
-    if _nvidia_cudnn_bin.exists():
-        try:
-            os.add_dll_directory(str(_nvidia_cudnn_bin))
-        except Exception as e:
-            logger.warning(f"Could not add DLL directory {_nvidia_cudnn_bin}: {e}")
+    # Add torch/lib (Critical: contains matching cuDNN/cuBLAS/zlibwapi)
+    _torch_lib = _site_packages / "torch" / "lib"
+    print(f"[Config] Checking torch/lib: {_torch_lib}")
     
-    # Add CUDA toolkit bin paths to DLL search path (detect common versions)
+    if _torch_lib.exists():
+        try:
+            os.add_dll_directory(str(_torch_lib))
+            print(f"[Config] Added DLL directory: {_torch_lib}")
+        except Exception as e:
+            print(f"[Config] Failed to add torch/lib: {e}")
+    else:
+        print(f"[Config] torch/lib not found at expected path: {_torch_lib}")
+
+    # Fallback to system CUDA only if needed (usually torch/lib is enough)
+    # CRITICAL: Do NOT add multiple conflicting CUDA versions (e.g. 11.8 AND 12.8). 
+    # Debugging showed that adding v11.8 caused WinError 127 when v12.8 was also present.
     cuda_paths = [
         Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin"),
-        Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2\bin"),
-        Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.1\bin"),
     ]
+    env_cuda = os.environ.get("CUDA_PATH")
+    if env_cuda:
+        cuda_paths.append(Path(env_cuda) / "bin")
+        
     for cuda_path in cuda_paths:
         if cuda_path.exists():
             try:
                 os.add_dll_directory(str(cuda_path))
-            except Exception as e:
-                logger.warning(f"Could not add DLL directory {cuda_path}: {e}")
+                print(f"[Config] Added System CUDA: {cuda_path}")
+            except Exception:
+                 pass
 
-# Directories
-TEMP_DIR = BASE_DIR / "temp"
-OUTPUT_DIR = BASE_DIR / "output"
+# PHASE 1: Setup DLLs
+print(f"[Config] Initializing DLL paths... BASE_DIR={BASE_DIR}")
+setup_zlib_dll()
+setup_nvidia_dlls()
 
-# Create directories if they don't exist
-TEMP_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
+# PHASE 2: Load CTranslate2
+print("[Config] Importing ctranslate2...")
+import ctranslate2 
+print(f"[Config] CTranslate2 loaded successfully. Version: {ctranslate2.__version__}")
 
-# Configuration
-HF_TOKEN = os.getenv("HF_TOKEN")
-DIARIZATION_MODEL_PATH = os.getenv("DIARIZATION_MODEL_PATH") # Optional: Local path to model folder/yaml
-
-# CRITICAL: Import ctranslate2 BEFORE torch on Windows to prevent cuDNN DLL conflicts
-# Moved to top for maximum priority
+# PHASE 3: Shim
+def setup_cuda_dlls():
+    # Already done at module level
+    pass
 
 import torch
 # Device configuration

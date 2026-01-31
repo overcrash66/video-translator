@@ -1,11 +1,7 @@
 import logging
 import soundfile as sf
-import torch
-import torchaudio
-try:
-    import ctranslate2 # Pre-import to avoid Windows DLL shadowing with Paddle
-except ImportError:
-    pass
+# Removed global torch/torchaudio imports to prevent early loading conflicts with CTranslate2
+# Removed ctranslate2 import - handled properly in config.py now
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +39,10 @@ def _patch_torchaudio_load():
     Enforce soundfile backend to avoid TorchCodec errors on Windows via monkey-patching.
     Post-2.x torchaudio on Windows is unstable with backends. We bypass it using soundfile directly.
     """
+    # Import torch/torchaudio only when needed (LATE patch)
+    import torch
+    import torchaudio
+
     try:
         # Save original just in case, though we don't expose a revert for now
         _original_load = torchaudio.load
@@ -76,8 +76,6 @@ def _patch_torchaudio_load():
                 
             # Validations similar to torchaudio
             if normalize:
-                # SF reads float32 by default which is normalized -1 to 1 usually
-                # If int, maybe not.
                 pass 
                 
             return tensor, samplerate
@@ -90,8 +88,6 @@ def _patch_torchaudio_load():
 def _patch_transformers_qwen2_tokenizer():
     """
     Create compatibility shim for vibevoice's usage of internal transformers path.
-    VibeVoice imports from 'transformers.models.qwen2.tokenization_qwen2_fast'
-    which doesn't exist in transformers 5.x. We create a fake module with the right export.
     """
     import sys
     import types
@@ -118,11 +114,39 @@ def _patch_transformers_qwen2_tokenizer():
     except ImportError as e:
         logger.warning(f"Could not create Qwen2 tokenizer shim: {e}")
 
+def apply_encoding_patch():
+    """
+    Applies ONLY the Windows encoding fix.
+    Must be run before any file I/O (e.g. dotenv loading in config).
+    """
+    _patch_windows_encoding()
+
+def apply_transformers_patch():
+    """
+    Applies Transformers-related patches.
+    Should be run AFTER config (and ctranslate2 setup) but BEFORE heavy usage.
+    """
+    _patch_transformers_qwen2_tokenizer()
+
+def apply_early_patches():
+    """
+    Legacy method.
+    """
+    apply_encoding_patch()
+    apply_transformers_patch()
+
+def apply_late_patches():
+    """
+    Applies patches that require torch or other heavy libs.
+    Should be called AFTER config setup.
+    Includes: Torchaudio fix.
+    """
+    _patch_torchaudio_load()
+
 def apply_patches():
     """
-    Applies necessary runtime patches to libraries.
+    Legacy entry point.
     """
-    _patch_windows_encoding() # CRITICAL: Must be first
-    _patch_torchaudio_load()
-    _patch_transformers_qwen2_tokenizer()  # Fix VibeVoice import
+    apply_early_patches()
+    apply_late_patches()
 

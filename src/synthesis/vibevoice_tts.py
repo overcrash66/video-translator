@@ -37,9 +37,12 @@ class VibeVoiceWrapper:
             
             # Load processor and model
             self.processor = VibeVoiceProcessor.from_pretrained(self.repo_id)
+            
+            # [Fix] Do NOT use device_map - it triggers accelerate's meta tensor initialization
+            # Instead, load model normally then manually move to device
             self.tts = VibeVoiceForConditionalGenerationInference.from_pretrained(
                 self.repo_id,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
+                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
             ).to(self.device)
             
             self.model_loaded = True
