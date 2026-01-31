@@ -202,3 +202,6 @@ mlp_megatron_basic_test.onnx
 /cudnn_temp
 CWINDOWSsystem32cmd.exe.txt
 venv.7z
+custom_python_embed.zip
+create_portable_dist.ps1
+create_portable_dist_v2.ps1
