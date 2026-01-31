@@ -200,3 +200,4 @@ bart_mlp_megatron_basic_test.onnx
 bart_self_attention_megatron_basic_test.onnx
 mlp_megatron_basic_test.onnx
 /cudnn_temp
+CWINDOWSsystem32cmd.exe.txt

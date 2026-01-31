@@ -43,8 +43,10 @@ class VibeVoiceWrapper:
             self.tts = VibeVoiceForConditionalGenerationInference.from_pretrained(
                 self.repo_id,
                 torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                low_cpu_mem_usage=False, # FORCE FULL LOAD (Avoid meta tensors)
+                device_map=None,         # DISABLE ACCELERATE MAP
             ).to(self.device)
-            
+
             self.model_loaded = True
             logger.info("VibeVoice loaded successfully.")
             
@@ -109,33 +111,45 @@ class VibeVoiceWrapper:
             # Move inputs to device
             inputs = {k: v.to(self.device) if hasattr(v, 'to') else v for k, v in inputs.items()}
             
-            # [Fix] Ensure generation_config is populated to avoid 'NoneType object has no attribute bos_token_id'
+            # [Fix] Populate generation_config if missing
             if getattr(self.tts, "generation_config", None) is None:
                 from transformers import GenerationConfig
                 self.tts.generation_config = GenerationConfig()
             
             # Determine BOS token
             bos_id = None
-            if hasattr(self.processor.tokenizer, "bos_token_id") and self.processor.tokenizer.bos_token_id is not None:
-                bos_id = self.processor.tokenizer.bos_token_id
-            elif hasattr(self.processor.tokenizer, "eos_token_id"):
-                bos_id = self.processor.tokenizer.eos_token_id
-            else:
+            tokenizer = getattr(self.processor, "tokenizer", None)
+            
+            if tokenizer is not None:
+                if hasattr(tokenizer, "bos_token_id") and tokenizer.bos_token_id is not None:
+                    bos_id = tokenizer.bos_token_id
+                elif hasattr(tokenizer, "eos_token_id"):
+                    bos_id = tokenizer.eos_token_id
+            
+            if bos_id is None:
                 bos_id = 1 # Fallback
                 
             # Set in generation_config
-            if getattr(self.tts.generation_config, "bos_token_id", None) is None:
-                self.tts.generation_config.bos_token_id = bos_id
-                
-            # Set in model config (sometimes accessed directly)
-            if getattr(self.tts, "config", None) is not None:
-                if getattr(self.tts.config, "bos_token_id", None) is None:
-                    self.tts.config.bos_token_id = bos_id
+            # Access generation_config safely
+            gen_config = getattr(self.tts, "generation_config", None)
+            if gen_config is not None:
+                 if getattr(gen_config, "bos_token_id", None) is None:
+                    gen_config.bos_token_id = bos_id
+            else:
+                 logger.warning("VibeVoice generation_config is None even after attempted creation.")
+
+            # Set in model config
+            # Access config safely
+            model_config = getattr(self.tts, "config", None)
+            if model_config is not None:
+                if getattr(model_config, "bos_token_id", None) is None:
+                    model_config.bos_token_id = bos_id
 
             # Generate audio
             with torch.no_grad():
-                # Explicitly pass bos_token_id to be safe
-                output = self.tts.generate(**inputs, bos_token_id=bos_id)
+                # Explicitly pass tokenizer as required by VibeVoice library logic
+                # It uses tokenizer.bos_token_id internally even if generation_config is set
+                output = self.tts.generate(**inputs, tokenizer=tokenizer)
             
             # Handle return types
             import soundfile as sf
@@ -158,14 +172,14 @@ class VibeVoiceWrapper:
             if audio.ndim > 1:
                 audio = audio.squeeze()
                 
-            # Write output file
-            sf.write(str(output_path), audio, sr)
+            # Save audio
+            sf.write(str(output_path), audio.astype(np.float32), sr)
             
             return str(output_path)
             
         except Exception as e:
             logger.error(f"VibeVoice generation failed: {e}")
-            raise
+            raise e
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
