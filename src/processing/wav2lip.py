@@ -522,41 +522,68 @@ class Wav2LipSyncer:
         # Enhancement (GFPGAN)
         if enhance_face and self.restorer is not None:
             try:
-                _, restored_faces, _ = self.restorer.enhance(g_crop, has_aligned=True, only_center_face=True, paste_back=False)
+                # Use paste_back=False to get the cropped face back
+                _, restored_faces, _ = self.restorer.enhance(
+                    g_crop, 
+                    has_aligned=True, 
+                    only_center_face=True, 
+                    paste_back=False
+                )
                 if restored_faces:
                     g_crop = restored_faces[0]
             except Exception as e:
-                pass
+                logger.warning(f"GFPGAN enhancement failed: {e}")
 
+        # Resize crop to fit the box
         try:
-            # Upscale
             g_crop_resized = cv2.resize(g_crop, (w_box, h_box), interpolation=cv2.INTER_LANCZOS4)
+        except Exception:
+             # If resize fails (zero sise?), just return original
+             return frame
             
-            # Seamless Clone
-            center = (x1 + w_box//2, y1 + h_box//2)
-            mask = 255 * np.ones(g_crop_resized.shape, g_crop_resized.dtype)
+        # Seamless Clone
+        center = (x1 + w_box//2, y1 + h_box//2)
+        
+        # Create a soft mask for fallback
+        mask_fallback = np.zeros((h_box, w_box), dtype=np.float32)
+        cv2.ellipse(mask_fallback, (w_box//2, h_box//2), (w_box//2 - 5, h_box//2 - 5), 0, 0, 360, 1.0, -1)
+        mask_fallback = cv2.GaussianBlur(mask_fallback, (21, 21), 0)
+        mask_fallback = mask_fallback[..., np.newaxis]
+
+        # Check if the box touches the frame boundary
+        # If it touches closely, seamlessClone can "bleed" artifacts from the edge
+        margin = 5
+        is_edge_contact = (x1 <= margin) or (y1 <= margin) or (x2 >= frame.shape[1] - margin) or (y2 >= frame.shape[0] - margin)
+        
+        use_seamless = True
+        if is_edge_contact:
+            # High risk of bleeding artifacts at edges
+            use_seamless = False
             
+        if use_seamless:
             try:
-                frame = cv2.seamlessClone(g_crop_resized, frame, mask, center, cv2.NORMAL_CLONE)
+                # Standard seamless clone with a full mask usually works best for internal faces
+                # But sometimes a slight erosion helps
+                mask_sc = 255 * np.ones(g_crop_resized.shape, g_crop_resized.dtype)
+                frame = cv2.seamlessClone(g_crop_resized, frame, mask_sc, center, cv2.NORMAL_CLONE)
             except Exception:
-                # Fallback
-                mask = np.zeros((h_box, w_box), dtype=np.float32)
-                cv2.ellipse(mask, (w_box//2, h_box//2), (w_box//2 - 5, h_box//2 - 5), 0, 0, 360, 1.0, -1)
-                mask = cv2.GaussianBlur(mask, (21, 21), 0)
-                mask = mask[..., np.newaxis]
-                
+                # If seamless clone fails, fall back
+                use_seamless = False
+        
+        if not use_seamless:
+            try:
+                # Alpha blending fallback (Manual "paste")
                 roi = frame[y1:y2, x1:x2].astype(np.float32)
                 fg = g_crop_resized.astype(np.float32)
                 
-                blended = (fg * mask + roi * (1.0 - mask)).astype(np.uint8)
+                blended = (fg * mask_fallback + roi * (1.0 - mask_fallback)).astype(np.uint8)
                 frame[y1:y2, x1:x2] = blended
-                
-        except Exception as e:
-            # Simple paste fallback
-            try:
-                frame[y1:y2, x1:x2] = cv2.resize(g_crop, (w_box, h_box))
-            except:
-                pass # Give up
+            except Exception:
+                 # Last resort: hard paste (rarely looks good but better than crash)
+                 try:
+                    frame[y1:y2, x1:x2] = g_crop_resized
+                 except:
+                    pass
                 
         return frame
 
