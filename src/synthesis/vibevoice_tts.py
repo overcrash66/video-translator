@@ -151,6 +151,17 @@ class VibeVoiceWrapper:
                 # It uses tokenizer.bos_token_id internally even if generation_config is set
                 output = self.tts.generate(**inputs, tokenizer=tokenizer)
             
+            # [Fix] Handle case where model returns None (Portable App silent failure)
+            if output is None:
+                diagnostics = {
+                    "device": self.device,
+                    "input_shape": inputs['input_ids'].shape if 'input_ids' in inputs else "N/A",
+                    "model_config": getattr(self.tts, 'config', "Missing"),
+                    "generation_config": getattr(self.tts, 'generation_config', "Missing")
+                }
+                logger.error(f"VibeVoice generation returned None. Portable Diagnostics: {diagnostics}")
+                raise RuntimeError("VibeVoice model returned None. This usually indicates a missing dependency or corrupted model in the portable environment.")
+
             # Handle return types
             import soundfile as sf
             import numpy as np

@@ -799,8 +799,21 @@ class LivePortraitSyncer:
              bg_crop = bg_crop.astype(np.uint8)
              
              try:
+                 # Check mask_clone validity for seamlessClone
+                 if cv2.countNonZero(mask_clone) == 0:
+                     raise ValueError("Mask is empty")
+
+                 # Ensure mask is within bounds (should be guaranteed by construction, but safe to check)
+                 if mask_clone.shape != bg_crop.shape[:2]:
+                     raise ValueError(f"Mask shape mismatch: {mask_clone.shape} vs {bg_crop.shape}")
+
                  # NORMAL_CLONE is best for inserting objects with different lighting
-                 blended_crop = cv2.seamlessClone(pred_img, bg_crop, mask_clone, center_clone, cv2.NORMAL_CLONE)
+                 try:
+                    blended_crop = cv2.seamlessClone(pred_img, bg_crop, mask_clone, center_clone, cv2.NORMAL_CLONE)
+                 except Exception:
+                    # Retry with MIXED_CLONE (sometimes more robust to edge artifacts)
+                    blended_crop = cv2.seamlessClone(pred_img, bg_crop, mask_clone, center_clone, cv2.MIXED_CLONE)
+                    
              except Exception as e:
                  logger.warning(f"Seamless clone failed: {e}. Falling back to alpha blend.")
                  # Fallback manual blend
