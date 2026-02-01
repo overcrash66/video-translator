@@ -6,6 +6,8 @@
 
 Transform any video into a professional multilingual production with natural voice cloning, lip-sync, and on-screen text translation. No cloud APIs, no subscriptions, no data leaving your machine.
 
+## 📝 Enjoying the project? Please star it ⭐️! It helps me gauge interest and keep working on new features.
+
 ---
 
 ## ✨ Why This Project?
