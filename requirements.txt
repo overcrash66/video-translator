@@ -2,7 +2,7 @@ gradio==4.36.1
 python-dotenv==1.0.1
 numpy<2.0.0
 scipy==1.13.1
-pandas==2.2.2
+pandas<2.0.0
 librosa==0.10.2.post1
 soundfile==0.12.1
 ffmpeg-python==0.2.0
