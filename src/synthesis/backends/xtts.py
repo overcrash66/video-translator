@@ -3,6 +3,12 @@ import torch
 from pathlib import Path
 from src.utils import config
 from src.synthesis.backends.base import TTSBackend
+from transformers import GenerationConfig
+
+# Monkeypatch for Coqui TTS compatibility with Transformers 4.41+
+# Coqui TTS accesses .do_stream which was removed/is missing in newer GenerationConfig
+if not hasattr(GenerationConfig, "do_stream"):
+    GenerationConfig.do_stream = False
 
 logger = logging.getLogger(__name__)
 
