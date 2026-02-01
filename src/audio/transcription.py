@@ -8,6 +8,8 @@ import soundfile as sf
 import logging
 import sys # Added for subprocess executable path
 import os
+import subprocess
+import json
 from pathlib import Path
 
 # logging.basicConfig(level=logging.INFO) # Centralized in app.py
@@ -147,8 +149,6 @@ class Transcriber:
         """
         Transcribes audio using a subprocess to isolate CTranslate2/Whisper.
         """
-        import subprocess
-        import json
         
         self.load_model(model_size) # Updates self.model_size
         
