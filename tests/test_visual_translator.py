@@ -250,27 +250,32 @@ class TestVisualTranslatorThreadSafety:
     def test_cache_operations_thread_safe(self, translator):
         """Verify cache operations don't raise under concurrent access."""
         import threading
-        import random
         
         errors = []
         
-        def cache_operation(thread_id):
-            try:
-                for i in range(10):
-                    text = f"text_{thread_id}_{i}"
-                    # Mock the actual translation
-                    with patch.object(translator, '_get_translator') as mock_trans:
-                        mock_trans.return_value.translate.return_value = f"translated_{text}"
+        # Mock _get_translator globally for this test to avoid race conditions in mock setup
+        with patch.object(translator, '_get_translator') as mock_get_trans:
+            # Setup mock translator instance with side_effect
+            mock_trans_instance = MagicMock()
+            mock_trans_instance.translate.side_effect = lambda t: f"translated_{t}"
+            mock_get_trans.return_value = mock_trans_instance
+            
+            def cache_operation(thread_id):
+                try:
+                    for i in range(10):
+                        text = f"text_{thread_id}_{i}"
                         result = translator._cached_translate(text, 'fr')
-                        assert result == f"translated_{text}"
-            except Exception as e:
-                errors.append(e)
+                        # Check result matches expected translation
+                        if result != f"translated_{text}":
+                             errors.append(AssertionError(f"Expected translated_{text}, got {result}"))
+                except Exception as e:
+                    errors.append(e)
         
-        threads = [threading.Thread(target=cache_operation, args=(i,)) for i in range(5)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+            threads = [threading.Thread(target=cache_operation, args=(i,)) for i in range(5)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
         
         assert len(errors) == 0, f"Thread errors: {errors}"
     

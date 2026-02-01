@@ -16,6 +16,19 @@ warnings.filterwarnings("ignore")
 if not hasattr(torchaudio, 'list_audio_backends'):
     torchaudio.list_audio_backends = lambda: ['soundfile']
 
+# Fix for SpeechBrain 1.0.0 accessing torchaudio.io when it's not available
+# This prevents AttributeError: module 'torchaudio' has no attribute 'io'
+if not hasattr(torchaudio, 'io'):
+    try:
+        import torchaudio.io
+    except ImportError:
+        # If import fails, mock it to prevent AttributeError in SpeechBrain
+        class MockIO:
+            StreamReader = None
+            AudioEffector = None
+        torchaudio.io = MockIO()
+
+
 logger = logging.getLogger(__name__)
 
 class Diarizer:
