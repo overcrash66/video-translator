@@ -1,12 +1,22 @@
-venv/
-.git/
+# Git
+.git
 .gitignore
-__pycache__/
+.gitattributes
+
+# Python
+__pycache__
 *.pyc
 *.pyo
 *.pyd
-temp/
-output/
-debug_download/
-.vscode/
+.pytest_cache
+venv
 .env
+
+# Project specific
+output
+temp
+models
+cudnn_temp
+custom_python_embed.zip
+debug_crash.log
+debug_download

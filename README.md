@@ -223,26 +223,31 @@ pip install -r requirements.txt
 
 ### 🐳 Docker Deployment (GPU)
 
-For containerized deployment with NVIDIA GPU support:
+You can run the application in a Docker container with NVIDIA GPU support.
 
-```bash
-cd deploy/docker
+**Prerequisites:**
+- **NVIDIA Driver** (compatible with CUDA 12.x)
+- **Docker Desktop** (Windows) or Docker Engine (Linux)
+- **NVIDIA Container Toolkit** (for GPU access inside Docker)
 
-# Create .env file with your HuggingFace token (optional)
-echo "HF_TOKEN=your_token_here" > .env
+#### Build and Run (Recommended)
 
-# Build and run
-docker compose up --build -d
+1.  **Build the image** (run from the project root):
+    ```bash
+    docker build -f deploy/docker/Dockerfile -t video-translator .
+    ```
 
-# View logs
-docker compose logs -f
+2.  **Run the container**:
+    ```bash
+    # For PowerShell:
+    docker run --gpus all -p 7860:7860 -v ${PWD}/output:/app/output --name video-translator video-translator
 
-# Access the UI at http://localhost:7860
-```
+    # For Command Prompt (CMD):
+    docker run --gpus all -p 7860:7860 -v %cd%/output:/app/output --name video-translator video-translator
+    ```
 
-**Requirements:**
-- Docker with NVIDIA Container Toolkit (`nvidia-docker2`)
-- NVIDIA GPU with CUDA 12.1+ support
+3.  **Access the App**:
+    Open your browser to `http://localhost:7860`.
 
 ---
 

@@ -1,6 +1,6 @@
-# Use an official PyTorch image with CUDA support
-# This image includes CUDA 12.1 and cuDNN 9
-FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
+# Use an official NVIDIA CUDA image with Developer Tools (nvcc) for compiling deps like FlashAttention/Deepspeed if needed
+# CUDA 12.4 is compatible with Torch 2.4+ and RTX 50 series
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -8,6 +8,7 @@ ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
+# Added curl, python3-venv for venv support if needed (though typically not used inside docker, good for hygiene)
 RUN apt-get update && apt-get install -y \
     git \
     ffmpeg \
@@ -16,25 +17,23 @@ RUN apt-get update && apt-get install -y \
     cmake \
     libgl1-mesa-glx \
     curl \
+    python3.10 \
+    python3-pip \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
 # Upgrade pip
-RUN pip install --no-cache-dir --upgrade pip
+RUN python3 -m pip install --no-cache-dir --upgrade pip
 
-# Install PyTorch dependencies explicitly first (to ensure correct CUDA version)
-# The base image already has torch, but we want to ensure compatibility with audio/vision
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-# Install PaddlePaddle GPU (requires specific CUDA version matching)
-RUN pip install --no-cache-dir paddlepaddle-gpu==2.6.1 -f https://www.paddlepaddle.org.cn/whl/linux/mkl/avx/stable.html
-
-# Copy requirements
+# Copy the requirements file from the build context (project root)
+# The build command is run from root, so path is deploy/docker/requirements.docker.txt
 COPY deploy/docker/requirements.docker.txt /app/requirements.txt
 
-# Install other Python dependencies
+# Install Python dependencies
+# Note: Torch and Paddle are handled inside requirements.docker.txt now with specific indices
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Create necessary directories
@@ -47,4 +46,4 @@ COPY . /app
 EXPOSE 7860
 
 # Command to run the application
-CMD ["python", "app.py"]
+CMD ["python3", "app.py"]
