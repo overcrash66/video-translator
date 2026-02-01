@@ -80,6 +80,30 @@ All local models support **context-aware mode** using full-transcript context fo
 | **Lip-Sync (Cinema)** | LivePortrait | State-of-the-art cinematic lip sync with natural facial animation |
 | **Visual Text Translation** | PaddleOCR / EasyOCR | Detects and replaces on-screen text with OpenCV inpainting |
 
+## 🌐 Supported Languages
+
+Video Translator supports a wide range of languages for both source and target translation.
+
+| Language | Code |
+|:---|:---:|
+| **Auto Detect** | `auto` |
+| **English** | `en` |
+| **Spanish** | `es` |
+| **French** | `fr` |
+| **German** | `de` |
+| **Italian** | `it` |
+| **Portuguese** | `pt` |
+| **Polish** | `pl` |
+| **Turkish** | `tr` |
+| **Russian** | `ru` |
+| **Dutch** | `nl` |
+| **Czech** | `cs` |
+| **Arabic** | `ar` |
+| **Chinese (Simplified)** | `zh` |
+| **Japanese** | `ja` |
+| **Korean** | `ko` |
+| **Hindi** | `hi` |
+
 ### Production-Ready
 - 🖥️ **Friendly Gradio UI** — Easy drag-and-drop interface
 - 🎛️ **Fine-Grained Control** — Beam size, VAD settings, voice selection, and more
