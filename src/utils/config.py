@@ -11,6 +11,24 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv()
 
+# --- CRASH DEBUGGING LOGGER ---
+DEBUG_LOG_PATH = BASE_DIR / "debug_crash.log"
+def debug_log(msg):
+    """Writes immediate debug log to file for tracking hard crashes."""
+    try:
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            import datetime
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"[{ts}] {msg}\n")
+            f.flush()
+    except:
+        pass
+
+debug_log("--- SESSION START ---")
+debug_log(f"Python: {sys.version}")
+debug_log(f"Platform: {sys.platform}")
+
+
 # Directories
 TEMP_DIR = BASE_DIR / "temp"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -30,14 +48,19 @@ def setup_zlib_dll():
     
     _src_lib = BASE_DIR / "src" / "lib"
     print(f"[Config] Checking src/lib: {_src_lib}")
+    debug_log(f"Checking src/lib: {_src_lib}")
+    
     if _src_lib.exists():
         try:
             os.add_dll_directory(str(_src_lib))
             print(f"[Config] Added DLL directory: {_src_lib}")
+            debug_log(f"Added DLL directory: {_src_lib}")
         except Exception as e:
             print(f"[Config] Failed to add src/lib: {e}")
+            debug_log(f"Failed to add src/lib: {e}")
     else:
         print(f"[Config] src/lib not found!")
+        debug_log("src/lib not found!")
 
 def setup_nvidia_dlls():
     """
@@ -50,33 +73,50 @@ def setup_nvidia_dlls():
     # Add torch/lib (Critical: contains matching cuDNN/cuBLAS/zlibwapi)
     _torch_lib = _site_packages / "torch" / "lib"
     print(f"[Config] Checking torch/lib: {_torch_lib}")
+    debug_log(f"Checking torch/lib: {_torch_lib}")
     
     if _torch_lib.exists():
         try:
             os.add_dll_directory(str(_torch_lib))
             print(f"[Config] Added DLL directory: {_torch_lib}")
+            debug_log(f"Added DLL directory: {_torch_lib}")
         except Exception as e:
             print(f"[Config] Failed to add torch/lib: {e}")
+            debug_log(f"Failed to add torch/lib: {e}")
     else:
         print(f"[Config] torch/lib not found at expected path: {_torch_lib}")
+        debug_log(f"torch/lib not found at expected path: {_torch_lib}")
 
-    # Fallback to system CUDA only if needed (usually torch/lib is enough)
-    # CRITICAL: Do NOT add multiple conflicting CUDA versions (e.g. 11.8 AND 12.8). 
-    # Debugging showed that adding v11.8 caused WinError 127 when v12.8 was also present.
-    cuda_paths = [
-        Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin"),
+    # Fallback to system CUDA only if needed.
+    # CRITICAL: Do NOT add multiple conflicting CUDA versions.
+    # We prioritize v12.x because the user has Torch cu128 installed.
+    # Adding v11.8 causes conflicts/crashes when mixed with v12.8.
+    
+    preferred_cuda_roots = [
+        Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8"),
     ]
+    
+    # Check env var but verify version
     env_cuda = os.environ.get("CUDA_PATH")
     if env_cuda:
-        cuda_paths.append(Path(env_cuda) / "bin")
-        
-    for cuda_path in cuda_paths:
-        if cuda_path.exists():
+        p = Path(env_cuda)
+        debug_log(f"Found CUDA_PATH: {p}")
+        # Avoid adding v11.8 if we want v12.8
+        if "v11.8" not in str(p) and "v11" not in str(p):
+             if p not in preferred_cuda_roots:
+                 preferred_cuda_roots.append(p)
+        else:
+             debug_log(f"Skipping conflicting CUDA path: {p}")
+    
+    for cuda_root in preferred_cuda_roots:
+        bin_path = cuda_root / "bin"
+        if bin_path.exists():
             try:
-                os.add_dll_directory(str(cuda_path))
-                print(f"[Config] Added System CUDA: {cuda_path}")
-            except Exception:
-                 pass
+                os.add_dll_directory(str(bin_path))
+                print(f"[Config] Added System CUDA: {bin_path}")
+                debug_log(f"Added System CUDA: {bin_path}")
+            except Exception as e:
+                 debug_log(f"Failed to add System CUDA {bin_path}: {e}")
 
 # PHASE 1: Setup DLLs
 print(f"[Config] Initializing DLL paths... BASE_DIR={BASE_DIR}")

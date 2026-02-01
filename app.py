@@ -77,10 +77,13 @@ def process_video(video_path, source_language, target_language, audio_model, tts
     if not video_path:
         return None, "Error: No video uploaded."
     
+    config.debug_log(f"Process Video called for: {video_path}")
+    
     logs = []
     def update_log(msg):
         logs.append(msg)
         logger.info(msg)
+        config.debug_log(f"LOG: {msg}") # Duplicate to crash log
         return "\n".join(logs)
 
     try:
@@ -101,6 +104,8 @@ def process_video(video_path, source_language, target_language, audio_model, tts
         time.sleep(0.5) # Brief delay
         local_video_path = config.TEMP_DIR / f"input_{uuid.uuid4().hex}.mp4"
         
+        config.debug_log(f"Copying video to {local_video_path}...")
+        
         copied = False
         for attempt in range(5):
             try:
@@ -113,14 +118,28 @@ def process_video(video_path, source_language, target_language, audio_model, tts
                 time.sleep(1)
         
         if not copied:
+             config.debug_log("Critical: Failed to copy video file.")
              return None, update_log("Error: Could not access uploaded file (Locked?).")
 
         video_path = local_video_path
         update_log(f"Created local copy: {local_video_path.name}")
         update_log(f"DEBUG: live_portrait_mode selected in UI: '{live_portrait_mode}'")
         
+        # Log all arguments for debugging silent crashes
+        config.debug_log(f"ARG: source_language={source_language}")
+        config.debug_log(f"ARG: target_language={target_language}")
+        config.debug_log(f"ARG: audio_model={audio_model}")
+        config.debug_log(f"ARG: tts_model={tts_model}")
+        config.debug_log(f"ARGS: translation_model={translation_model}") # Plural to catch attention
+        config.debug_log(f"ARG: transcription_model={transcription_model}")
+        config.debug_log(f"ARG: diarization_model={diarization_model} (enabled={enable_diarization})")
+        config.debug_log(f"ARG: enable_visual_translation={enable_visual_translation}")
+        config.debug_log(f"ARG: ocr_model={ocr_model}")
+        config.debug_log(f"ARG: lipsync_model={lipsync_model} (enabled={enable_lipsync})")
+        
         # Delegate to VideoTranslator
         # Loop over the generator
+        config.debug_log("Calling video_translator.process_video...")
         iterator = video_translator.process_video(
             video_path=video_path,
             source_lang=source_language,

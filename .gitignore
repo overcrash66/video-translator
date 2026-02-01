@@ -206,3 +206,5 @@ custom_python_embed.zip
 create_portable_dist.ps1
 create_portable_dist_v2.ps1
 repair_portable_dist.ps1
+test_deps.py
+reproduce_app_logic.py

@@ -6,6 +6,8 @@ from src.utils import config
 from src.utils import audio_utils
 import soundfile as sf
 import logging
+import sys # Added for subprocess executable path
+import os
 from pathlib import Path
 
 # logging.basicConfig(level=logging.INFO) # Centralized in app.py
@@ -131,146 +133,161 @@ class Transcriber:
         self.min_word_confidence = 0.0  # Disabled - keep all transcribed words
 
     def load_model(self, size=None):
-        """Load Whisper model, handling model name mapping."""
-        # Map display name to actual model name
+        # In subprocess mode, we don't load the model here.
+        # Just update config if needed.
         target_size = MODEL_SIZE_MAP.get(size, size) if size else self.model_size
-        
-        # Check if we need to reload
-        if self.model and self.model_size == target_size:
-            return
-
-        if self.model:
-           self.unload_model()
-           
         self.model_size = target_size
-        logger.info(f"Loading Faster-Whisper model: {self.model_size} on {self.device}...")
-        try:
-            # compute_type="float16" for GPU, "int8" for CPU usually standard
-            compute_type = "float16" if self.device == "cuda" else "int8"
-            self.model = WhisperModel(self.model_size, device=self.device, compute_type=compute_type)
-            logger.info("Faster-Whisper model loaded.")
-        except Exception as e:
-            if "CUDA" in str(e) and self.device == "cuda":
-                logger.warning(f"CUDA Error loading Whisper: {e}")
-                logger.warning("Switching to CPU fallback for Transcription...")
-                self.device = "cpu"
-                # Recursive retry on CPU
-                return self.load_model(size)
-
-            logger.error(f"Failed to load Faster-Whisper model: {e}")
-            logger.info("Attempting to load 'base' model as fallback.")
-            try:
-                self.model = WhisperModel("base", device=self.device, compute_type="int8")
-            except Exception as e2:
-                 logger.error(f"Fallback to base model failed: {e2}")
-                 if self.device == "cuda":
-                     logger.warning("Attempting final fallback to CPU base model...")
-                     self.device = "cpu"
-                     self.model = WhisperModel("base", device="cpu", compute_type="int8")
+        config.debug_log(f"Transcriber: Configured for {self.model_size} (Subprocess Mode)")
 
     def unload_model(self):
-        if self.model:
-            logger.info("Unloading Whisper model...")
-            del self.model
-            self.model = None
-            if self.device == "cuda":
-                torch.cuda.empty_cache()
-            logger.info("Whisper model unloaded.")
+        # Nothing to unload in main process
+        pass
 
     def transcribe(self, audio_path, language=None, model_size=None, use_vad=None, beam_size=5, min_silence_duration_ms=1000):
         """
-        Transcribes the audio file and returns segments with timestamps.
-        
-        Args:
-            audio_path: Path to audio file
-            language: Language code or 'auto' for auto-detection
-            model_size: Whisper model size (large-v3, large-v3-turbo, medium, base)
-            use_vad: Override VAD preprocessing (default: self.use_vad)
-            beam_size: Beam size for transcription (default: 5)
-            
-        Returns:
-            list of dicts {start, end, text, words}
+        Transcribes audio using a subprocess to isolate CTranslate2/Whisper.
         """
-        self.load_model(model_size)
-        if not self.model:
-            raise RuntimeError("Whisper model not loaded.")
-
+        import subprocess
+        import json
+        
+        self.load_model(model_size) # Updates self.model_size
+        
         logger.info(f"Transcribing {audio_path} with language='{language}'...")
         
-        # Determine if we should use VAD
+        # Determine VAD usage
         should_use_vad = use_vad if use_vad is not None else self.use_vad
-        
-        # VAD preprocessing to identify speech regions
         vad_segments = None
         if should_use_vad:
             logger.info(f"Running VAD preprocessing (Min Silence: {min_silence_duration_ms}ms)...")
             vad_segments = self.vad.detect_speech(str(audio_path), min_silence_duration_ms=min_silence_duration_ms)
             if vad_segments:
-                total_audio_duration = self._get_audio_duration(audio_path)
-                speech_duration = sum(s['end'] - s['start'] for s in vad_segments)
-                logger.info(f"VAD: {len(vad_segments)} speech regions, {speech_duration:.1f}s speech / {total_audio_duration:.1f}s total")
-        
-        # Mapping parameters for faster-whisper
-        lang_arg = language if (language and language != "auto") else None
-        
-        # Transcribe with Whisper
-        segments_generator, info = self.model.transcribe(
-            str(audio_path), 
-            language=lang_arg,
-            beam_size=beam_size if beam_size is not None else 5,
-            word_timestamps=True,
-            condition_on_previous_text=False,
-            initial_prompt="This is a dialogue. Transcribe it accurately.",
-            temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
-            vad_filter=False,  # Disabled - Silero VAD handles this when use_vad=True
-        )
-        
-        logger.info(f"Detected language '{info.language}' with probability {info.language_probability}")
+                 logger.info(f"VAD: {len(vad_segments)} speech regions detected.")
 
-        # Unroll generator
-        result_segments = list(segments_generator)
+        # Prepare Subprocess Command
+        worker_script = Path(__file__).parent / "transcription_worker.py"
+        python_exe = sys.executable
         
+        compute_type = "float16" if self.device == "cuda" else "int8"
+        
+        cmd = [
+            python_exe, str(worker_script),
+            "--audio_path", str(audio_path),
+            "--model_size", str(self.model_size),
+            "--language", str(language if language else "auto"),
+            "--compute_type", compute_type,
+            "--device", self.device
+        ]
+        
+        config.debug_log(f"Transcriber: Launching subprocess: {' '.join(cmd)}")
+        
+        try:
+            # Run worker
+            # Pass environment to ensure DLLs are found (though worker sets them up too)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                env=os.environ.copy(),
+                check=True
+            )
+            
+            # Parse JSON
+            raw_output = result.stdout
+            
+            # Extract JSON block
+            import re
+            match = re.search(r"<<<<JSON>>>>\s*(.*?)\s*<<<<ENDJSON>>>>", raw_output, re.DOTALL)
+            if not match:
+                logger.error(f"Worker Output: {raw_output}")
+                raise RuntimeError("Could not find JSON block in worker output.")
+                
+            json_str = match.group(1)
+            data = json.loads(json_str)
+            
+            # Reconstruct objects (dict -> slightly compatible structure)
+            # Actually we just need list of dicts for the rest of pipeline
+            raw_segments = data["segments"]
+            detected_language = data.get("language", "en")
+            
+            logger.info(f"Subprocess returned {len(raw_segments)} segments. (Lang: {detected_language})")
+            
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Transcription Subprocess Failed! Stderr: {e.stderr}")
+            config.debug_log(f"Transcriber Crash: {e.stderr}")
+            
+            # [Fix] Fallback to CPU if CUDA crashes (Access Violation / DLL issue)
+            if self.device == "cuda":
+                logger.warning("Worker crashed on CUDA. Retrying with CPU fallback...")
+                config.debug_log("Switching to CPU fallback for Transcription worker...")
+                
+                # Update settings for CPU
+                self.device = "cpu"
+                
+                # Recursive retry
+                return self.transcribe(audio_path, language, model_size, use_vad, beam_size, min_silence_duration_ms)
+            
+            raise RuntimeError(f"Transcription failed: {e.stderr}")
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse worker output: {result.stdout}")
+            config.debug_log(f"Transcriber JSON Error: {result.stdout}")
+            raise RuntimeError("Transcription worker returned invalid JSON")
+            
+        
+        # Post-Processing (VAD Filtering & Cleanup)
+        # Re-use existing logic
         segments = []
-        for seg in result_segments:
+        for seq_dict in raw_segments:
+            # Convert dict back to object-like if needed, or just use dict
+            # Existing logic below expects objects 'seg.start' OR dicts?
+            # Looking at original code: 'seg.start', 'seg.text'. It used namedtuples from faster_whisper.
+            # But wait, original code converted 'seg' to dict:
+            # segments.append({ "start": seg.start ... })
+            # So I can just adapt here.
+            
+            start = seq_dict['start']
+            end = seq_dict['end']
+            text = seq_dict['text']
+            words = seq_dict['words'] # List of dicts
+            
             # Filter by VAD regions if available
             if vad_segments:
-                if not self._segment_overlaps_speech(seg.start, seg.end, vad_segments):
-                    logger.debug(f"Skipping segment outside VAD regions: '{seg.text[:50]}...'")
+                if not self._segment_overlaps_speech(start, end, vad_segments):
+                    logger.debug(f"Skipping segment outside VAD regions: '{text[:20]}...'")
                     continue
             
-            # Word-level confidence filtering
-            text = seg.text.strip()
-            words = seg.words if hasattr(seg, 'words') and seg.words else []
-            
+            # Word-level confidence filtering (Mocking object structure for words if needed)
+            # Simplification: If min_word_confidence > 0, we need 'words' objects.
+            # My worker returns dicts.
+            # Existing logic: confidence = getattr(w, 'probability', 1.0)
+            # So I need to handle dicts or objects.
+            # Let's rewrite the filtering loop below to handle dicts.
+
+            final_words = []
             if words and self.min_word_confidence > 0:
-                # Filter low-confidence words and reconstruct text
-                filtered_words = []
-                for w in words:
-                    # Word object has: start, end, word, probability
-                    confidence = getattr(w, 'probability', 1.0)
-                    if confidence >= self.min_word_confidence:
-                        filtered_words.append(w)
-                    else:
-                        logger.debug(f"Filtering low-confidence word: '{w.word}' ({confidence:.2f})")
-                
-                if filtered_words:
-                    text = ' '.join(w.word for w in filtered_words).strip()
-                    words = filtered_words
+                 for w in words:
+                     prob = w.get('probability', 1.0)
+                     if prob >= self.min_word_confidence:
+                         final_words.append(w)
+                 if final_words:
+                      text = ' '.join(w['word'] for w in final_words).strip()
+            else:
+                 final_words = words
+
+            if not text: continue
             
-            if not text:
-                continue
-                
             segments.append({
-                "start": seg.start,
-                "end": seg.end,
+                "start": start,
+                "end": end,
                 "text": text,
-                "words": words
+                "words": final_words
             })
             
         logger.info(f"Raw segments: {len(segments)}. Running cleanup...")
         segments = self._clean_segments(segments)
         logger.info(f"Cleanup complete. Found {len(segments)} unique segments.")
-        return segments, info.language
+        return segments, detected_language
     
     def _get_audio_duration(self, audio_path) -> float:
         """Get audio file duration in seconds."""

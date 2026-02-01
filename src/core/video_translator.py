@@ -172,43 +172,55 @@ class VideoTranslator:
         Force unloads all known models and clears CUDA cache.
         """
         logger.info("Unloading all models and clearing CUDA cache...")
+        config.debug_log("Unloading all models...")
         
         # Call unload methods on components if they exist
         if hasattr(self.separator, 'unload_model'):
+            config.debug_log("Unloading Separator...")
             self.separator.unload_model()
             
         if hasattr(self.transcriber, 'unload_model'):
+            config.debug_log("Unloading Transcriber...")
             self.transcriber.unload_model()
 
         if hasattr(self.translator, 'hymt') and self.translator.hymt:
+             config.debug_log("Unloading Translator (LLM)...")
              self.translator.hymt.unload_model()
              
         if hasattr(self.tts_engine, 'unload_model'):
+            config.debug_log("Unloading TTS...")
             self.tts_engine.unload_model()
             
         if hasattr(self.diarizer, 'unload_model'):
+            config.debug_log("Unloading Diarizer...")
             self.diarizer.unload_model()
             
         if hasattr(self.lipsyncer, 'unload_model'):
+            config.debug_log("Unloading Lipsyncer...")
             self.lipsyncer.unload_model()
             
         if hasattr(self.visual_translator, 'unload_model'):
+            config.debug_log("Unloading Visual Translator...")
             self.visual_translator.unload_model()
             
         if hasattr(self.voice_enhancer, 'unload_model'):
+            config.debug_log("Unloading Voice Enhancer...")
             self.voice_enhancer.unload_model()
         
         self.current_model = None
         
         # Force garbage collection
+        config.debug_log("Running GC...")
         gc.collect()
         
         # Clear CUDA cache
         if torch.cuda.is_available():
+            config.debug_log("Emptying CUDA Cache...")
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
             
         logger.info("VRAM cleared.")
+        config.debug_log("Unload Complete.")
 
     def load_model(self, model_type, **kwargs):
         """
@@ -387,10 +399,8 @@ class VideoTranslator:
         # 1. Audio Extraction Stage
         #    - Uses FFmpeg to extract audio track from video
         # ---------------------------------------------------------------------
+        config.debug_log("Stage 1: Audio Extraction")
         yield ("progress", 0.1, "Extracting Audio...")
-        extracted_path = self._step_extraction(video_path)
-        yield ("progress", 0.1, "Extracting Audio...")
-        self._check_cancel()
         extracted_path = self._step_extraction(video_path)
         yield ("log", "Audio extracted.")
              
@@ -398,8 +408,7 @@ class VideoTranslator:
         # 2. Vocal Separation Stage
         #    - Uses Demucs to separate Vocals vs Background (Accompaniment)
         # ---------------------------------------------------------------------
-        self.load_model("demucs") 
-        yield ("progress", 0.2, "Separating Vocals...")
+        config.debug_log("Stage 2: Vocal Separation")
         self.load_model("demucs") 
         yield ("progress", 0.2, "Separating Vocals...")
         self._check_cancel()
@@ -419,8 +428,7 @@ class VideoTranslator:
                  yield ("log", "Using precomputed global diarization...")
                  diarization_segments, speaker_map, speaker_profiles = precomputed_diarization
             else:
-                self.load_model("diarization")
-                yield ("progress", 0.25, "Diarizing...")
+                config.debug_log("Stage 3: Diarization")
                 self.load_model("diarization")
                 yield ("progress", 0.25, "Diarizing...")
                 self._check_cancel()
@@ -434,6 +442,7 @@ class VideoTranslator:
         #    - Converts speech to text (ASR) using Whisper
         #    - Incorporates VAD for clean segmentation
         # ---------------------------------------------------------------------
+        config.debug_log("Stage 4: Transcription")
         self.load_model("whisper")
         yield ("progress", 0.3, "Transcribing...")
         # Resolve source/target codes
@@ -463,6 +472,7 @@ class VideoTranslator:
         #    - Translates text segments to target language
         #    - Supports Context-Aware LLM translation
         # ---------------------------------------------------------------------
+        config.debug_log("Stage 5: Translation")
         self.load_model("translation_llm") 
         yield ("progress", 0.4, "Translating...")
         
@@ -474,6 +484,7 @@ class VideoTranslator:
         yield ("log", f"Translation complete for {target_lang}.")
         
         # 6. TTS
+        config.debug_log("Stage 6: TTS")
         self.load_model("tts")
         yield ("progress", 0.5, "Generating Speech...")
         
@@ -500,6 +511,7 @@ class VideoTranslator:
         yield ("log", "TTS Generation complete.")
 
         # 7. Sync & Mix
+        config.debug_log("Stage 7: Synchronizing")
         self.unload_all_models() 
         yield ("progress", 0.7, "Synchronizing...")
         
@@ -517,6 +529,7 @@ class VideoTranslator:
         
         # 8. Visual & LipSync
         if enable_visual_translation:
+             config.debug_log("Stage 8: Visual Translation")
              yield ("progress", 0.8, "Translating Video Text...")
              self.load_model("visual")
              visual_out = config.TEMP_DIR / f"{video_path.stem}_visual.mp4"
@@ -531,7 +544,10 @@ class VideoTranslator:
                      yield ("log", "Visual translation complete.")
              except Exception as e:
                 logger.error(f"Visual translation failed: {e}")
+                config.debug_log(f"Visual translation failed: {e}")
+                
         if enable_lipsync and lipsync_model_name:
+            config.debug_log("Stage 9: Lipsync")
             self.load_model("lipsync")
             
             # [Update] Propagate configuration to existing lipsyncer
@@ -555,6 +571,7 @@ class VideoTranslator:
                 yield ("log", "Lip-Sync failed or skipped.")
         
         # 9. Final Output
+        config.debug_log("Stage 10: Final Merge")
         output_video = config.OUTPUT_DIR / f"translated_{video_path.name}"
         result = self.processor.replace_audio(str(video_path), str(final_mix), str(output_video))
         
