@@ -1,9 +1,9 @@
 gradio==4.36.1
 python-dotenv==1.0.1
 numpy<2.0.0
-scipy==1.13.1
+scipy
 pandas<2.0.0
-librosa==0.10.2.post1
+librosa
 soundfile==0.12.1
 ffmpeg-python==0.2.0
 opencv-python==4.10.0.84
@@ -28,7 +28,7 @@ pyannote.audio==3.3.1
 speechbrain==1.0.0
 diart==0.9.0
 demucs==4.0.1
-TTS==0.22.0
+TTS
 edge-tts==6.1.10
 piper-tts==1.2.0
 openai-whisper==20231117
