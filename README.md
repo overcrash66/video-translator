@@ -237,7 +237,7 @@ You can run the application in a Docker container with NVIDIA GPU support.
     docker build -f deploy/docker/Dockerfile -t video-translator .
     ```
 
-2.  **Run the container**:
+3.  **Run the container**:
     ```bash
     # For PowerShell:
     docker run --gpus all -p 7860:7860 -v ${PWD}/output:/app/output --name video-translator video-translator
@@ -246,8 +246,20 @@ You can run the application in a Docker container with NVIDIA GPU support.
     docker run --gpus all -p 7860:7860 -v %cd%/output:/app/output --name video-translator video-translator
     ```
 
-3.  **Access the App**:
-    Open your browser to `http://localhost:7860`.
+    > **Note:** If you encounter a "Ports are not available" error (common on Windows with Hyper-V), try mapping to a different port like **7950**:
+    > ```bash
+    > docker run --gpus all -p 7950:7860 -v ${PWD}/output:/app/output --name video-translator video-translator
+    > ```
+
+4.  **Access the App**:
+    Open your browser to `http://localhost:7860` (or `http://localhost:7950` if you used the alternate port).
+
+#### 🔧 Troubleshooting
+
+**"Ports are not available" / "Access is denied"**
+On Windows, Hyper-V or WinNAT often reserves large ranges of ports (including 7860).
+- **Solution:** Use a different host port (like 7950 or 8080) as shown in the note above.
+- **Check reserved ranges:** Run `netsh interface ipv4 show excludedportrange protocol=tcp` to see which ports are blocked.
 
 ---
 
