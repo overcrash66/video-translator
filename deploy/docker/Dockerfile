@@ -6,6 +6,7 @@ FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
+ENV GRADIO_SERVER_NAME="0.0.0.0"
 
 # Install system dependencies
 # Added curl, python3-venv for venv support if needed (though typically not used inside docker, good for hygiene)
