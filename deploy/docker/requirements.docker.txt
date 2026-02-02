@@ -8,6 +8,7 @@ python-dotenv==1.0.1
 numpy<2.0.0
 scipy
 pandas<2.0.0
+pyarrow==20.0.0
 librosa
 soundfile==0.12.1
 ffmpeg-python==0.2.0
@@ -22,7 +23,7 @@ torchaudio>=2.7.0
 
 torchmetrics==1.4.0.post0
 transformers==4.41.2
-accelerate==0.31.0
+accelerate>=0.33.0
 diffusers==0.29.0
 safetensors==0.4.3
 einops==0.8.0
@@ -37,8 +38,9 @@ demucs==4.0.1
 pyworld==0.3.4
 edge-tts==6.1.10
 piper-tts==1.2.0
+f5-tts
 
-faster-whisper==1.0.2
+faster-whisper==1.1.1
 bitsandbytes==0.43.1
 sentencepiece==0.2.0
 protobuf==5.27.1

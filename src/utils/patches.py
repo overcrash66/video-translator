@@ -85,6 +85,30 @@ def _patch_torchaudio_load():
     except Exception as e:
         logger.warning(f"Failed to patch torchaudio.load: {e}")
 
+def _patch_torchaudio_audiometadata():
+    """
+    Inject missing AudioMetaData class into torchaudio to satisfy pyannote.audio requirements.
+    This class was removed in torchaudio 2.x but is still imported by pyannote.audio 3.x.
+    """
+    import torchaudio
+    
+    if hasattr(torchaudio, "AudioMetaData"):
+        return
+
+    # Define the missing class based on what pyannote expects
+    class AudioMetaData:
+        def __init__(self, sample_rate, num_frames, num_channels, bits_per_sample, encoding):
+            self.sample_rate = sample_rate
+            self.num_frames = num_frames
+            self.num_channels = num_channels
+            self.bits_per_sample = bits_per_sample
+            self.encoding = encoding
+
+    # Inject it into the module
+    torchaudio.AudioMetaData = AudioMetaData
+    logger.info("Monkey-patched torchaudio.AudioMetaData for pyannote compatibility.")
+
+
 def _patch_transformers_qwen2_tokenizer():
     """
     Create compatibility shim for vibevoice's usage of internal transformers path.
@@ -142,6 +166,7 @@ def apply_late_patches():
     Includes: Torchaudio fix.
     """
     _patch_torchaudio_load()
+    _patch_torchaudio_audiometadata()
 
 def apply_patches():
     """

@@ -43,6 +43,9 @@ RUN mkdir -p /app/temp /app/output /app/models
 # Copy source code
 COPY . /app
 
+# Download models during build to ensure they are baked into the image
+RUN python3 scripts/download_models.py
+
 # Expose Gradio port
 EXPOSE 7860
 
