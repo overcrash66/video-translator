@@ -36,15 +36,18 @@ class Wav2LipSyncer:
         try:
             from gfpgan import GFPGANer
             # Model path
+            # Model path
             gfpgan_path = Path("models/gfpgan/GFPGANv1.4.pth")
-            if not gfpgan_path.exists():
-                pass
+            
+            model_arg = 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth'
+            if gfpgan_path.exists():
+                model_arg = str(gfpgan_path)
             
             # Initialize GFPGAN
             # upscale=1 because we just want restoration, not full image upscaling (we do resizing later)
-            self.restorer = GFPGANer(model_path='https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth', 
+            self.restorer = GFPGANer(model_path=model_arg, 
                                      upscale=1, arch='clean', channel_multiplier=2, bg_upsampler=None)
-            logger.info("GFPGAN Face Restorer Loaded.")
+            logger.info(f"GFPGAN Face Restorer Loaded (Source: {'Local' if gfpgan_path.exists() else 'URL'}).")
         except Exception as e:
             logger.warning(f"Failed to load GFPGAN: {e}")
             self.restorer = None

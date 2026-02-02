@@ -320,9 +320,16 @@ class LivePortraitSyncer:
 
     def _load_plugin(self):
         """Loads the GridSample3D TensorRT plugin."""
-        plugin_path = self.model_dir / "grid_sample_3d_plugin.dll"
+        import platform
+        is_windows = platform.system() == "Windows"
+        ext = ".dll" if is_windows else ".so"
+        
+        plugin_path = self.model_dir / f"grid_sample_3d_plugin{ext}"
         if not plugin_path.exists():
-            raise FileNotFoundError(f"Plugin not found at {plugin_path}")
+            # Try alternative name or log warning
+            # For Linux, it might be named differently or need compilation.
+            # Assuming strictly same basename for now.
+             raise FileNotFoundError(f"Plugin not found at {plugin_path}")
         
         logger.info(f"Loading TensorRT plugin: {plugin_path}")
         ctypes.CDLL(str(plugin_path))

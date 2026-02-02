@@ -30,11 +30,26 @@ class PiperTTSBackend(TTSBackend):
             
             # 3. Check for Piper Binary
             piper_bin_dir = config.TEMP_DIR / "piper_bin"
-            piper_exe = piper_bin_dir / "piper" / "piper.exe"
+            
+            # Detect platform
+            import platform
+            system = platform.system()
+            if system == "Windows":
+                 exe_name = "piper.exe"
+            else:
+                 exe_name = "piper"
+                 
+            piper_exe = piper_bin_dir / "piper" / exe_name
             
             if not piper_exe.exists():
-                logger.info("Piper binary not found. Downloading...")
-                self._download_piper_binary(piper_bin_dir)
+                logger.info(f"Piper binary ({exe_name}) not found. Downloading...")
+                self._download_piper_binary(piper_bin_dir, system)
+                
+            # Ensure Linux binary is executable
+            if system != "Windows" and piper_exe.exists():
+                import os
+                st = os.stat(piper_exe)
+                os.chmod(piper_exe, st.st_mode | 0o111)
                 
             if not piper_exe.exists():
                 raise RuntimeError("Piper binary missing after download attempt.")
@@ -91,14 +106,28 @@ class PiperTTSBackend(TTSBackend):
         except Exception as e:
              raise RuntimeError(f"Could not download model {model_name}: {e}")
 
-    def _download_piper_binary(self, dest_dir):
-        """Downloads Piper Windows binary."""
-        url = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip"
+    def _download_piper_binary(self, dest_dir, system):
+        """Downloads Piper binary for the current platform."""
+        if system == "Windows":
+            url = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip"
+        else:
+            # Linux (Docker)
+            url = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz"
+
         logger.info(f"Downloading Piper binary from {url}...")
         try:
             r = requests.get(url)
             r.raise_for_status()
-            with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-                z.extractall(dest_dir)
+            
+            import tarfile
+            file_obj = io.BytesIO(r.content)
+            
+            if url.endswith(".zip"):
+                 with zipfile.ZipFile(file_obj) as z:
+                    z.extractall(dest_dir)
+            elif url.endswith(".tar.gz"):
+                 with tarfile.open(fileobj=file_obj, mode="r:gz") as t:
+                    t.extractall(dest_dir)
+                    
         except Exception as e:
             raise RuntimeError(f"Failed to download Piper binary: {e}")
