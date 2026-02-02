@@ -1,4 +1,7 @@
-gradio==5.0.0
+gradio==4.44.0
+fastapi>=0.112.0
+uvicorn>=0.30.0
+python-multipart
 deep-translator
 python-dotenv==1.0.1
 numpy<2.0.0

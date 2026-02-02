@@ -491,4 +491,4 @@ if __name__ == "__main__":
     # Docker requires 0.0.0.0. 
     # If this fails with 'localhost is not accessible', we might need to set specific env vars or allow share=True
     # Trying with explicit server_port and ignoring check if possible, typically 0.0.0.0 works fine unless Gradio tries to verify it via request.
-    demo.launch(server_name="0.0.0.0", server_port=7860, share=False)
+    demo.launch(server_name="0.0.0.0", server_port=7860, share=False, show_error=True, debug=True)
