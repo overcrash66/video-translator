@@ -15,11 +15,7 @@ ffmpeg-python==0.2.0
 # Use headless OpenCV for Docker
 opencv-python-headless==4.10.0.84
 
-# PyTorch with CUDA 12.8 (Latest for RTX 50 series)
---extra-index-url https://download.pytorch.org/whl/cu128
-torch>=2.7.0
-torchvision>=0.20.0
-torchaudio>=2.7.0
+
 
 torchmetrics==1.4.0.post0
 transformers==4.41.2

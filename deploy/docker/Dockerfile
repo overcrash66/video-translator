@@ -34,7 +34,11 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip
 COPY deploy/docker/requirements.docker.txt /app/requirements.txt
 
 # Install Python dependencies
-# Note: Torch and Paddle are handled inside requirements.docker.txt now with specific indices
+# Install Python dependencies
+# 1. Install PyTorch separately to avoid dependency resolution loops (resolution-too-deep)
+RUN pip install --no-cache-dir "torch>=2.7.0" "torchvision>=0.20.0" "torchaudio>=2.7.0" --extra-index-url https://download.pytorch.org/whl/cu128
+
+# 2. Install remaining dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Create necessary directories
