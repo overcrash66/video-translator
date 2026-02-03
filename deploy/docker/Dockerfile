@@ -39,7 +39,10 @@ COPY deploy/docker/requirements.docker.txt /app/requirements.txt
 RUN pip install --no-cache-dir "torch>=2.7.0" "torchvision>=0.20.0" "torchaudio>=2.7.0" --extra-index-url https://download.pytorch.org/whl/cu128
 
 # 2. Install remaining dependencies
+# 2. Install remaining dependencies
 RUN pip install --no-cache-dir -r requirements.txt
+
+
 
 # Create necessary directories
 RUN mkdir -p /app/temp /app/output /app/models

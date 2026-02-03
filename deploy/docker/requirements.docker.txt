@@ -6,7 +6,7 @@ numba>=0.57.0
 llvmlite>=0.40.0
 
 # Core
-gradio==4.44.0
+gradio>=5.7.1
 pydantic==2.10.6
 fastapi>=0.112.0
 uvicorn>=0.30.0

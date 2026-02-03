@@ -138,6 +138,26 @@ def _patch_transformers_qwen2_tokenizer():
     except ImportError as e:
         logger.warning(f"Could not create Qwen2 tokenizer shim: {e}")
 
+def _patch_transformers_warmup():
+    """
+    Patches `caching_allocator_warmup` in transformers.modeling_utils.
+    Recent versions of transformers (approx 4.41+) have a bug in this function 
+    when used with quantization and device_map='auto', causing 'AttributeError: weight is not an nn.Module'.
+    We replace it with a no-op to bypass the crash.
+    """
+    try:
+        from transformers import modeling_utils
+        
+        if hasattr(modeling_utils, "caching_allocator_warmup"):
+            def noop_warmup(model, *args, **kwargs):
+                logger.info("Skipped broken caching_allocator_warmup via patch.")
+                pass
+            
+            modeling_utils.caching_allocator_warmup = noop_warmup
+            logger.info("Monkey-patched transformers.modeling_utils.caching_allocator_warmup to bypass recursion bug.")
+    except Exception as e:
+        logger.warning(f"Failed to patch caching_allocator_warmup: {e}")
+
 def apply_encoding_patch():
     """
     Applies ONLY the Windows encoding fix.
@@ -151,6 +171,7 @@ def apply_transformers_patch():
     Should be run AFTER config (and ctranslate2 setup) but BEFORE heavy usage.
     """
     _patch_transformers_qwen2_tokenizer()
+    _patch_transformers_warmup()
 
 def apply_early_patches():
     """
