@@ -11,3 +11,8 @@ models/
 debug_download/
 .vscode/
 .env
+*.7z
+*.zip
+*.rar
+cudnn_temp/
+onnxruntime_src/
