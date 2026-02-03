@@ -42,7 +42,7 @@ def estimate_remaining_time(progress: float, elapsed_seconds: float) -> str:
         return f"~{int(remaining)}s remaining"
     return f"~{int(remaining/60)}m remaining"
 
-def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, chunk_duration, progress=gr.Progress()):
+def process_video(video_path, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, chunk_duration, hf_token, progress=gr.Progress()):
     """
     Main pipeline entry point.
     """
@@ -137,6 +137,10 @@ def process_video(video_path, source_language, target_language, audio_model, tts
         config.debug_log(f"ARG: ocr_model={ocr_model}")
         config.debug_log(f"ARG: lipsync_model={lipsync_model} (enabled={enable_lipsync})")
         
+        if hf_token and hf_token.strip():
+             os.environ["HF_TOKEN"] = hf_token.strip()
+             config.HF_TOKEN = hf_token.strip()
+        
         # Delegate to VideoTranslator
         # Loop over the generator
         config.debug_log("Calling video_translator.process_video...")
@@ -167,7 +171,8 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             lipsync_model_name=lipsync_model,
             enable_audio_enhancement=enable_audio_enhancement,
             live_portrait_acceleration=live_portrait_mode,
-            chunk_duration=chunk_duration
+            chunk_duration=chunk_duration,
+            hf_token=hf_token
         )
         
         final_video_path = None
@@ -278,17 +283,17 @@ def create_ui():
                 enable_diarization = gr.Checkbox(
                     label="Enable Speaker Diarization (Multi-speaker)",
                     value=False,
-                    info="Detects speakers and genders to assign appropriate TTS voices. Requires HF_TOKEN."
+                    info="Detects speakers and genders to assign appropriate TTS voices. Requires Hugging Face Token."
                 )
 
                 diarization_model = gr.Dropdown(
                     choices=["pyannote/SpeechBrain (Default)", "pyannote/Community-1 (Advanced)", "NVIDIA NeMo (Advanced)"],
                     label="Diarization Backend",
                     value="pyannote/SpeechBrain (Default)",
-                    visible=True 
+                    visible=False
                 )
 
-                with gr.Row(visible=True) as diarization_params:
+                with gr.Row(visible=False) as diarization_params:
                     min_speakers = gr.Slider(1, 10, value=1, step=1, label="Min Speakers")
                     max_speakers = gr.Slider(1, 20, value=1, step=1, label="Max Speakers")
 
@@ -300,6 +305,17 @@ def create_ui():
                     inputs=[enable_diarization],
                     outputs=[diarization_model, diarization_params]
                 )
+                
+                # Global Settings / API Keys
+                with gr.Accordion("API Settings & Tokens (Optional)", open=False):
+                    hf_token_input = gr.Textbox(
+                        label="Hugging Face Token",
+                        type="password",
+                        placeholder="hf_xxxxxxxx...",
+                        value=os.environ.get("HF_TOKEN", ""),
+                        visible=True,
+                        info="Required for PyAnnote Diarization and gated models (e.g. Llama 3). Set here or in .env."
+                    )
                 
                 transcription_model = gr.Dropdown(
                     choices=[
@@ -463,7 +479,7 @@ def create_ui():
         
         process_event = process_btn.click(
             fn=process_video,
-            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, chunk_duration],
+            inputs=[video_input, source_language, target_language, audio_model, tts_model, translation_model, context_model, transcription_model, optimize_translation, enable_diarization, diarization_model, min_speakers, max_speakers, enable_time_stretch, enable_vad, vad_min_silence, enable_lipsync, lipsync_model, live_portrait_mode, enable_visual_translation, ocr_model, tts_voice, transcription_beam_size, tts_enable_cfg, enable_audio_enhancement, chunk_duration, hf_token_input],
             outputs=[video_output, logs_output]
         )
         

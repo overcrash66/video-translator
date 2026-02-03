@@ -23,7 +23,8 @@ opencv-python-headless==4.10.0.84
 
 
 torchmetrics==1.4.0.post0
-transformers==4.41.2
+transformers>=4.48.0
+tokenizers>=0.21.0
 accelerate>=0.33.0
 diffusers==0.29.0
 safetensors==0.4.3

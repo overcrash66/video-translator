@@ -385,7 +385,8 @@ class VideoTranslator:
                       tts_voice: str | None = None,
                       lipsync_model_name: str | None = "wav2lip",
                       live_portrait_acceleration: str = "ort",
-                      precomputed_diarization: tuple | None = None) -> Generator[tuple[Literal["log", "progress", "result"], Any] | list, None, None]:
+                      precomputed_diarization: tuple | None = None,
+                      hf_token: str | None = None) -> Generator[tuple[Literal["log", "progress", "result"], Any] | list, None, None]:
         """
         Internal pipeline logic (renamed from process_video).
         Supports precomputed_diarization for chunked execution.
@@ -433,7 +434,8 @@ class VideoTranslator:
                 yield ("progress", 0.25, "Diarizing...")
                 self._check_cancel()
                 diarization_segments, speaker_map, speaker_profiles = self._step_diarization(
-                    vocals_path, video_path, diarization_model, min_speakers, max_speakers
+                    vocals_path, video_path, diarization_model, min_speakers, max_speakers,
+                    hf_token=hf_token
                 )
                 yield ("log", f"Diarization complete. Speakers: {len(speaker_map)}")
             
@@ -479,7 +481,8 @@ class VideoTranslator:
         translated_segments = self._step_translation(
             segments, source_code, target_code, target_lang,
             translation_model_name, context_model_name, optimize_translation,
-            video_path
+            video_path,
+            hf_token=hf_token
         )
         yield ("log", f"Translation complete for {target_lang}.")
         
@@ -603,7 +606,7 @@ class VideoTranslator:
         """
         return self.separator.separate(extracted_path, model_selection=model_name)
 
-    def _step_diarization(self, vocals_path, video_path, model_name, min_spk, max_spk):
+    def _step_diarization(self, vocals_path, video_path, model_name, min_spk, max_spk, hf_token=None):
         """
         Performs speaker diarization to identify speakers and extract their profiles.
         
@@ -618,8 +621,9 @@ class VideoTranslator:
         diar_backend = "speechbrain"
         if "NeMo" in model_name: diar_backend = "nemo"
         elif "Community" in model_name: diar_backend = "pyannote_community"
+        elif "pyannote" in model_name: diar_backend = "pyannote"
             
-        segs = self.diarizer.diarize(vocals_path, backend=diar_backend, min_speakers=min_spk, max_speakers=max_spk)
+        segs = self.diarizer.diarize(vocals_path, backend=diar_backend, min_speakers=min_spk, max_speakers=max_spk, hf_token=hf_token)
         spk_map = self.diarizer.detect_genders(vocals_path, segs)
         
         profiles_dir = config.TEMP_DIR / f"{video_path.stem}_profiles"
@@ -645,7 +649,7 @@ class VideoTranslator:
         )
 
     def _step_translation(self, segments, source_code, target_code, target_lang, 
-                          model_name, context_model, optimize, video_path):
+                          model_name, context_model, optimize, video_path, hf_token=None):
         """
         Translates transcribed segments to the target language.
         Handles caching, optimization (context-aware), and SRT export.
@@ -677,7 +681,8 @@ class VideoTranslator:
             translated = self.translator.translate_segments(
                 segments, target_code, model=trans_key, 
                 source_lang=source_code, optimize=optimize,
-                check_cancel_callback=self._check_cancel
+                check_cancel_callback=self._check_cancel,
+                hf_token=hf_token
             )
 
         # Export SRT

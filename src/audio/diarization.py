@@ -276,7 +276,7 @@ class Diarizer:
             logger.error(f"NeMo diarization runtime error: {e}")
             return []
 
-    def _run_pyannote(self, audio_path, model_name="pyannote/speaker-diarization-3.1"):
+    def _run_pyannote(self, audio_path, model_name="pyannote/speaker-diarization-3.1", hf_token=None):
         """
         Run PyAnnote diarization pipeline.
         Supports mixed precision for speed and memory efficiency.
@@ -291,8 +291,9 @@ class Diarizer:
         logger.info(f"Loading PyAnnote pipeline: {model_name}...")
         try:
             # Load pipeline
-            # If explicit token is needed, user should have set HF_TOKEN env var or logged in with huggingface-cli
-            pipeline = Pipeline.from_pretrained(model_name)
+            # If explicit token is provided, use it. Otherwise rely on env var or cache.
+            use_auth_token = hf_token if hf_token else True
+            pipeline = Pipeline.from_pretrained(model_name, use_auth_token=use_auth_token)
             
             if pipeline is None:
                 logger.error(f"Failed to load PyAnnote pipeline {model_name}. Ensure you have accepted the user agreement and have a valid token.")
@@ -334,12 +335,12 @@ class Diarizer:
                 logger.warning("Switching to CPU fallback for Diarization (PyAnnote)...")
                 self.device = torch.device("cpu")
                 # Retry
-                return self._run_pyannote(audio_path, model_name)
+                return self._run_pyannote(audio_path, model_name, hf_token)
 
             logger.error(f"PyAnnote diarization failed: {e}")
             return []
 
-    def diarize(self, audio_path: str | Path, backend: str = "speechbrain", min_speakers: int = 1, max_speakers: int | None = None) -> list[dict]:
+    def diarize(self, audio_path: str | Path, backend: str = "speechbrain", min_speakers: int = 1, max_speakers: int | None = None, hf_token: str | None = None) -> list[dict]:
         """
         Perform speaker diarization.
         backend: 'speechbrain' or 'nemo'
@@ -367,7 +368,7 @@ class Diarizer:
                  pass
             
             # Allow passing specific model ID via config if needed, but for now standardizing
-            segments = self._run_pyannote(audio_path, model_name="pyannote/speaker-diarization-3.1")
+            segments = self._run_pyannote(audio_path, model_name="pyannote/speaker-diarization-3.1", hf_token=hf_token)
             if segments:
                 return segments
             logger.warning("PyAnnote failed. Falling back to SpeechBrain.")

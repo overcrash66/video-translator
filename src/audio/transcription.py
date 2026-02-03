@@ -183,12 +183,26 @@ class Transcriber:
         try:
             # Run worker
             # Pass environment to ensure DLLs are found (though worker sets them up too)
+            env = os.environ.copy()
+            
+            # [Fix] Sanitize PYTHONHASHSEED which causes fatal startup errors if invalid
+            if "PYTHONHASHSEED" in env:
+                seed_val = env["PYTHONHASHSEED"]
+                logger.info(f"Subprocess Env: Found PYTHONHASHSEED='{seed_val}'")
+                
+                # Check validity: must be "random" or integer [0; 4294967295]
+                is_valid = seed_val == "random" or (seed_val.isdigit() and 0 <= int(seed_val) <= 4294967295)
+                
+                if not is_valid:
+                    logger.warning(f"⚠️ Removing invalid PYTHONHASHSEED='{seed_val}' from subprocess environment to prevent crash.")
+                    del env["PYTHONHASHSEED"]
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                env=os.environ.copy(),
+                env=env,
                 check=True
             )
             

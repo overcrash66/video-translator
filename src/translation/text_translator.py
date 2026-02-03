@@ -31,13 +31,16 @@ class LLMTranslator:
                 torch.cuda.empty_cache()
             logger.info("LLM Translator unloaded.")
 
-    def load_model(self):
+    def load_model(self, token=None):
         if self.model:
             return
         
         logger.info(f"Loading {self.model_id} on {self.device}...")
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, trust_remote_code=True)
+            # Use 'token' instead of 'use_auth_token' for newer transformers versions, 
+            # but 'token' is backwards compatible in many recent versions. 
+            # If using very old transformers, might need check. Assuming >=4.48.0 from docker reqs.
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, trust_remote_code=True, token=token)
             
             # Use 4-bit quantization ONLY on CUDA
             quantization_config = None
@@ -60,7 +63,8 @@ class LLMTranslator:
                 device_map="auto" if self.device == "cuda" else "cpu", 
                 quantization_config=quantization_config,
                 trust_remote_code=True,
-                torch_dtype=torch_dtype
+                torch_dtype=torch_dtype,
+                token=token
             )
             
             # Ensure proper pad token
@@ -135,9 +139,9 @@ class LLMTranslator:
                  return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             return f"<|user|>\nTranslate from {source_name} to {target_name}:\n{text}\n<|assistant|>\n"
 
-    def translate_batch(self, texts, source_lang_code, target_lang_code):
+    def translate_batch(self, texts, source_lang_code, target_lang_code, token=None):
         if not texts: return []
-        self.load_model()
+        self.load_model(token=token)
         
         prompts = [self.get_prompt(t, source_lang_code, target_lang_code) for t in texts]
         
@@ -224,9 +228,9 @@ class LLMTranslator:
             logger.error(f"Batch translation failed: {e}")
             return texts
             
-    def translate_context_aware(self, text, source_lang, target_lang, prev_text=None):
+    def translate_context_aware(self, text, source_lang, target_lang, prev_text=None, token=None):
         """Translates a single segment with context."""
-        self.load_model()
+        self.load_model(token=token)
         prompt = self.get_prompt(text, source_lang, target_lang, context_prev=prev_text)
         
         try:
@@ -315,7 +319,7 @@ class Translator:
             self.translator_cache[code] = GoogleTranslator(source='auto', target=code)
         return self.translator_cache[code], code
 
-    def translate_segments(self, segments, target_lang, model="google", source_lang="auto", optimize=False, check_cancel_callback=None):
+    def translate_segments(self, segments, target_lang, model="google", source_lang="auto", optimize=False, check_cancel_callback=None, hf_token=None):
         """
         Translates segments using selected model.
         optimize: If True, uses sequential context-aware translation (slower but better).
@@ -393,7 +397,7 @@ class Translator:
                     if check_cancel_callback: check_cancel_callback()
                     logger.info(f"Translating segment {i+1}/{len(segments)} (Context-Aware)...")
                     trans_text = self.llm_translator.translate_context_aware(
-                        seg['text'], source_code, target_code, prev_text=prev_text
+                        seg['text'], source_code, target_code, prev_text=prev_text, token=hf_token
                     )
                     
                     new_s = seg.copy()
@@ -415,7 +419,7 @@ class Translator:
                 for i in range(0, len(texts), chunk_size):
                     if check_cancel_callback: check_cancel_callback()
                     chunk = texts[i:i+chunk_size]
-                    trans_texts.extend(self.llm_translator.translate_batch(chunk, source_code, target_code))
+                    trans_texts.extend(self.llm_translator.translate_batch(chunk, source_code, target_code, token=hf_token))
                     
                 for i, seg in enumerate(segments_to_trans):
                     new_s = seg.copy()
