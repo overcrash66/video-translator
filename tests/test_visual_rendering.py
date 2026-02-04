@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 import numpy as np
 import cv2
+import pytest
 from PIL import Image, ImageDraw, ImageFont
 
 # Add project root to path
@@ -10,6 +11,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from src.translation.visual_translator import VisualTranslator
 
+@pytest.mark.requires_real_audio  # Uses cv2 which is mocked in CI
 def test_font_sizing():
     translator = VisualTranslator()
     

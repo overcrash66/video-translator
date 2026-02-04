@@ -197,6 +197,44 @@ if torch_mock and isinstance(torch_mock, MagicMock):
 
 
 # =============================================================================
+# CONFIGURE SOUNDFILE/LIBROSA MOCKS (if mocked)
+# =============================================================================
+import numpy as np
+
+sf_mock = sys.modules.get('soundfile')
+if sf_mock and isinstance(sf_mock, MagicMock):
+    # soundfile.read returns (data, sample_rate)
+    def mock_sf_read(path, *args, **kwargs):
+        return np.zeros((16000,), dtype=np.float32), 16000
+    sf_mock.read = mock_sf_read
+    sf_mock.write = MagicMock()
+
+librosa_mock = sys.modules.get('librosa')
+if librosa_mock and isinstance(librosa_mock, MagicMock):
+    # librosa.load returns (data, sample_rate)
+    def mock_librosa_load(path, sr=None, *args, **kwargs):
+        return np.zeros((16000,), dtype=np.float32), sr or 16000
+    librosa_mock.load = mock_librosa_load
+
+
+# =============================================================================
+# CONFIGURE CV2 MOCK (if mocked)
+# =============================================================================
+cv2_mock = sys.modules.get('cv2')
+if cv2_mock and isinstance(cv2_mock, MagicMock):
+    # cv2.cvtColor should return a proper numpy array
+    def mock_cvtColor(img, *args, **kwargs):
+        if hasattr(img, '__array__'):
+            return np.asarray(img)
+        return np.zeros((100, 100, 3), dtype=np.uint8)
+    cv2_mock.cvtColor = mock_cvtColor
+    cv2_mock.boundingRect = lambda pts: (10, 10, 50, 50)
+    cv2_mock.COLOR_BGR2RGB = 4
+    cv2_mock.COLOR_RGB2BGR = 4
+    cv2_mock.INPAINT_TELEA = 0
+
+
+# =============================================================================
 # STANDARD PYTEST FIXTURES
 # =============================================================================
 import pytest
@@ -239,3 +277,42 @@ def mock_components():
         'visual_translator': MagicMock(),
         'voice_enhancer': MagicMock()
     }
+
+
+# =============================================================================
+# CI DETECTION AND SKIP MARKERS
+# =============================================================================
+import os
+
+# Detect if running in CI environment
+IN_CI = os.environ.get('CI', '').lower() == 'true' or os.environ.get('GITHUB_ACTIONS', '').lower() == 'true'
+
+
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line(
+        "markers", "requires_real_audio: mark test as requiring real audio files (skip in CI)"
+    )
+    config.addinivalue_line(
+        "markers", "requires_ffmpeg: mark test as requiring ffmpeg binary (skip in CI)"
+    )
+    config.addinivalue_line(
+        "markers", "requires_models: mark test as requiring ML models (skip in CI)"
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Auto-skip tests marked with certain markers when in CI."""
+    if not IN_CI:
+        return  # Don't skip anything when running locally
+    
+    skip_markers = {
+        'requires_real_audio': pytest.mark.skip(reason="Requires real audio files (CI)"),
+        'requires_ffmpeg': pytest.mark.skip(reason="Requires ffmpeg (CI)"),
+        'requires_models': pytest.mark.skip(reason="Requires ML models (CI)"),
+    }
+    
+    for item in items:
+        for marker_name, skip_mark in skip_markers.items():
+            if marker_name in [m.name for m in item.iter_markers()]:
+                item.add_marker(skip_mark)

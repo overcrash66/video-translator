@@ -38,6 +38,7 @@ def temp_audio(tmp_path):
         pytest.skip("FFmpeg not available or failed to create test audio")
     return audio_path
 
+@pytest.mark.requires_ffmpeg
 def test_should_chunk(temp_video):
     # Video is 10s. Threshold 1.5x
     
@@ -49,6 +50,7 @@ def test_should_chunk(temp_video):
     chunker = VideoChunker(max_duration_sec=10)
     assert chunker.should_chunk(temp_video) == False
 
+@pytest.mark.requires_ffmpeg
 def test_split_video(temp_video):
     # Split 10s video into 3s chunks
     chunker = VideoChunker(max_duration_sec=3)
@@ -61,6 +63,7 @@ def test_split_video(temp_video):
         assert chunk.exists()
         assert chunk.suffix == ".mp4"
 
+@pytest.mark.requires_ffmpeg
 def test_split_audio(temp_audio, temp_video):
     # We need video chunks first to define split points
     chunker = VideoChunker(max_duration_sec=3)
@@ -73,6 +76,7 @@ def test_split_audio(temp_audio, temp_video):
         assert chunk.exists()
         assert chunk.suffix == ".wav"
 
+@pytest.mark.requires_ffmpeg
 def test_merge_videos(temp_video, tmp_path):
     chunker = VideoChunker(max_duration_sec=3)
     chunks = chunker.split_video(temp_video)
@@ -91,6 +95,7 @@ def test_merge_videos(temp_video, tmp_path):
     duration = float(probe.stdout.strip())
     assert 9.5 < duration < 10.5
 
+@pytest.mark.requires_ffmpeg
 def test_merge_audio(temp_audio, temp_video, tmp_path):
     chunker = VideoChunker(max_duration_sec=3)
     # Split audio based on video chunks logic

@@ -3,8 +3,10 @@ import numpy as np
 import soundfile as sf
 import os
 import tempfile
+import pytest
 from src.audio import eq_matching
 
+@pytest.mark.requires_real_audio
 class TestEQMatching(unittest.TestCase):
     
     def setUp(self):

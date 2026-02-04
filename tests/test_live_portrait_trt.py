@@ -73,10 +73,10 @@ class TestLivePortraitTRT:
         syncer_trt.load_models()
         
         # 1. Verify plugin loading
-        # Should attempt to load grid_sample_3d_plugin.dll
+        # Should attempt to load grid_sample_3d_plugin (.dll on Windows, .so on Linux)
         mock_cdll.assert_called()
         args, _ = mock_cdll.call_args
-        assert "grid_sample_3d_plugin.dll" in str(args[0])
+        assert "grid_sample_3d_plugin" in str(args[0])
         
         # 2. Verify TensorRT engine loading
         # Should happen for app, mot, warp at least

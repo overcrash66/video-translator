@@ -1,8 +1,10 @@
 
 import unittest
 import os
+import pytest
 from src.processing.wav2lip import Wav2LipSyncer
 
+@pytest.mark.requires_models
 class TestGFPGAN(unittest.TestCase):
     def test_load_gfpgan(self):
         syncer = Wav2LipSyncer()

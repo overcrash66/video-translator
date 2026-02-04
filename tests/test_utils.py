@@ -4,6 +4,7 @@ import numpy as np
 import tempfile
 import os
 import soundfile as sf
+import pytest
 from src.utils import languages
 from src.utils import audio_utils
 
@@ -20,6 +21,7 @@ class TestLanguages(unittest.TestCase):
         self.assertIn("Female", languages.EDGE_TTS_VOICE_MAP["en"])
         self.assertTrue(len(languages.EDGE_TTS_VOICE_MAP["en"]["Male"]) > 0)
 
+@pytest.mark.requires_real_audio
 class TestAudioUtils(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()

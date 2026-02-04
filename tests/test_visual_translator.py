@@ -83,6 +83,7 @@ class TestVisualTranslatorLanguageDetection:
 
 class TestVisualTranslatorProcess:
     
+    @pytest.mark.requires_real_audio  # Complex cv2/PIL interaction
     @patch('src.translation.visual_translator.PADDLE_AVAILABLE', True)
     @patch('src.translation.visual_translator.cv2')
     @patch('src.translation.visual_translator.PaddleOCR')
@@ -172,6 +173,7 @@ class TestVisualTranslatorProcess:
 class TestVisualTranslatorConfidenceFiltering:
     """Tests for OCR confidence filtering (improvement #4)."""
     
+    @pytest.mark.requires_real_audio  # Complex cv2/PIL interaction
     @patch('src.translation.visual_translator.PADDLE_AVAILABLE', True)
     @patch('src.translation.visual_translator.cv2')
     @patch('src.translation.visual_translator.PaddleOCR')

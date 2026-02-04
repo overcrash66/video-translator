@@ -3,10 +3,12 @@ import shutil
 import unittest
 import numpy as np
 import soundfile as sf
+import pytest
 from pathlib import Path
 from src.audio.diarization import Diarizer
 from src.utils import config
 
+@pytest.mark.requires_real_audio
 class TestSpeakerExtraction(unittest.TestCase):
     def setUp(self):
         self.test_dir = Path("temp_test_extraction")
