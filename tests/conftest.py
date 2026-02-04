@@ -2,7 +2,7 @@ import os
 import sys
 import types
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock
 import numpy as np
 
 # Force UNIT_TEST mode for all tests
@@ -16,10 +16,10 @@ modules_to_mock = [
     "ctranslate2", "faster_whisper", "soundfile", "ffmpeg", "cv2", "subprocess",
     "librosa", "scipy", "pydub",
     "PIL", "moviepy", "gradio", "paddle", "paddleocr",
-    "onnx", "onnxruntime",
+    "huggingface_hub",
     "skimage", "matplotlib", "sklearn", "pandas", "insightface",
-    "huggingface_hub", "transformers", "sentencepiece", "tokenizers", "openai", "whisper",
-    "speechbrain", "hyperpyyaml", "TTS", "langdetect", "easyocr",
+    "transformers", "sentencepiece", "tokenizers", "openai", "whisper",
+    "hyperpyyaml", "TTS", "langdetect", "easyocr",
     "face_alignment", "gfpgan", "basicsr", "facexlib", "kornia", "numba", "resampy", "typeguard"
 ]
 
@@ -29,15 +29,59 @@ class MockException(Exception):
 class SmartMock(MagicMock):
     """A MagicMock that returns sensible defaults for common ML/Image/Audio calls."""
     
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._mock_new_child = SmartMock
+        
+        # Initialize default shape directly in __dict__ to avoid recursion
+        name = (getattr(self, "_mock_name", "") or "").lower()
+        if any(x in name for x in ["torch", "audio", "wav", "mel", "sf", "librosa"]):
+            self.__dict__["_shape"] = (2, 22050)
+        else:
+            self.__dict__["_shape"] = (100, 100, 3)
+
+    @property
+    def shape(self): return self.__dict__.get("_shape", (100, 100, 3))
+    @shape.setter
+    def shape(self, v): self.__dict__["_shape"] = v
+
+    @property
+    def ndim(self): return len(self.shape)
+    @property
+    def size(self): return np.prod(self.shape)
+    @property
+    def dtype(self): return np.float32
+
     def __getattr__(self, name):
-        if any(x in name for x in ["Error", "Exception", "Warning"]):
+        # Mandatory bypass for MagicMock internals and private attrs
+        if name.startswith("_"):
+             return super().__getattr__(name) if name.startswith("_mock_") else object.__getattribute__(self, name)
+        
+        if name == "__version__": return "2.1.0"
+        
+        if name == "ndim": return self.ndim
+        if name == "size": return self.size
+        # Specific check for torch.Tensor.ndim which assertive tests use
+        if any(x in name.lower() for x in ["error", "exception", "warning"]):
             return MockException
         return super().__getattr__(name)
 
+    # Use __getattribute__ ONLY for ndim to avoid shadowing
+    def __getattribute__(self, name):
+        if name in ["ndim", "size"]:
+             s = object.__getattribute__(self, "__dict__").get("_shape", (100, 100, 3))
+             # Handle integer case (if shape was overwritten with a number)
+             if isinstance(s, int): return 1 if name == "ndim" else s
+             return len(s) if name == "ndim" else np.prod(s)
+        return super().__getattribute__(name)
+
+    def __bool__(self): return True
+    def __int__(self): return 1
+    def __index__(self): return 1
+    def __float__(self): return 1.0
+
     def __array__(self, *args, **kwargs):
-        shape = getattr(self, "shape", (100, 100, 3))
-        if not isinstance(shape, tuple): shape = (100, 100, 3)
-        return np.zeros(shape, dtype=np.uint8)
+        return np.zeros(self.shape, dtype=np.uint8)
         
     @property
     def __array_interface__(self):
@@ -45,112 +89,126 @@ class SmartMock(MagicMock):
         return arr.__array_interface__
 
     def __call__(self, *args, **kwargs):
-        name = self._mock_name or ""
+        if hasattr(self, "forward") and callable(self.forward) and not isinstance(self.forward, MagicMock):
+            return self.forward(*args, **kwargs)
+
+        name = (getattr(self, "_mock_name", "") or "").lower()
         
-        if name in ["input", "filter", "overwrite_output", "output"]:
-            m = getattr(self, name)
-            if name == "output" and args:
-                out = args[0] if isinstance(args[0], (str, Path)) else (args[1] if len(args) > 1 and isinstance(args[1], (str, Path)) else None)
-                if out:
-                    m._last_output = out
-                    # Propagate to root
-                    root = self
-                    while hasattr(root, "_mock_parent") and root._mock_parent: root = root._mock_parent
-                    root._last_output = out
-            return m
-
-        if "getbbox" in name or "textbbox" in name: return (0, 0, 40, 40)
-        if "boundingRect" in name: return (0, 0, 50, 50)
-        if "threshold" in name: return (0.0, args[0]) if args and isinstance(args[0], np.ndarray) else (0.0, np.zeros((100, 100), dtype=np.uint8))
-        if any(x in name for x in ["cvtColor", "resize", "fromarray", "imread"]): return args[0] if args and isinstance(args[0], np.ndarray) else np.zeros((100, 100, 3), dtype=np.uint8)
-        
-        if name == "open" and any(x in str(self._mock_parent) for x in ["PIL", "Image"]):
-            m = SmartMock(name="Image")
-            m.size = (100, 100); m.ndim = 3; m.shape = (100, 100, 3)
-            return m
-
-        if name == "stft": return np.zeros((1025, 100))
-        if name == "istft": return np.zeros(22050)
-        
-        if name in ["load", "read"]:
-            full_name = []
-            curr = self
-            while curr:
-                if hasattr(curr, "_mock_name") and curr._mock_name: full_name.append(curr._mock_name)
-                curr = getattr(curr, "_mock_parent", None)
-            lib = ".".join(reversed(full_name))
-            
-            duration_sec = 1
-            fname = str(args[0]) if args else ""
-            if any(x in fname.lower() for x in ["extraction", "video", "chunk", "profile"]):
-                duration_sec = 10 if "profile" not in fname.lower() else 2
-            
-            samples = 22050 * duration_sec
-            if any(x in fname.lower() for x in ["source", "target", "dummy", "profile", "output", "result"]):
-                t = np.linspace(0, duration_sec, samples)
-                data = np.sin(2 * np.pi * 440 * t).astype(np.float32)
-            else:
-                data = np.random.uniform(-0.1, 0.1, samples).astype(np.float32)
-            
-            if any(x in lib for x in ["sf", "librosa", "soundfile"]): return (data, 22050)
-            if "wavfile" in lib: return (22050, data)
-            return (data, 22050)
-
-        if name == "probe":
-            # Robust probe mock
-            if args and isinstance(args[0], list) and any("ffprobe" in str(x) for x in args[0]):
-                # Assume it's an ffprobe command
-                if "-show_entries" in args[0] and "format=duration" in args[0]:
-                    return {'format': {'duration': 10.0}}
-                if "-show_entries" in args[0] and "stream=width,height,duration" in args[0]:
-                    return {'streams': [{'codec_type': 'video', 'width': 640, 'height': 360, 'duration': 10.0}]}
-            return {'format': {'duration': 10.0}, 'streams': [{'codec_type': 'video', 'width': 640, 'height': 360, 'duration': 10.0}]}
-            
-        if name == "run":
-            from src.utils import config as app_config
-            for i in range(5):
-                try:
-                    (app_config.TEMP_DIR / f"test_video_chunk_{i:03d}.mp4").write_bytes(b"dummy")
-                    (app_config.TEMP_DIR / f"test_audio_chunk_{i:03d}.wav").write_bytes(b"dummy")
-                except: pass
-            
-            root = self
-            while hasattr(root, "_mock_parent") and root._mock_parent: root = root._mock_parent
-            out = getattr(root, "_last_output", None)
-            
-            if out and isinstance(out, (str, Path)) and "%" not in str(out):
-                try:
-                    p = Path(str(out)); p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b"dummy_output")
-                except: pass
-            
-            # Subprocess return logic
-            all_str_args = str(args) + str(kwargs)
-            is_ffprobe = "ffprobe" in all_str_args.lower()
-            
-            comp_proc = MagicMock()
-            val = b"10.0" if is_ffprobe else b""
-            if kwargs.get("text") or kwargs.get("universal_newlines"):
-                val = val.decode()
-            
-            comp_proc.stdout = val
-            comp_proc.stderr = val if not is_ffprobe else b"" # Just in case
-            comp_proc.returncode = 0
-            return comp_proc
-
-        if name == "write":
+        if name == "get":
             if args:
-                try:
-                    p = Path(str(args[0]))
-                    p.parent.mkdir(parents=True, exist_ok=True)
-                    p.write_bytes(b"dummy")
-                except: pass
-            return None
+                prop = args[0]
+                if prop == 5: return 30.0 # FPS
+                if prop == 7: return 100 # FRAME_COUNT
+                if prop == 3: return 640 # WIDTH
+                if prop == 4: return 360 # HEIGHT
+            return 1
 
+        if name in ["transpose", "unsqueeze", "squeeze", "mean", "view", "reshape", "zeros", "randn", "from_numpy"]:
+             res = SmartMock(name=name, _mock_parent=self)
+             old_shape = self.shape
+             
+             if name in ["zeros", "randn"] and args:
+                  if isinstance(args[0], tuple): res.shape = args[0]
+                  elif all(isinstance(x, int) for x in args): res.shape = tuple(args)
+                  else: res.shape = old_shape
+             elif name == "transpose" and args:
+                  if isinstance(args[0], tuple):
+                       axes = args[0]
+                       try: res.shape = tuple(old_shape[i] for i in axes)
+                       except: res.shape = old_shape
+                  elif len(args) == 2 and isinstance(args[0], int) and isinstance(args[1], int):
+                       s = list(old_shape)
+                       a1, a2 = args[0], args[1]
+                       if a1 < len(s) and a2 < len(s): s[a1], s[a2] = s[a2], s[a1]
+                       res.shape = tuple(s)
+                  else: res.shape = (old_shape[1], old_shape[0]) if len(old_shape) == 2 else old_shape
+             elif name == "unsqueeze" and args:
+                  axis = args[0] if isinstance(args[0], int) else 0
+                  s = list(old_shape); s.insert(axis, 1); res.shape = tuple(s)
+             elif name in ["squeeze", "mean"]: res.shape = old_shape[1:] if old_shape and old_shape[0] == 1 else (old_shape if name == "squeeze" else (1,) + old_shape[1:] if len(old_shape) > 1 else (1,))
+             elif name in ["randn", "from_numpy"] and args and isinstance(args[0], np.ndarray):
+                  res.shape = args[0].shape
+             else: res.shape = old_shape
+             return res
+
+        if name == "resize" and args:
+            if len(args) > 1 and isinstance(args[1], tuple):
+                w, h = args[1]
+                m = SmartMock(name="resized", _mock_parent=self)
+                m.shape = (h, w, 3)
+                return m
+
+        if name in ["stft", "melspectrogram", "wav2mel", "abs", "log10"]:
+             # Standard mel shape
+             return np.zeros((100, 80), dtype=np.float32)
+
+        # Check name OR parent name for audio context
+        parent_name = str(getattr(self, "_mock_parent", "")).lower()
+        # Be more aggressive for audio read
+        is_audio_read = (
+            any(x == name for x in ["read", "load", "load_audio"]) and
+            not any(x in parent_name for x in ["cv2", "image", "video", "capture"])
+        )
+        
+        if is_audio_read or ("soundfile" in parent_name and "read" in name):
+             # Default audio mock
+             return (np.zeros((22050, 2), dtype=np.float32), 22050)
+
+        if name == "__version__":
+            return "2.1.0"
+
+        if name == "run":
+             comp_proc = MagicMock()
+             is_text = kwargs.get("text", False) or kwargs.get("universal_newlines", False) or kwargs.get("encoding")
+             
+             # Handle ffprobe
+             if args and "ffprobe" in str(args[0]):
+                 # Fake 10s duration for test checks
+                 fake_probe = '{"format": {"duration": "10.0"}}'
+                 comp_proc.stdout = fake_probe if is_text else fake_probe.encode()
+                 comp_proc.stderr = "" if is_text else b""
+                 comp_proc.returncode = 0
+                 return comp_proc
+
+             if args and "ffmpeg" in str(args[0]):
+                  try:
+                       out = args[0][-1]
+                       Path(out).touch()
+                  except: pass
+             
+             if is_text:
+                 comp_proc.stdout = ""
+                 comp_proc.stderr = ""
+             else:
+                 comp_proc.stdout = b""
+                 comp_proc.stderr = b""
+                 
+             comp_proc.returncode = 0
+             return comp_proc
+
+        # Fix for Resample vs resample conflict
+        # If it's a class init (Resample), args are usually ints. If functional (resample), arg 0 is array.
+        if "resample" in name:
+             if args and isinstance(args[0], (np.ndarray, SmartMock)):
+                  # Functional: resample(waveform, ...)
+                  return args[0]
+             elif name == "resample" and not args:
+                  # Maybe attribute access?
+                  pass
+             else:
+                  # Class init: Resample(sr, target_sr) -> return a SmartMock (the transform object)
+                  # Do NOT return array here. Fall through to infinite mock creation.
+                  pass
+        
+        elif any(x in name for x in ["cvtColor", "fromarray", "imread"]): 
+             return args[0] if args and isinstance(args[0], np.ndarray) else np.zeros((100, 100, 3), dtype=np.uint8)
+        
         res = super().__call__(*args, **kwargs)
-        if isinstance(res, SmartMock) and args and isinstance(args[0], np.ndarray):
-             res.shape = args[0].shape
-             if len(res.shape) >= 2:
-                  res.size = (res.shape[1], res.shape[0])
+        if isinstance(res, SmartMock) and args:
+             arg = args[0]
+             if isinstance(arg, (np.ndarray, SmartMock)):
+                  if name not in ["transpose", "unsqueeze", "squeeze", "mean", "view", "reshape", "zeros", "randn", "from_numpy", "resize"]:
+                       res.shape = getattr(arg, "shape", res.shape)
         return res
 
 def _configure_mock(m, name):
@@ -158,11 +216,30 @@ def _configure_mock(m, name):
     m.__file__ = f"mocked_{name}.py"
     m.__path__ = []
     
-    # Pre-set some things to be sure
+    if any(x in name.lower() for x in ["torch", "audio", "wav", "mel", "sf", "librosa"]):
+        m.shape = (2, 22050)
+    else:
+        m.shape = (100, 100, 3)
+
     if "torch" in name:
         m.cuda.is_available.return_value = False
         m.device.return_value.__str__.return_value = "cpu"
-        m.randn.return_value.shape = (1, 1, 100)
+        
+        # Use a safe class for Module to avoid metaclass conflicts
+        class SafeModule:
+             def __init__(self, *args, **kwargs): pass
+             def __call__(self, *args, **kwargs): return SmartMock()
+             def to(self, device): return self
+             def eval(self): return self
+             def load_state_dict(self, *args): pass
+             def parameters(self): return []
+             
+        m.nn.Module = SafeModule
+        m.Tensor = SmartMock
+        m.__version__ = "2.1.0"
+    
+    if "cv2" in name:
+        m.error = MockException
 
 class MockFinder:
     def find_spec(self, fullname, path, target=None):
@@ -180,12 +257,30 @@ class MockLoader:
     def exec_module(self, module):
         pass
 
-sys.meta_path.insert(0, MockFinder())
+def inject_mocks():
+    root_mocks = {}
+    for name in modules_to_mock:
+        parts = name.split(".")
+        root = parts[0]
+        if root not in root_mocks:
+            m = SmartMock(name=root)
+            _configure_mock(m, root)
+            root_mocks[root] = m
+            sys.modules[root] = m
+        
+        curr = root_mocks[root]
+        for i in range(1, len(parts)):
+            sub = parts[i]
+            full_sub_name = ".".join(parts[:i+1])
+            if not hasattr(curr, sub):
+                sm = SmartMock(name=sub)
+                sm._mock_parent = curr
+                setattr(curr, sub, sm)
+            curr = getattr(curr, sub)
+            sys.modules[full_sub_name] = curr
 
-for name in modules_to_mock:
-    m = SmartMock(name=name)
-    _configure_mock(m, name)
-    sys.modules[name] = m
+inject_mocks()
+sys.meta_path.insert(0, MockFinder())
 
 @pytest.fixture
 def temp_dir(tmp_path):

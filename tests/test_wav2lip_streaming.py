@@ -95,10 +95,10 @@ def test_wav2lip_streaming_logic(mock_video, mock_audio, tmp_path):
     # But 2 seconds video (60 frames) is < 300, so it will be 1 chunk.
     
     # Run
-    try:
-        syncer.sync_lips(str(mock_video), str(mock_audio), str(output_path), enhance_face=False)
-    except Exception as e:
-        pytest.fail(f"Streaming sync failed: {e}")
+    # try:
+    syncer.sync_lips(str(mock_video), str(mock_audio), str(output_path), enhance_face=False)
+    # except Exception as e:
+    #     pytest.fail(f"Streaming sync failed: {e}")
         
     assert output_path.exists()
 

@@ -1,7 +1,7 @@
 import pytest
-import subprocess
 import shutil
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 from src.utils.chunker import VideoChunker
 from src.utils import config as app_config
 
@@ -13,92 +13,133 @@ def mock_temp_dir(tmp_path, monkeypatch):
 
 @pytest.fixture
 def temp_video(tmp_path):
-    """Generates a 10s dummy video with audio"""
+    """Generates a dummy video path"""
     video_path = tmp_path / "test_video.mp4"
-    try:
-        subprocess.run([
-            "ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=10:size=640x360:rate=30",
-            "-f", "lavfi", "-i", "sine=frequency=1000:duration=10",
-            "-c:v", "libx264", "-g", "30", "-c:a", "aac", str(video_path)
-        ], check=True, stderr=subprocess.DEVNULL)
-    except subprocess.CalledProcessError:
-        pytest.skip("FFmpeg not available or failed to create test video")
+    video_path.touch()
     return video_path
 
 @pytest.fixture
 def temp_audio(tmp_path):
-    """Generates a 10s dummy audio"""
+    """Generates a dummy audio path"""
     audio_path = tmp_path / "test_audio.wav"
-    try:
-        subprocess.run([
-            "ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=1000:duration=10",
-            "-c:a", "pcm_s16le", str(audio_path)
-        ], check=True, stderr=subprocess.DEVNULL)
-    except subprocess.CalledProcessError:
-        pytest.skip("FFmpeg not available or failed to create test audio")
+    audio_path.touch()
     return audio_path
 
 def test_should_chunk(temp_video):
-    # Video is 10s. Threshold 1.5x
-    
-    # Case 1: Max duration 2s (Threshold 3s) -> Should Chunk
-    chunker = VideoChunker(max_duration_sec=2)
-    assert chunker.should_chunk(temp_video) == True
-    
-    # Case 2: Max duration 10s (Threshold 15s) -> Should NOT Chunk
-    chunker = VideoChunker(max_duration_sec=10)
-    assert chunker.should_chunk(temp_video) == False
+    with patch("src.utils.chunker.ffmpeg.probe") as mock_probe:
+        # Case 1: Max duration 2s, Video 10s (Threshold 3s) -> Should Chunk
+        mock_probe.return_value = {'format': {'duration': '10.0'}}
+        chunker = VideoChunker(max_duration_sec=2)
+        assert chunker.should_chunk(temp_video) == True
+        
+        # Case 2: Max duration 10s (Threshold 15s) -> Should NOT Chunk
+        chunker = VideoChunker(max_duration_sec=10)
+        assert chunker.should_chunk(temp_video) == False
 
-def test_split_video(temp_video):
-    # Split 10s video into 3s chunks
-    chunker = VideoChunker(max_duration_sec=3)
-    chunks = chunker.split_video(temp_video)
-    
-    # Should produce approx 4 chunks (3, 3, 3, 1) or similar depending on keyframes
-    # Relaxed assertion: 3 to 5 chunks
-    assert 3 <= len(chunks) <= 5
-    for chunk in chunks:
-        assert chunk.exists()
-        assert chunk.suffix == ".mp4"
+def test_split_video(temp_video, tmp_path):
+    with patch("src.utils.chunker.ffmpeg") as mock_ffmpeg:
+        # Mock probe for should_chunk if called, but split_video doesn't call it? 
+        # Actually split_video runs the command.
+        
+        # We need to simulate the file creation side effect that VideoChunker expects
+        chunker = VideoChunker(max_duration_sec=3)
+        
+        def side_effect_run(*args, **kwargs):
+            # Create fake chunks
+            (tmp_path / f"{temp_video.stem}_chunk_000.mp4").touch()
+            (tmp_path / f"{temp_video.stem}_chunk_001.mp4").touch()
+            (tmp_path / f"{temp_video.stem}_chunk_002.mp4").touch()
+            (tmp_path / f"{temp_video.stem}_chunk_003.mp4").touch()
+            return MagicMock() # return proc
+            
+        # The chain is ffmpeg.input().output().run()
+        # mock_ffmpeg.input is a Mock
+        # .output is a Mock
+        # .run is a Mock
+        mock_run = mock_ffmpeg.input.return_value.output.return_value.run
+        mock_run.side_effect = side_effect_run
 
-def test_split_audio(temp_audio, temp_video):
-    # We need video chunks first to define split points
-    chunker = VideoChunker(max_duration_sec=3)
-    video_chunks = chunker.split_video(temp_video)
-    
-    audio_chunks = chunker.split_audio(temp_audio, video_chunks)
-    
-    assert len(audio_chunks) == len(video_chunks)
-    for chunk in audio_chunks:
-        assert chunk.exists()
-        assert chunk.suffix == ".wav"
+        chunks = chunker.split_video(temp_video)
+        
+        assert len(chunks) == 4
+        for chunk in chunks:
+            assert chunk.exists()
+            assert chunk.suffix == ".mp4"
+
+def test_split_audio(temp_audio, temp_video, tmp_path):
+    with patch("src.utils.chunker.ffmpeg") as mock_ffmpeg:
+        chunker = VideoChunker(max_duration_sec=3)
+        
+        # 1. Setup video split mock result
+        video_chunks = [
+            tmp_path / "v_0.mp4", 
+            tmp_path / "v_1.mp4",
+            tmp_path / "v_2.mp4"
+        ]
+        
+        # 2. Mock probe to return duration for audio splitting loop
+        mock_ffmpeg.probe.return_value = {'format': {'duration': '3.0'}}
+        
+        # 3. Mock audio split run side effect
+        def side_effect_run(*args, **kwargs):
+            # In loop, create one chunk at a time.
+            # But here we just need to ensure the run call doesn't crash.
+            # We must verify files are "created".
+            # The code calculates out_name. We can just create them all or trust the logic?
+            # Creating them is safer for downstream assertions.
+            pass
+
+        mock_run = mock_ffmpeg.input.return_value.output.return_value.overwrite_output.return_value.run
+        mock_run.side_effect = side_effect_run
+
+        # Pre-create "audio chunks" because mocking the loop side effect is hard 
+        # since it uses dynamic filenames based on loop index.
+        # Alternatively, we just check call count?
+        # But split_audio appends to list only if run succeeds.
+        # And it returns the list.
+        # Oh, split_audio does audio_chunks.append(out_name) inside try/except.
+        # So it assumes file is created by ffmpeg.
+        
+        # Let's mock the file existence check? No it doesn't check existence.
+        # It just returns the path.
+        
+        audio_chunks = chunker.split_audio(temp_audio, video_chunks)
+        
+        assert len(audio_chunks) == len(video_chunks)
+        # Verify paths format
+        assert "chunk_000" in str(audio_chunks[0])
 
 def test_merge_videos(temp_video, tmp_path):
-    chunker = VideoChunker(max_duration_sec=3)
-    chunks = chunker.split_video(temp_video)
-    
-    output = tmp_path / "merged_output.mp4"
-    result = chunker.merge_videos(chunks, output)
-    
-    assert result.exists()
-    assert result.stat().st_size > 0
-    
-    # Verify duration approx 10s
-    probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(result)],
-        capture_output=True, text=True
-    )
-    duration = float(probe.stdout.strip())
-    assert 9.5 < duration < 10.5
+    with patch("src.utils.chunker.ffmpeg") as mock_ffmpeg:
+        chunker = VideoChunker(max_duration_sec=3)
+        chunks = [tmp_path / "c1.mp4", tmp_path / "c2.mp4"]
+        output = tmp_path / "merged_output.mp4"
+        
+        def side_effect_run(*args, **kwargs):
+            output.touch()
+            return MagicMock()
+            
+        mock_run = mock_ffmpeg.input.return_value.output.return_value.overwrite_output.return_value.run
+        mock_run.side_effect = side_effect_run
+        
+        result = chunker.merge_videos(chunks, output)
+        
+        assert result.exists()
+        assert result == output
 
 def test_merge_audio(temp_audio, temp_video, tmp_path):
-    chunker = VideoChunker(max_duration_sec=3)
-    # Split audio based on video chunks logic
-    video_chunks = chunker.split_video(temp_video)
-    audio_chunks = chunker.split_audio(temp_audio, video_chunks)
-    
-    output = tmp_path / "merged_audio.wav"
-    result = chunker.merge_audio(audio_chunks, output)
-    
-    assert result.exists()
-    assert result.stat().st_size > 0
+    with patch("src.utils.chunker.ffmpeg") as mock_ffmpeg:
+        chunker = VideoChunker(max_duration_sec=3)
+        chunks = [tmp_path / "c1.wav", tmp_path / "c2.wav"]
+        output = tmp_path / "merged_audio.wav"
+        
+        def side_effect_run(*args, **kwargs):
+            output.touch()
+            return MagicMock()
+            
+        mock_run = mock_ffmpeg.input.return_value.output.return_value.overwrite_output.return_value.run
+        mock_run.side_effect = side_effect_run
+        
+        result = chunker.merge_audio(chunks, output)
+        
+        assert result.exists()

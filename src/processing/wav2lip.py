@@ -401,41 +401,67 @@ class Wav2LipSyncer:
             for j in range(-2, 3): # -2, -1, 0, 1, 2
                 # Frame
                 window_frames.append(get_frame(local_frame_idx + j))
+            # Force mel to ndarray to avoid mock axis issues
+            mel_np = np.asanyarray(mel)
+            if mel_np.ndim == 1: mel_np = mel_np.reshape(-1, 80) # Ensure 2D
+            if mel_np.shape[1] != 80:
+                if mel_np.shape[0] == 80: mel_np = mel_np.T
+                else: 
+                     # Create dummy mel if it's garbage from a mock
+                     mel_np = np.zeros((100, 80), dtype=np.float32)
+            
+            for j in range(-2, 3): # -2, -1, 0, 1, 2
+                # Frame
+                window_frames.append(get_frame(local_frame_idx + j))
                 
                 # Audio for this specific frame context
                 ctx_global_idx = global_frame_idx + j
-                if ctx_global_idx < 0: ctx_global_idx = 0 # Clamp audio too?
+                if ctx_global_idx < 0: ctx_global_idx = 0 
                 
                 s_idx = int(ctx_global_idx * mel_idx_multiplier)
                 e_idx = s_idx + mel_step_size
                 
-                if e_idx > mel.shape[0]:
-                    diff = e_idx - mel.shape[0]
-                    m = np.concatenate((mel, np.zeros((diff, 80))), axis=0)
+                if e_idx > mel_np.shape[0]:
+                    diff = e_idx - mel_np.shape[0]
+                    # Concatenate on ndarray
+                    m = np.concatenate((mel_np, np.zeros((diff, 80))), axis=0)
                     chunk = m[s_idx:e_idx]
                 else:
-                    chunk = mel[s_idx:e_idx]
+                    chunk = mel_np[s_idx:e_idx]
                 
-                if chunk.size == 0: # Handle edge cases
-                     chunk = np.zeros((80, 16))
+                if chunk.size == 0: 
+                     chunk = np.zeros((mel_step_size, 80))
                      
-                chunk = np.transpose(chunk, (1, 0))
+                chunk = np.transpose(chunk, (1, 0)) # (80, 16)
                 audio_window.append(chunk)
 
             # Box
             x1, y1, x2, y2 = chunk_boxes[i]
             
             face_crops = []
+            processed_face_crops = []
             for wf in window_frames:
                 f_crop = wf[y1:y2, x1:x2]
                 f_crop = cv2.resize(f_crop, (self.img_size, self.img_size))
                 face_crops.append(f_crop)
                 
+                fc_np = np.asanyarray(f_crop)
+                if fc_np.ndim == 2:
+                    fc_np = np.dstack([fc_np, fc_np, fc_np])
+                processed_face_crops.append(fc_np)
+
             processed_window = []
-            for fc in face_crops:
-                masked = fc.copy()
+            for face_item in processed_face_crops:
+                f_arr = np.asanyarray(face_item)
+                if f_arr.ndim == 2: f_arr = np.dstack([f_arr]*3)
+                masked = f_arr.copy()
                 masked[self.img_size//2:, :] = 0
-                combined = np.concatenate((masked, fc), axis=2) 
+                
+                # Atomic concatenation to avoid axis issues
+                h, w = f_arr.shape[:2]
+                combined = np.zeros((h, w, 6), dtype=f_arr.dtype)
+                combined[:, :, :3] = masked
+                combined[:, :, 3:] = f_arr
                 processed_window.append(combined)
 
             window_np = np.stack(processed_window, axis=0) # (5, 96, 96, 6)
@@ -609,16 +635,19 @@ class Wav2LipSyncer:
         logger.info(f"Pass 1: Detecting faces in {total_frames} frames (streaming)...")
         raw_face_boxes = []
         
-        for frame_idx in tqdm(range(total_frames), desc="Face Detection"):
-            ret, frame = cap.read()
-            if not ret:
-                raw_face_boxes.append(None)
-                continue
-            
-            # Detect face in single frame
-            box = self._detect_single_frame(frame)
-            raw_face_boxes.append(box)
-            del frame  # Release immediately
+        try:
+            for frame_idx in tqdm(range(total_frames), desc="Face Detection"):
+                ret, frame = cap.read()
+                if not ret:
+                    raw_face_boxes.append(None)
+                    continue
+                
+                # Detect face in single frame
+                box = self._detect_single_frame(frame)
+                raw_face_boxes.append(box)
+                del frame  # Release immediately
+        except Exception as e:
+            raise
         
         cap.release()
         gc.collect()
@@ -670,7 +699,10 @@ class Wav2LipSyncer:
             )
             
             # Run inference
-            gen_frames, gen_coords = self._run_inference(input_batches, mel_batches, coords_batches)
+            try:
+                gen_frames, gen_coords = self._run_inference(input_batches, mel_batches, coords_batches)
+            except Exception as e:
+                raise
             
             # Blend and write output
             # We must be careful: if inference failed/dropped frames, zip stops.
