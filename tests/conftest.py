@@ -123,6 +123,13 @@ MOCK_MODULES = [
     
     # Audio processing - only mock if not available
     'pyworld', 'voicefixer',
+    
+    # Utilities
+    'tqdm', 'tqdm.auto',
+    
+    # Translation
+    'deep_translator', 'deep_translator.exceptions',
+    'langdetect',
 ]
 
 # Modules that should use real implementation if available
