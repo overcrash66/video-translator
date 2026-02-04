@@ -291,9 +291,12 @@ class Diarizer:
         logger.info(f"Loading PyAnnote pipeline: {model_name}...")
         try:
             # Load pipeline
+            # Load pipeline
             # If explicit token is provided, use it. Otherwise rely on env var or cache.
-            use_auth_token = hf_token if hf_token else True
-            pipeline = Pipeline.from_pretrained(model_name, use_auth_token=use_auth_token)
+            # [Fix] hf_hub_download() in newer huggingface_hub (>=0.23) deprecated use_auth_token
+            # PyAnnote 3.1+ supports 'token' passed via kwargs.
+            auth_token = hf_token if hf_token else True
+            pipeline = Pipeline.from_pretrained(model_name, token=auth_token)
             
             if pipeline is None:
                 logger.error(f"Failed to load PyAnnote pipeline {model_name}. Ensure you have accepted the user agreement and have a valid token.")
