@@ -364,7 +364,10 @@ class VisualTranslator:
              if not text: continue
              
              pts = np.array(box, dtype=np.int32)
-             x, y, w, h = cv2.boundingRect(pts)
+             print(f"DEBUG: Calling cv2.boundingRect with pts shape {pts.shape}")
+             res = cv2.boundingRect(pts)
+             print(f"DEBUG: cv2.boundingRect result: {res}")
+             x, y, w, h = res
              
              # Calculate font size
              # Heuristic: Match original height plus a small margin (2px)
@@ -382,7 +385,10 @@ class VisualTranslator:
 
              # Measure text
              # getbbox returns (left, top, right, bottom)
-             left, top, right, bottom = font.getbbox(text)
+             print(f"DEBUG: Calling font.getbbox with text '{text}'")
+             res_bbox = font.getbbox(text)
+             print(f"DEBUG: font.getbbox result: {res_bbox}")
+             left, top, right, bottom = res_bbox
              text_w = right - left
              text_h = bottom - top
              

@@ -5,8 +5,11 @@ import numpy as np
 import cv2
 from PIL import Image, ImageDraw, ImageFont
 
-# Add project root to path
+import sys
+from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
+print(f"DEBUG: sys.path: {sys.path}")
+import numpy as np
 
 from src.translation.visual_translator import VisualTranslator
 

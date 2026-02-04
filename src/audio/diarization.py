@@ -544,6 +544,8 @@ class Diarizer:
                 
                 chunk = audio[start:end]
                 
+                if len(chunk) == 0:
+                    continue
                 # [Improvement] RMS/Energy Check to avoid silent chunks
                 rms = np.sqrt(np.mean(chunk**2))
                 if rms < 0.01: # Skip near-silent chunks

@@ -78,7 +78,7 @@ class TestWav2LipCudaFallback:
             results = syncer.detect_faces(frames)
             
             # Verify: GPU hidden
-            assert os.environ["CUDA_VISIBLE_DEVICES"] == "", \
+            assert os.environ.get("CUDA_VISIBLE_DEVICES") == "", \
                 "Should set CUDA_VISIBLE_DEVICES to empty string"
             
             # Verify: Fallback mode active

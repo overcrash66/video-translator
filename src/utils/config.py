@@ -3,6 +3,7 @@ import sys
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
+from unittest.mock import MagicMock
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,69 +45,49 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 # Windows DLL loading fix for CUDA conflicts between torch and ctranslate2
 def setup_zlib_dll():
     """Adds src/lib (zlibwapi) to DLL path for CTranslate2."""
-    if sys.platform != "win32": return
+    if sys.platform != "win32" or os.getenv("UNIT_TEST") == "true": return
     
     _src_lib = BASE_DIR / "src" / "lib"
-    print(f"[Config] Checking src/lib: {_src_lib}")
-    debug_log(f"Checking src/lib: {_src_lib}")
-    
     if _src_lib.exists():
         try:
             os.add_dll_directory(str(_src_lib))
             print(f"[Config] Added DLL directory: {_src_lib}")
-            debug_log(f"Added DLL directory: {_src_lib}")
         except Exception as e:
             print(f"[Config] Failed to add src/lib: {e}")
-            debug_log(f"Failed to add src/lib: {e}")
     else:
         print(f"[Config] src/lib not found!")
-        debug_log("src/lib not found!")
 
 def setup_nvidia_dlls():
     """
     Adds torch/lib paths for dependencies.
     """
-    if sys.platform != "win32": return
+    if sys.platform != "win32" or os.getenv("UNIT_TEST") == "true": return
     
     _site_packages = BASE_DIR / "venv" / "Lib" / "site-packages"
     
     # Add torch/lib (Critical: contains matching cuDNN/cuBLAS/zlibwapi)
     _torch_lib = _site_packages / "torch" / "lib"
-    print(f"[Config] Checking torch/lib: {_torch_lib}")
-    debug_log(f"Checking torch/lib: {_torch_lib}")
     
     if _torch_lib.exists():
         try:
             os.add_dll_directory(str(_torch_lib))
             print(f"[Config] Added DLL directory: {_torch_lib}")
-            debug_log(f"Added DLL directory: {_torch_lib}")
         except Exception as e:
             print(f"[Config] Failed to add torch/lib: {e}")
-            debug_log(f"Failed to add torch/lib: {e}")
     else:
         print(f"[Config] torch/lib not found at expected path: {_torch_lib}")
-        debug_log(f"torch/lib not found at expected path: {_torch_lib}")
 
     # Fallback to system CUDA only if needed.
-    # CRITICAL: Do NOT add multiple conflicting CUDA versions.
-    # We prioritize v12.x because the user has Torch cu128 installed.
-    # Adding v11.8 causes conflicts/crashes when mixed with v12.8.
-    
     preferred_cuda_roots = [
         Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8"),
     ]
     
-    # Check env var but verify version
     env_cuda = os.environ.get("CUDA_PATH")
     if env_cuda:
         p = Path(env_cuda)
-        debug_log(f"Found CUDA_PATH: {p}")
-        # Avoid adding v11.8 if we want v12.8
         if "v11.8" not in str(p) and "v11" not in str(p):
              if p not in preferred_cuda_roots:
-                 preferred_cuda_roots.append(p)
-        else:
-             debug_log(f"Skipping conflicting CUDA path: {p}")
+                  preferred_cuda_roots.append(p)
     
     for cuda_root in preferred_cuda_roots:
         bin_path = cuda_root / "bin"
@@ -114,26 +95,39 @@ def setup_nvidia_dlls():
             try:
                 os.add_dll_directory(str(bin_path))
                 print(f"[Config] Added System CUDA: {bin_path}")
-                debug_log(f"Added System CUDA: {bin_path}")
             except Exception as e:
-                 debug_log(f"Failed to add System CUDA {bin_path}: {e}")
+                 pass
 
 # PHASE 1: Setup DLLs
-print(f"[Config] Initializing DLL paths... BASE_DIR={BASE_DIR}")
-setup_zlib_dll()
-setup_nvidia_dlls()
+if os.getenv("UNIT_TEST") != "true":
+    setup_zlib_dll()
+    setup_nvidia_dlls()
 
 # PHASE 2: Load CTranslate2
-print("[Config] Importing ctranslate2...")
-import ctranslate2 
-print(f"[Config] CTranslate2 loaded successfully. Version: {ctranslate2.__version__}")
+try:
+    import ctranslate2 
+except Exception as e:
+    if os.getenv("UNIT_TEST") == "true":
+        if 'ctranslate2' not in sys.modules or sys.modules['ctranslate2'] is None:
+            sys.modules['ctranslate2'] = MagicMock()
+        import ctranslate2
+    else:
+        raise
 
 # PHASE 3: Shim
 def setup_cuda_dlls():
     # Already done at module level
     pass
 
-import torch
+try:
+    import torch
+except Exception as e:
+    if os.getenv("UNIT_TEST") == "true":
+         if 'torch' not in sys.modules or sys.modules['torch'] is None:
+             sys.modules['torch'] = MagicMock()
+         import torch
+    else:
+         raise
 # Device configuration
 def get_device() -> str:
     """
