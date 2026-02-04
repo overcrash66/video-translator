@@ -36,8 +36,10 @@ jobs:
         python -m pip install --upgrade pip "setuptools<70.0.0" wheel
         pip install "numpy<2.0.0" cython
 
-        pip install -r requirements.txt
-        pip install --no-deps TTS==0.22.0
+        pip install -r tests/requirements-test.txt
+        # Install the package in editable mode or ensure PYTHONPATH includes src if needed
+        # For now, just ensuring critical missing deps if any are absolutely required for imports to not crash
+        # but mocking should handle most.
 
     - name: Run tests
       run: |
