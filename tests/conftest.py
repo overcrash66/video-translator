@@ -126,6 +126,7 @@ MOCK_MODULES = [
     
     # Utilities
     'tqdm', 'tqdm.auto',
+    'cachetools',
     
     # Translation
     'deep_translator', 'deep_translator.exceptions',
