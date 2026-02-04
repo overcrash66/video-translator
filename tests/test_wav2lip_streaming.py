@@ -1,4 +1,5 @@
 
+import unittest.mock
 import pytest
 import os
 import torch
@@ -94,11 +95,63 @@ def test_wav2lip_streaming_logic(mock_video, mock_audio, tmp_path):
     # We can't easily monkeypatch local variable in method.
     # But 2 seconds video (60 frames) is < 300, so it will be 1 chunk.
     
-    # Run
-    # try:
-    syncer.sync_lips(str(mock_video), str(mock_audio), str(output_path), enhance_face=False)
-    # except Exception as e:
-    #     pytest.fail(f"Streaming sync failed: {e}")
+    # Mock cv2 completely to avoid SmartMock flakiness/shape variances
+    with unittest.mock.patch("src.processing.wav2lip.cv2") as mock_cv2, \
+         unittest.mock.patch("src.processing.wav2lip.audio_utils") as mock_audio_utils:
+        
+        # Audio Utils Mock
+        # Return a large enough mel
+        mock_audio_utils.wav2mel.return_value = np.random.rand(500, 80).astype(np.float32)
+
+        # Constants
+        mock_cv2.CAP_PROP_FPS = 5
+        mock_cv2.CAP_PROP_FRAME_COUNT = 7
+        mock_cv2.CAP_PROP_FRAME_WIDTH = 3
+        mock_cv2.CAP_PROP_FRAME_HEIGHT = 4
+        mock_cv2.COLOR_BGR2RGB = 1
+        mock_cv2.INTER_LANCZOS4 = 2
+        mock_cv2.NORMAL_CLONE = 3
+        
+        # Functions
+        # resize: check dsize and return correct shape array
+        def resize_side_effect(src, dsize, *args, **kwargs):
+            return np.zeros((dsize[1], dsize[0], 3), dtype=np.uint8)
+        mock_cv2.resize.side_effect = resize_side_effect
+        
+        mock_cv2.cvtColor.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
+        
+        # Seamless clone and friends
+        mock_cv2.seamlessClone.side_effect = lambda src, dst, *args: dst
+        mock_cv2.GaussianBlur.side_effect = lambda src, *args: src
+        mock_cv2.ellipse.return_value = None
+        
+        # VideoCapture Mock
+        def create_mock_cap(*args):
+            m = unittest.mock.MagicMock()
+            
+            # Metadata
+            def get_side_effect(prop):
+                if prop == mock_cv2.CAP_PROP_FPS: return 30.0
+                if prop == mock_cv2.CAP_PROP_FRAME_COUNT: return 60
+                if prop == mock_cv2.CAP_PROP_FRAME_WIDTH: return 100
+                if prop == mock_cv2.CAP_PROP_FRAME_HEIGHT: return 100
+                return 0
+            m.get.side_effect = get_side_effect
+            
+            # Frames
+            frames = [np.zeros((100, 100, 3), dtype=np.uint8) for _ in range(60)]
+            read_results = [(True, f) for f in frames] + [(False, None)]
+            m.read.side_effect = read_results
+            return m
+            
+        mock_cv2.VideoCapture.side_effect = create_mock_cap
+        
+        # We also need to mock VideoWriter
+        mock_writer = unittest.mock.MagicMock()
+        mock_cv2.VideoWriter.return_value = mock_writer
+
+        # Run
+        syncer.sync_lips(str(mock_video), str(mock_audio), str(output_path), enhance_face=False)
         
     assert output_path.exists()
 
