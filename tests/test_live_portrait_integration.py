@@ -22,6 +22,7 @@ class TestLivePortraitIntegration:
         assert syncer.engine == syncer.engines["live_portrait"]
         mock_load.assert_called_once()
         
+    @pytest.mark.requires_models
     @patch('src.processing.live_portrait.LivePortraitSyncer.sync_lips')
     def test_sync_lips_delegation(self, mock_sync):
         """Test that sync_lips delegates to LivePortrait engine when selected."""

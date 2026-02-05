@@ -12,6 +12,16 @@ import warnings
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
+# [Fix] PyTorch 2.6+ changed torch.load to use weights_only=True by default
+# PyAnnote models contain TorchVersion metadata that's not in the default safe globals
+# Add to allowlist to prevent "Unsupported global: torch.torch_version.TorchVersion" error
+try:
+    from torch.torch_version import TorchVersion
+    if hasattr(torch.serialization, 'add_safe_globals'):
+        torch.serialization.add_safe_globals([TorchVersion])
+except (ImportError, AttributeError):
+    pass  # Older PyTorch version, not needed
+
 # Fix for SpeechBrain compatibility with newer torchaudio versions
 if not hasattr(torchaudio, 'list_audio_backends'):
     torchaudio.list_audio_backends = lambda: ['soundfile']
@@ -72,8 +82,16 @@ class Diarizer:
             return
             
         try:
-            from speechbrain.inference.speaker import EncoderClassifier
             from huggingface_hub import snapshot_download
+            import platform
+            
+            # [CRITICAL] On Windows, monkey-patch SpeechBrain's fetch BEFORE importing EncoderClassifier
+            # SpeechBrain imports fetch at module load time, so we must patch first
+            if platform.system() == "Windows":
+                self._patch_speechbrain_fetch_for_windows()
+            
+            # Now import EncoderClassifier AFTER the patch is applied
+            from speechbrain.inference.speaker import EncoderClassifier
             
             logger.info("Loading SpeechBrain ECAPA-TDNN model...")
             
@@ -90,20 +108,48 @@ class Diarizer:
                 resume_download=True
             )
             
+            local_path = Path(local_path)
+            
             # Override pretrained_path to point to local dir, inhibiting Hub fetch
             # ensure path string is safe for yaml
             local_path_str = str(local_path).replace("\\", "/")
             
-            # [Fix] SpeechBrain tries to symlink label_encoder.txt to .ckpt which fails on Windows
-            # We verify expected files and create copies if needed instead of symlinks
-            lab_txt = Path(local_path) / "label_encoder.txt"
-            lab_ckpt = Path(local_path) / "label_encoder.ckpt"
+            # [Fix] SpeechBrain 1.0.0 tries to symlink files which fails on Windows without admin
+            # Pre-copy all expected model files to the savedir so SpeechBrain's fetch() 
+            # sees them as already existing and skips symlink creation entirely
+            expected_files = [
+                "hyperparams.yaml",
+                "embedding_model.ckpt", 
+                "mean_var_norm_emb.ckpt",
+                "classifier.ckpt",
+                "label_encoder.ckpt",
+                "custom.py",
+            ]
+            
+            for fname in expected_files:
+                src = local_path / fname
+                # If source exists but is a symlink (broken or otherwise), resolve or copy
+                if src.exists() or src.is_symlink():
+                    # For Windows compatibility, ensure files are real copies not symlinks
+                    if src.is_symlink() and platform.system() == "Windows":
+                        try:
+                            # Read symlink target and copy content
+                            target = src.resolve()
+                            if target.exists():
+                                src.unlink()
+                                shutil.copy2(target, src)
+                        except Exception as e:
+                            logger.warning(f"Could not resolve symlink {fname}: {e}")
+            
+            # Also handle label_encoder.txt -> label_encoder.ckpt copy
+            lab_txt = local_path / "label_encoder.txt"
+            lab_ckpt = local_path / "label_encoder.ckpt"
             if lab_txt.exists() and not lab_ckpt.exists():
                 shutil.copy2(lab_txt, lab_ckpt)
             
             self.embedding_model = EncoderClassifier.from_hparams(
-                source=local_path,
-                savedir=local_path,
+                source=str(local_path),
+                savedir=str(local_path),
                 run_opts={"device": str(self.device)},
                 overrides={"pretrained_path": local_path_str}
             )
@@ -120,6 +166,128 @@ class Diarizer:
 
             logger.error(f"Failed to load SpeechBrain model: {e}")
             raise
+
+    def _patch_speechbrain_fetch_for_windows(self):
+        """
+        Monkey-patch SpeechBrain's fetch function to use copy instead of symlink.
+        
+        This is needed for SpeechBrain 1.0.0 on Windows which doesn't have LocalStrategy
+        and attempts to create symlinks which require admin privileges.
+        """
+        try:
+            import speechbrain.utils.fetching as fetching_module
+            import pathlib
+            
+            # Check if already patched
+            if getattr(fetching_module, '_windows_patched', False):
+                logger.debug("SpeechBrain fetch already patched.")
+                return
+            
+            original_fetch = fetching_module.fetch
+            
+            def patched_fetch(
+                filename,
+                source,
+                savedir="./pretrained_model_checkpoints",
+                overwrite=False,
+                save_filename=None,
+                use_auth_token=False,
+                revision=None,
+                huggingface_cache_dir=None,
+            ):
+                """Patched fetch that uses copy instead of symlink on Windows."""
+                if save_filename is None:
+                    save_filename = filename
+                savedir = pathlib.Path(savedir)
+                savedir.mkdir(parents=True, exist_ok=True)
+                destination = savedir / save_filename
+                source_path = pathlib.Path(source)
+                
+                # [CRITICAL FIX] Handle edge case where source == savedir
+                # This happens when from_hparams is called with source=savedir
+                # SpeechBrain would try to symlink a file to itself, which fails
+                if source_path.resolve() == savedir.resolve():
+                    # Source and savedir are the same directory
+                    if destination.exists() and not destination.is_symlink():
+                        logger.debug(f"Fetch {filename}: Source==savedir, file already exists.")
+                        return destination
+                    elif destination.is_symlink():
+                        # Convert symlink to real file
+                        target = destination.resolve()
+                        if target.exists() and target != destination:
+                            destination.unlink()
+                            shutil.copy2(target, destination)
+                            logger.debug(f"Fetch {filename}: Converted symlink to real file.")
+                        return destination
+                    else:
+                        # File doesn't exist - this is normal, SpeechBrain will create it
+                        # For files like custom.py that may not exist, we just skip
+                        logger.debug(f"Fetch {filename}: Source==savedir, file not found, skipping.")
+                        # Return None or destination - caller will handle missing file
+                        return destination
+                
+                # If destination already exists (as real file), skip
+                if destination.exists() and not destination.is_symlink() and not overwrite:
+                    logger.debug(f"Fetch {filename}: Using existing file in {str(destination)}.")
+                    return destination
+                
+                # If source is a local directory, copy instead of symlink
+                if source_path.is_dir():
+                    sourcefile = source_path / filename
+                    if sourcefile.exists():
+                        # Skip if source and destination are the same file
+                        if sourcefile.resolve() == destination.resolve():
+                            logger.debug(f"Fetch {filename}: Source and destination are same file.")
+                            return destination
+                        # Remove any existing symlink or file if overwriting
+                        if destination.exists() or destination.is_symlink():
+                            destination.unlink()
+                        # Copy instead of symlink
+                        shutil.copy2(sourcefile, destination)
+                        logger.debug(f"Fetch {filename}: Copied from {str(sourcefile)} to {str(destination)}.")
+                        return destination
+                
+                # For other cases (HuggingFace, URL), call original but intercept symlinks
+                # by checking if the result is a symlink and converting it
+                result = original_fetch(
+                    filename=filename,
+                    source=source,
+                    savedir=savedir,
+                    overwrite=overwrite,
+                    save_filename=save_filename,
+                    use_auth_token=use_auth_token,
+                    revision=revision,
+                    huggingface_cache_dir=huggingface_cache_dir,
+                )
+                
+                # Convert symlink to real file
+                result_path = pathlib.Path(result)
+                if result_path.is_symlink():
+                    target = result_path.resolve()
+                    if target.exists():
+                        result_path.unlink()
+                        shutil.copy2(target, result_path)
+                        logger.debug(f"Converted symlink {filename} to real file.")
+                
+                return result
+            
+            # Apply the patch to fetching module
+            fetching_module.fetch = patched_fetch
+            fetching_module._windows_patched = True
+            
+            # CRITICAL: Also patch the reference in speechbrain.inference.interfaces
+            # because it does `from speechbrain.utils.fetching import fetch` at import time
+            try:
+                import speechbrain.inference.interfaces as interfaces_module
+                interfaces_module.fetch = patched_fetch
+                logger.debug("Also patched fetch in speechbrain.inference.interfaces.")
+            except (ImportError, AttributeError) as e:
+                logger.debug(f"Could not patch interfaces module: {e}")
+            
+            logger.info("Applied Windows symlink patch to SpeechBrain fetch.")
+            
+        except Exception as e:
+            logger.warning(f"Could not patch SpeechBrain fetch: {e}")
 
     def _load_nemo(self):
         """Load NVIDIA NeMo for diarization."""
@@ -292,8 +460,20 @@ class Diarizer:
         try:
             # Load pipeline
             # If explicit token is provided, use it. Otherwise rely on env var or cache.
-            use_auth_token = hf_token if hf_token else True
-            pipeline = Pipeline.from_pretrained(model_name, use_auth_token=use_auth_token)
+            # [Fix] pyannote.audio 4.x uses 'token' parameter, while 3.x uses 'use_auth_token'
+            # Try the newer API first, then fall back to the older API for compatibility
+            auth_token = hf_token if hf_token else True
+            
+            try:
+                # Try pyannote 4.x API first (token parameter)
+                pipeline = Pipeline.from_pretrained(model_name, token=auth_token)
+            except TypeError as e:
+                if "unexpected keyword argument" in str(e) and "token" in str(e):
+                    # Fall back to pyannote 3.x API (use_auth_token parameter)
+                    logger.debug("Falling back to use_auth_token for older pyannote version")
+                    pipeline = Pipeline.from_pretrained(model_name, use_auth_token=auth_token)
+                else:
+                    raise
             
             if pipeline is None:
                 logger.error(f"Failed to load PyAnnote pipeline {model_name}. Ensure you have accepted the user agreement and have a valid token.")

@@ -48,6 +48,7 @@ def mock_audio(tmp_path):
     scipy.io.wavfile.write(str(audio_path), fs, audio.astype(np.int16))
     return audio_path
 
+@pytest.mark.requires_ffmpeg
 def test_wav2lip_streaming_logic(mock_video, mock_audio, tmp_path):
     """
     Test that sync_lips runs without error using the new streaming logic.

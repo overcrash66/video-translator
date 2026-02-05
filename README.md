@@ -210,6 +210,32 @@ py -3.10 -m venv venv
 pip install -r requirements.txt
 ```
 
+### 🐧🍎 Linux / macOS Installation (Alternative)
+
+For consistency with the Docker deployment, Linux and macOS users can use the Docker requirements file which contains tested, stable dependency versions:
+
+```bash
+# Create virtual environment
+python3.10 -m venv venv
+source venv/bin/activate
+
+# Install PyTorch with CUDA (Linux) or Metal (macOS)
+# Linux with CUDA:
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# macOS (Apple Silicon):
+pip install torch torchvision torchaudio
+
+# Install project dependencies
+pip install -r deploy/docker/requirements.docker.txt
+```
+
+> [!NOTE]
+> **macOS Users:**
+> - `paddlepaddle-gpu` is Linux-only. Install `paddlepaddle` instead: `pip install paddlepaddle`
+> - Replace `onnxruntime-gpu` with `onnxruntime`: `pip install onnxruntime`
+> - Some GPU-accelerated features may have reduced performance on Apple Silicon
+
 ### Optional Components
 
 | Feature | Requirement |

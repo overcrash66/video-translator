@@ -318,6 +318,9 @@ class VideoTranslator:
             chunk_kwargs['video_path'] = chunk
             # Inject precomputed diarization
             chunk_kwargs['precomputed_diarization'] = precomputed_diarization
+            # Share extracted audio if we already have it (avoid duplicate extraction)
+            if 'full_audio' in dir() and full_audio:
+                chunk_kwargs['precomputed_audio'] = None  # Each chunk extracts its own audio from the chunk video
             
             # Run pipeline for chunk
             chunk_result = None
@@ -386,6 +389,7 @@ class VideoTranslator:
                       lipsync_model_name: str | None = "wav2lip",
                       live_portrait_acceleration: str = "ort",
                       precomputed_diarization: tuple | None = None,
+                      precomputed_audio: str | None = None,
                       hf_token: str | None = None) -> Generator[tuple[Literal["log", "progress", "result"], Any] | list, None, None]:
         """
         Internal pipeline logic (renamed from process_video).
@@ -399,11 +403,16 @@ class VideoTranslator:
         # ---------------------------------------------------------------------
         # 1. Audio Extraction Stage
         #    - Uses FFmpeg to extract audio track from video
+        #    - Skip if precomputed_audio is provided (chunked mode)
         # ---------------------------------------------------------------------
         config.debug_log("Stage 1: Audio Extraction")
-        yield ("progress", 0.1, "Extracting Audio...")
-        extracted_path = self._step_extraction(video_path)
-        yield ("log", "Audio extracted.")
+        if precomputed_audio:
+            extracted_path = precomputed_audio
+            yield ("log", "Using precomputed audio.")
+        else:
+            yield ("progress", 0.1, "Extracting Audio...")
+            extracted_path = self._step_extraction(video_path)
+            yield ("log", "Audio extracted.")
              
         # ---------------------------------------------------------------------
         # 2. Vocal Separation Stage
@@ -489,7 +498,7 @@ class VideoTranslator:
         # 6. TTS
         config.debug_log("Stage 6: TTS")
         self.load_model("tts")
-        yield ("progress", 0.5, "Generating Speech...")
+        # Note: Progress 0.5 is now yielded in _step_tts_generator to avoid duplicate
         
         # Determine iterator for progress reporting
         gen_iterator = self._step_tts_generator(

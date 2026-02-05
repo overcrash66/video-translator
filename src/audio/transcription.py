@@ -129,10 +129,13 @@ class Transcriber:
     def __init__(self):
         self.model_size = config.WHISPER_MODEL_SIZE
         self.device = config.DEVICE
+        self._original_device = config.DEVICE  # Track original for reset after fallback
         self.model = None
         self.vad = SileroVAD()
         self.use_vad = False  # VAD disabled by default (user can enable via UI)
         self.min_word_confidence = 0.0  # Disabled - keep all transcribed words
+        self._retry_count = 0  # Track retries to prevent infinite loops
+        self.max_retries = 1  # Max retries (1 = try once more on CPU)
 
     def load_model(self, size=None):
         # In subprocess mode, we don't load the model here.
@@ -227,21 +230,69 @@ class Transcriber:
             logger.info(f"Subprocess returned {len(raw_segments)} segments. (Lang: {detected_language})")
             
         except subprocess.CalledProcessError as e:
-            logger.error(f"Transcription Subprocess Failed! Stderr: {e.stderr}")
+            logger.error(f"Transcription Subprocess Failed! Exit code: {e.returncode}")
+            logger.error(f"Stderr: {e.stderr}")
+            
+            # [Fix] Check if stdout actually contains valid output despite non-zero exit
+            # This can happen when CUDA cleanup crashes after successful transcription
+            if e.stdout:
+                import re
+                match = re.search(r"<<<<JSON>>>>\s*(.*?)\s*<<<<ENDJSON>>>>", e.stdout, re.DOTALL)
+                if match:
+                    logger.warning("Worker crashed after successful transcription. Attempting to recover output...")
+                    try:
+                        json_str = match.group(1)
+                        data = json.loads(json_str)
+                        raw_segments = data["segments"]
+                        detected_language = data.get("language", "en")
+                        logger.info(f"Recovered {len(raw_segments)} segments from crashed worker")
+                        # Fall through to post-processing below (need to restructure)
+                        # For now, skip to post-processing by setting variables
+                    except (json.JSONDecodeError, KeyError) as parse_err:
+                        logger.error(f"Failed to parse recovered output: {parse_err}")
+                        raw_segments = None
+                    
+                    if raw_segments:
+                        # Jump to post-processing (below the except blocks)
+                        pass  # Will be handled by the variable being set
+                    else:
+                        pass  # Fall through to normal error handling
+            else:
+                raw_segments = None
+            
             config.debug_log(f"Transcriber Crash: {e.stderr}")
             
-            # [Fix] Fallback to CPU if CUDA crashes (Access Violation / DLL issue)
-            if self.device == "cuda":
-                logger.warning("Worker crashed on CUDA. Retrying with CPU fallback...")
-                config.debug_log("Switching to CPU fallback for Transcription worker...")
+            # If we recovered valid output, skip the retry logic and continue to post-processing
+            if raw_segments is not None:
+                logger.info("Continuing with recovered segments despite worker crash...")
+                # detected_language should already be set from recovery
+            else:
+                # [Fix] Fallback to CPU if CUDA crashes (Access Violation / DLL issue)
+                # But limit retries to prevent infinite loops
+                if self.device == "cuda" and self._retry_count < self.max_retries:
+                    self._retry_count += 1
+                    logger.warning(f"Worker crashed on CUDA. Retrying with CPU fallback... (Attempt {self._retry_count}/{self.max_retries})")
+                    config.debug_log("Switching to CPU fallback for Transcription worker...")
+                    
+                    # Update settings for CPU
+                    self.device = "cpu"
+                    
+                    try:
+                        # Recursive retry
+                        result = self.transcribe(audio_path, language, model_size, use_vad, beam_size, min_silence_duration_ms)
+                        # Reset for next transcription call (so we try GPU again next time)
+                        self.device = self._original_device
+                        self._retry_count = 0
+                        return result
+                    except Exception as retry_error:
+                        # Reset state even on failure
+                        self.device = self._original_device
+                        self._retry_count = 0
+                        raise
                 
-                # Update settings for CPU
-                self.device = "cpu"
-                
-                # Recursive retry
-                return self.transcribe(audio_path, language, model_size, use_vad, beam_size, min_silence_duration_ms)
-            
-            raise RuntimeError(f"Transcription failed: {e.stderr}")
+                # Reset retry count for next call
+                self._retry_count = 0
+                raise RuntimeError(f"Transcription failed after {self.max_retries} retries: {e.stderr}")
             
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse worker output: {result.stdout}")

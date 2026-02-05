@@ -14,9 +14,29 @@ sys.path.append(os.getcwd())
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='[Worker] %(message)s')
 logger = logging.getLogger("TranscriptionWorker")
 
+# CUDA error patterns to detect GPU-specific failures
+CUDA_ERROR_PATTERNS = [
+    'cuda', 'gpu', 'out of memory', 'oom', 'cudnn', 'cublas',
+    'illegal memory', 'device-side assert', 'cusparse', 'cufft',
+    'nccl', 'nvrtc', 'curand'
+]
+
+
+def _is_cuda_error(error: Exception) -> bool:
+    """Check if an exception is CUDA-related."""
+    error_str = str(error).lower()
+    error_type = type(error).__name__.lower()
+    return any(pattern in error_str or pattern in error_type for pattern in CUDA_ERROR_PATTERNS)
+
+
 def run_transcription(audio_path, model_size, language, compute_type, device):
     """
     Runs transcription using faster-whisper in isolation.
+    
+    Exit codes:
+        0 - Success
+        1 - General error  
+        2 - CUDA-specific error (triggers CPU fallback in parent)
     """
     try:
         from src.utils import config
@@ -25,25 +45,74 @@ def run_transcription(audio_path, model_size, language, compute_type, device):
         
         from faster_whisper import WhisperModel
         
+        # Log GPU memory if available (helps debug OOM)
+        if device == "cuda":
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    mem_allocated = torch.cuda.memory_allocated() / 1024**3
+                    mem_reserved = torch.cuda.memory_reserved() / 1024**3
+                    logger.info(f"GPU Memory before load: {mem_allocated:.2f}GB allocated, {mem_reserved:.2f}GB reserved")
+            except Exception:
+                pass
+        
         logger.info(f"Loading Whisper {model_size} on {device} ({compute_type})...")
-        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        
+        try:
+            model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        except Exception as load_error:
+            if _is_cuda_error(load_error):
+                logger.error(f"CUDA error loading model: {load_error}")
+                sys.exit(2)  # Signal CUDA-specific failure
+            raise
         
         logger.info(f"Transcribing {audio_path}...")
-        segments_gen, info = model.transcribe(
-            audio_path, 
-            language=language if language != "auto" else None,
-            beam_size=5,
-            word_timestamps=True
-        )
         
-        segments = []
-        for col in segments_gen:
-            segments.append({
-                "start": col.start,
-                "end": col.end,
-                "text": col.text,
-                "words": [{"word": w.word, "start": w.start, "end": w.end, "probability": w.probability} for w in col.words] if col.words else []
-            })
+        try:
+            segments_gen, info = model.transcribe(
+                audio_path, 
+                language=language if language != "auto" else None,
+                beam_size=5,
+                word_timestamps=True
+            )
+            
+            # Log info from transcribe call
+            logger.info(f"Processing audio with duration {info.duration_after_vad:.3f}s")
+            logger.info(f"Detected language '{info.language}' with probability {info.language_probability:.2f}")
+            
+            # Log GPU memory after model load (before processing segments)
+            if device == "cuda":
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        mem_allocated = torch.cuda.memory_allocated() / 1024**3
+                        mem_reserved = torch.cuda.memory_reserved() / 1024**3
+                        logger.info(f"GPU Memory after model load: {mem_allocated:.2f}GB allocated, {mem_reserved:.2f}GB reserved")
+                except Exception:
+                    pass
+            
+            # Process segments - iterate generator and log progress
+            segments = []
+            segment_count = 0
+            for col in segments_gen:
+                segment_count += 1
+                segments.append({
+                    "start": col.start,
+                    "end": col.end,
+                    "text": col.text,
+                    "words": [{"word": w.word, "start": w.start, "end": w.end, "probability": w.probability} for w in col.words] if col.words else []
+                })
+                # Log progress every 10 segments
+                if segment_count % 10 == 0:
+                    logger.info(f"Processed {segment_count} segments...")
+                    
+            logger.info(f"Transcription complete: {segment_count} total segments")
+                
+        except Exception as transcribe_error:
+            if _is_cuda_error(transcribe_error):
+                logger.error(f"CUDA error during transcription: {transcribe_error}")
+                sys.exit(2)  # Signal CUDA-specific failure
+            raise
             
         result = {
             "segments": segments,
@@ -52,9 +121,16 @@ def run_transcription(audio_path, model_size, language, compute_type, device):
         }
         
         # Print JSON result to STDOUT with delimiters
+        # [Fix] Flush stdout immediately to ensure capture before any late crash
         json_str = json.dumps(result)
-        print(f"<<<<JSON>>>>\n{json_str}\n<<<<ENDJSON>>>>")
+        print(f"<<<<JSON>>>>\n{json_str}\n<<<<ENDJSON>>>>", flush=True)
         
+        # Explicit success exit
+        sys.exit(0)
+        
+    except SystemExit:
+        # Re-raise SystemExit so exit codes are preserved
+        raise
     except Exception as e:
         logger.error(f"Worker Failed: {e}")
         traceback.print_exc(file=sys.stderr)

@@ -2,6 +2,9 @@ import pytest
 from unittest.mock import MagicMock, patch, ANY
 from src.synthesis.backends.vibevoice_tts import VibeVoiceBackend, VibeVoiceWrapper
 
+# All tests in this module require the vibevoice package
+pytestmark = pytest.mark.requires_models
+
 @pytest.fixture
 def mock_vibevoice_package():
     mock_vibevoice = MagicMock()

@@ -78,6 +78,7 @@ class TestMemoryOptimizations:
         assert scale == 1.0
         assert resized.shape == small_frame.shape
 
+    @pytest.mark.requires_real_audio  # Needs real cv2.resize
     def test_resize_for_ocr_large_frame_resized(self):
         """Frames larger than MAX_OCR_WIDTH should be resized."""
         translator = VisualTranslator()
@@ -129,6 +130,7 @@ class TestMemoryOptimizations:
                 assert pt[0] == pytest.approx(expected[i][j][0])
                 assert pt[1] == pytest.approx(expected[i][j][1])
 
+    @pytest.mark.requires_real_audio  # Needs real cachetools.TTLCache
     def test_lru_cache_sizes_are_bounded(self):
         """Translation caches should have bounded sizes to prevent RAM growth."""
         from src.translation.visual_translator import TRANSLATION_CACHE_MAXSIZE, TRANSLATION_CACHE_TTL

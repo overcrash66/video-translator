@@ -289,7 +289,6 @@ class Translator:
         self.llm_translator = None 
         # Import centralized languages
         from src.utils import languages
-        from src.utils import languages
         self.languages = languages
         self.cache_file = config.TEMP_DIR / "translation_cache.json"
         self.cache = self._load_cache()
@@ -351,20 +350,6 @@ class Translator:
                 
         if not segments_to_trans:
             return translated_segments
-            
-        # Optimization: Context-Aware Translation (Loop)
-        if optimize and hasattr(self, 'llm_translator'):
-            logger.info("Using Context-Aware Translation (Sequential)...")
-            
-            # Context window
-            context_history = []
-            
-            for j, seg in enumerate(segments_to_trans):
-                if check_cancel_callback: check_cancel_callback()
-                
-                # ... (rest of implementation would be here, but we are just injecting check)
-                # We need to implement the check inside the batch processing below too.
-                pass 
                 
         # Batch Processing
         batch_size = 10 if model == "google" else 4

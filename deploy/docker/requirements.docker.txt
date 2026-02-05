@@ -15,25 +15,25 @@ deep-translator
 python-dotenv==1.0.1
 pandas<2.0.0
 pyarrow==20.0.0
-soundfile==0.12.1
+soundfile>=0.13.1
 ffmpeg-python==0.2.0
 # Use headless OpenCV for Docker
 opencv-python-headless==4.10.0.84
 
 
 
-torchmetrics==1.4.0.post0
+torchmetrics>=1.6.1
 transformers>=4.48.0
 tokenizers>=0.21.0
 accelerate>=0.33.0
 diffusers==0.29.0
-safetensors==0.4.3
-einops==0.8.0
+safetensors>=0.5.2
+einops>=0.8.0
 tqdm==4.66.4
 huggingface_hub>=0.25.1
 pydub==0.25.1
-pyannote.audio==3.3.1
-speechbrain==1.0.0
+pyannote.audio==4.0.1
+speechbrain==1.0.3
 diart==0.9.0
 demucs==4.0.1
 
@@ -41,13 +41,14 @@ pyworld==0.3.4
 edge-tts==6.1.10
 piper-tts==1.2.0
 f5-tts
+pysbd
 TTS==0.22.0
 
 faster-whisper==1.1.1
 bitsandbytes==0.43.1
 sentencepiece==0.2.0
 protobuf==5.27.1
-voicefixer>=0.1.2
+# voicefixer>=0.1.2  # REMOVED: Has broken metadata incompatible with pip >= 24.1
 face-alignment==1.4.1
 basicsr==1.4.2
 kornia==0.7.3
@@ -60,11 +61,11 @@ paddlepaddle-gpu==2.6.1; sys_platform == "linux"
 paddleocr==2.8.1
 psutil==5.9.8
 aiohttp==3.9.5
-rich==13.7.1
+rich>=13.9.4
 colorama==0.4.6
 insightface>=0.7.3
 onnxruntime-gpu
 cachetools>=5.3.0
 
-easyocr
-langdetect
+easyocr==1.7.2
+langdetect==1.0.9

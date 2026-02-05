@@ -107,12 +107,17 @@ def process_video(video_path, source_language, target_language, audio_model, tts
         config.debug_log(f"Copying video to {local_video_path}...")
         
         copied = False
+        source_size = video_path.stat().st_size
         for attempt in range(5):
             try:
                 shutil.copy2(str(video_path), str(local_video_path))
-                if local_video_path.exists():
+                # Verify copy is complete by checking size matches source
+                if local_video_path.exists() and local_video_path.stat().st_size == source_size:
                     copied = True
                     break
+                elif local_video_path.exists():
+                    update_log(f"Copy verify failed: size mismatch (attempt {attempt+1})")
+                    local_video_path.unlink()  # Remove incomplete copy
             except Exception as e:
                 update_log(f"Copy retry {attempt+1}... ({str(e)})")
                 time.sleep(1)

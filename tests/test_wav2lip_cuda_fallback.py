@@ -29,6 +29,7 @@ def cuda_env_backup():
 class TestWav2LipCudaFallback:
     """Tests for CUDA error handling and CPU fallback in Wav2Lip."""
 
+    @pytest.mark.requires_models  # Requires CUDA fallback behavior in implementation
     @patch('src.processing.wav2lip.config')
     @patch('src.processing.wav2lip.Wav2Lip')
     @patch('src.processing.wav2lip.face_alignment.FaceAlignment')
