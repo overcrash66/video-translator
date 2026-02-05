@@ -16,6 +16,9 @@ def test_load_speechbrain_no_symlink(tmp_path):
     fake_model_dir.mkdir(parents=True)
     (fake_model_dir / "hyperparams.yaml").touch()
     (fake_model_dir / "label_encoder.txt").touch()
+    # Create other expected files
+    for fname in ["embedding_model.ckpt", "mean_var_norm_emb.ckpt", "classifier.ckpt", "custom.py"]:
+        (fake_model_dir / fname).touch()
     
     # Mock config.BASE_DIR to use tmp_path
     # Patch where the module is USED (src.audio.diarization imports from these)
@@ -29,28 +32,36 @@ def test_load_speechbrain_no_symlink(tmp_path):
         
         mock_snapshot = MagicMock(return_value=str(fake_model_dir))
         
+        # Mock fetching module for the Windows patch
+        mock_fetching = MagicMock()
+        mock_fetching.fetch = MagicMock()
+        
         with patch.dict('sys.modules', {
             'speechbrain': MagicMock(),
             'speechbrain.inference': MagicMock(),
             'speechbrain.inference.speaker': MagicMock(EncoderClassifier=mock_classifier_cls),
+            'speechbrain.utils': MagicMock(),
+            'speechbrain.utils.fetching': mock_fetching,
             'huggingface_hub': MagicMock(snapshot_download=mock_snapshot),
         }):
-            print("\nInitializing Diarizer...")
-            diarizer = Diarizer()
-            
-            print("Loading SpeechBrain model...")
-            diarizer._load_speechbrain()
-            
-            # Verify download called with correct args
-            mock_snapshot.assert_called_once()
-            args, kwargs = mock_snapshot.call_args
-            assert kwargs.get("local_dir_use_symlinks") is False
-            
-            # Verify model loaded
-            assert diarizer.embedding_model is not None
-            mock_classifier_cls.from_hparams.assert_called_once()
-            
-            print("SpeechBrain model loaded successfully (mocked).")
+            # Mock platform.system to return Windows to trigger the patch
+            with patch("platform.system", return_value="Windows"):
+                print("\nInitializing Diarizer...")
+                diarizer = Diarizer()
+                
+                print("Loading SpeechBrain model...")
+                diarizer._load_speechbrain()
+                
+                # Verify download called with correct args
+                mock_snapshot.assert_called_once()
+                args, kwargs = mock_snapshot.call_args
+                assert kwargs.get("local_dir_use_symlinks") is False
+                
+                # Verify model loaded
+                assert diarizer.embedding_model is not None
+                mock_classifier_cls.from_hparams.assert_called_once()
+                
+                print("SpeechBrain model loaded successfully (mocked).")
 
 if __name__ == "__main__":
     pytest.main([__file__])

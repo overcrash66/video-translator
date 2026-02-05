@@ -33,14 +33,15 @@ demucs==4.0.1
 
 pyworld==0.3.4
 edge-tts==6.1.10
-piper-tts==1.2.0
+# piper-tts==1.2.0 (Install failed)
 f5-tts
-TTS
+pysbd
+# TTS (Incompatible with Python 3.12)
 
 faster-whisper==1.1.1
 bitsandbytes==0.43.1
 sentencepiece==0.2.0
-protobuf==5.27.1
+protobuf
 voicefixer>=0.1.2
 face-alignment==1.4.1
 basicsr==1.4.2

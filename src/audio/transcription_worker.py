@@ -76,15 +76,37 @@ def run_transcription(audio_path, model_size, language, compute_type, device):
                 word_timestamps=True
             )
             
-            # Process segments
+            # Log info from transcribe call
+            logger.info(f"Processing audio with duration {info.duration_after_vad:.3f}s")
+            logger.info(f"Detected language '{info.language}' with probability {info.language_probability:.2f}")
+            
+            # Log GPU memory after model load (before processing segments)
+            if device == "cuda":
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        mem_allocated = torch.cuda.memory_allocated() / 1024**3
+                        mem_reserved = torch.cuda.memory_reserved() / 1024**3
+                        logger.info(f"GPU Memory after model load: {mem_allocated:.2f}GB allocated, {mem_reserved:.2f}GB reserved")
+                except Exception:
+                    pass
+            
+            # Process segments - iterate generator and log progress
             segments = []
+            segment_count = 0
             for col in segments_gen:
+                segment_count += 1
                 segments.append({
                     "start": col.start,
                     "end": col.end,
                     "text": col.text,
                     "words": [{"word": w.word, "start": w.start, "end": w.end, "probability": w.probability} for w in col.words] if col.words else []
                 })
+                # Log progress every 10 segments
+                if segment_count % 10 == 0:
+                    logger.info(f"Processed {segment_count} segments...")
+                    
+            logger.info(f"Transcription complete: {segment_count} total segments")
                 
         except Exception as transcribe_error:
             if _is_cuda_error(transcribe_error):
@@ -99,8 +121,12 @@ def run_transcription(audio_path, model_size, language, compute_type, device):
         }
         
         # Print JSON result to STDOUT with delimiters
+        # [Fix] Flush stdout immediately to ensure capture before any late crash
         json_str = json.dumps(result)
-        print(f"<<<<JSON>>>>\n{json_str}\n<<<<ENDJSON>>>>")
+        print(f"<<<<JSON>>>>\n{json_str}\n<<<<ENDJSON>>>>", flush=True)
+        
+        # Explicit success exit
+        sys.exit(0)
         
     except SystemExit:
         # Re-raise SystemExit so exit codes are preserved
