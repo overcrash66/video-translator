@@ -10,6 +10,14 @@ Transform any video into a professional multilingual production with natural voi
 
 ---
 
+## 🎬 Demo
+
+[![Watch the Demo](https://img.youtube.com/vi/935PvODrt3I/maxresdefault.jpg)](https://www.youtube.com/watch?v=935PvODrt3I)
+
+> 🎥 **Click the image above to watch the full demo on YouTube!**
+
+---
+
 ## ✨ Why This Project?
 
 **Traditional dubbing** is expensive, time-consuming, and requires professional studios. **AI Video Translator** democratizes video localization by bringing Hollywood-grade technology to your desktop:
