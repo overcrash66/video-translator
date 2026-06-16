@@ -37,7 +37,7 @@ class VibeVoiceWrapper:
             
             # Load processor and model
             self.processor = VibeVoiceProcessor.from_pretrained(self.repo_id)
-            
+
             # [Fix] Do NOT use device_map - it triggers accelerate's meta tensor initialization
             # Instead, load model normally then manually move to device
             self.tts = VibeVoiceForConditionalGenerationInference.from_pretrained(
@@ -46,6 +46,14 @@ class VibeVoiceWrapper:
                 low_cpu_mem_usage=False, # FORCE FULL LOAD (Avoid meta tensors)
                 device_map=None,         # DISABLE ACCELERATE MAP
             ).to(self.device)
+
+            # [Fix] VibeVoice uses tied embeddings (lm_head shares weights with embed_tokens).
+            # The checkpoint does NOT store lm_head.weight separately. HuggingFace normally
+            # calls tie_weights() during from_pretrained, but with low_cpu_mem_usage=False
+            # this can be skipped, leaving lm_head as random garbage. Force-tie here.
+            if hasattr(self.tts, 'tie_weights'):
+                self.tts.tie_weights()
+            logger.info("VibeVoice lm_head weights tied to embed_tokens.")
 
             self.model_loaded = True
             logger.info("VibeVoice loaded successfully.")
@@ -111,35 +119,20 @@ class VibeVoiceWrapper:
             # Move inputs to device
             inputs = {k: v.to(self.device) if hasattr(v, 'to') else v for k, v in inputs.items()}
             
-            # [Fix] Populate generation_config if missing
-            if getattr(self.tts, "generation_config", None) is None:
-                from transformers import GenerationConfig
-                self.tts.generation_config = GenerationConfig()
-            
             # Determine BOS token
             bos_id = None
             tokenizer = getattr(self.processor, "tokenizer", None)
-            
+
             if tokenizer is not None:
                 if hasattr(tokenizer, "bos_token_id") and tokenizer.bos_token_id is not None:
                     bos_id = tokenizer.bos_token_id
                 elif hasattr(tokenizer, "eos_token_id"):
                     bos_id = tokenizer.eos_token_id
-            
+
             if bos_id is None:
                 bos_id = 1 # Fallback
-                
-            # Set in generation_config
-            # Access generation_config safely
-            gen_config = getattr(self.tts, "generation_config", None)
-            if gen_config is not None:
-                 if getattr(gen_config, "bos_token_id", None) is None:
-                    gen_config.bos_token_id = bos_id
-            else:
-                 logger.warning("VibeVoice generation_config is None even after attempted creation.")
 
             # Set in model config
-            # Access config safely
             model_config = getattr(self.tts, "config", None)
             if model_config is not None:
                 if getattr(model_config, "bos_token_id", None) is None:
@@ -147,9 +140,16 @@ class VibeVoiceWrapper:
 
             # Generate audio
             with torch.no_grad():
-                # Explicitly pass tokenizer as required by VibeVoice library logic
-                # It uses tokenizer.bos_token_id internally even if generation_config is set
-                output = self.tts.generate(**inputs, tokenizer=tokenizer)
+                # [Fix] Strip max_new_tokens from inputs to avoid conflict with generation_config
+                gen_inputs = {k: v for k, v in inputs.items() if k != "max_new_tokens"}
+                # Pass generation_config=None to let VibeVoice create a clean config internally,
+                # avoiding conflicts between the model's pretrained generation_config (which may
+                # contain unsupported flags like temperature/top_p) and explicit kwargs.
+                output = self.tts.generate(
+                    **gen_inputs,
+                    tokenizer=tokenizer,
+                    generation_config=None,
+                )
             
             # [Fix] Handle case where model returns None (Portable App silent failure)
             if output is None:
@@ -172,13 +172,16 @@ class VibeVoiceWrapper:
                 audio = output.speech_outputs[0]
             else:
                 audio = output
-                
+
+            if audio is None:
+                raise RuntimeError("VibeVoice model produced no audio output (speech_outputs is None). Check model weights, audio decoder, and generation_config.")
+
             # VibeVoice uses 24kHz sample rate
-            sr = 24000 
-                
+            sr = 24000
+
             if hasattr(audio, 'cpu'):
                 audio = audio.cpu().numpy()
-            
+
             # Flatten if needed
             if audio.ndim > 1:
                 audio = audio.squeeze()
