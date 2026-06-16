@@ -242,6 +242,7 @@ import pytest
 
 # Pre-import to avoid DLL conflicts on Windows (if available)
 try:
+    from src.utils import config
     import ctranslate2
     print("DEBUG: ctranslate2 pre-imported in tests/conftest.py")
 except ImportError:

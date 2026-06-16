@@ -23,7 +23,7 @@ class VibeVoiceBackend(TTSBackend):
         if self.wrapper:
             self.wrapper.unload_model()
 
-    def generate(self, text, output_path, language="en", speaker_wav=None, **kwargs):
+    def generate(self, text, output_path: str | Path, language="en", speaker_wav=None, **kwargs):
         """
         Generates audio using VibeVoice.
         """

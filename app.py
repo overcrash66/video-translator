@@ -1,8 +1,11 @@
 import gradio as gr
 import os
 import shutil
+import uuid
+import time
 from pathlib import Path
 from src.utils.patches import apply_encoding_patch, apply_transformers_patch, apply_late_patches
+from src.utils import audio_utils
 
 # 1. Encoding patches (Critical for Windows)
 apply_encoding_patch()
@@ -24,7 +27,7 @@ if hasattr(config, 'setup_cuda_dlls'):
 apply_late_patches()
     
 import logging
-from src.core.video_translator import VideoTranslator
+from src.core.video_translator import VideoTranslator, CancelledError
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -97,10 +100,6 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             os.environ["HF_TOKEN"] = config.HF_TOKEN
         
         # [Fix] Copy input video to local temp using shutil (safe for Windows)
-        import uuid
-        import time
-        from src.utils import audio_utils
-        
         time.sleep(0.5) # Brief delay
         local_video_path = config.TEMP_DIR / f"input_{uuid.uuid4().hex}.mp4"
         
@@ -175,7 +174,7 @@ def process_video(video_path, source_language, target_language, audio_model, tts
             tts_voice=tts_voice,
             lipsync_model_name=lipsync_model,
             enable_audio_enhancement=enable_audio_enhancement,
-            live_portrait_acceleration=live_portrait_mode,
+            live_portrait_mode=live_portrait_mode,
             chunk_duration=chunk_duration,
             hf_token=hf_token
         )
@@ -209,6 +208,9 @@ def process_video(video_path, source_language, target_language, audio_model, tts
         else:
             yield None, update_log("Error: Pipeline finished but returned no video.")
 
+    except CancelledError:
+        logger.info("Pipeline cancelled by user.")
+        return None, update_log("Processing cancelled by user.")
     except Exception as e:
         import traceback
         err = traceback.format_exc()

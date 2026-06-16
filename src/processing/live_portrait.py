@@ -462,7 +462,7 @@ class LivePortraitSyncer:
             torch.cuda.empty_cache()
         logger.info("LivePortrait models unloaded.")
 
-    def sync_lips(self, video_path: str, audio_path: str, output_path: str, enhance_face: bool = False) -> str:
+    def sync_lips(self, video_path: str | Path, audio_path: str | Path, output_path: str | Path, enhance_face: bool = False) -> str:
         """
         Runs the LivePortrait lip sync pipeline.
         
@@ -521,7 +521,7 @@ class LivePortraitSyncer:
                 
         return output_path
 
-    def _animate_video(self, source_video: str, driving_video: str, output_path: str) -> None:
+    def _animate_video(self, source_video: str | Path, driving_video: str | Path, output_path: str | Path) -> None:
         """
         Core animation loop.
         

@@ -5,6 +5,11 @@ import soundfile as sf
 
 logger = logging.getLogger(__name__)
 
+# Guards to prevent double-application of patches
+_encoding_patched = False
+_transformers_patched = False
+_late_patched = False
+
 def _patch_windows_encoding():
     """
     On Windows, open() defaults to cp1252. This breaks many ML libraries (like transformers) 
@@ -163,15 +168,23 @@ def apply_encoding_patch():
     Applies ONLY the Windows encoding fix.
     Must be run before any file I/O (e.g. dotenv loading in config).
     """
+    global _encoding_patched
+    if _encoding_patched:
+        return
     _patch_windows_encoding()
+    _encoding_patched = True
 
 def apply_transformers_patch():
     """
     Applies Transformers-related patches.
     Should be run AFTER config (and ctranslate2 setup) but BEFORE heavy usage.
     """
+    global _transformers_patched
+    if _transformers_patched:
+        return
     _patch_transformers_qwen2_tokenizer()
     _patch_transformers_warmup()
+    _transformers_patched = True
 
 def apply_early_patches():
     """
@@ -186,8 +199,12 @@ def apply_late_patches():
     Should be called AFTER config setup.
     Includes: Torchaudio fix.
     """
+    global _late_patched
+    if _late_patched:
+        return
     _patch_torchaudio_load()
     _patch_torchaudio_audiometadata()
+    _late_patched = True
 
 def apply_patches():
     """

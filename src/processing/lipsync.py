@@ -2,6 +2,7 @@
 Lip-Sync Integration Wrapper
 """
 import logging
+from pathlib import Path
 from src.processing.wav2lip import Wav2LipSyncer
 from src.processing.live_portrait import LivePortraitSyncer
 
@@ -67,7 +68,7 @@ class LipSyncer:
         elif hasattr(self.engine, 'unload_models'):
             self.engine.unload_models()
 
-    def sync_lips(self, video_path: str, audio_path: str, output_path: str, model_name: str = "wav2lip", enhance_face: bool = False) -> str:
+    def sync_lips(self, video_path: str | Path, audio_path: str | Path, output_path: str | Path, model_name: str = "wav2lip", enhance_face: bool = False) -> str:
         """
         Synchronizes lips in video_path to match audio_path using the selected engine.
         

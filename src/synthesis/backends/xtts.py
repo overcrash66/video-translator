@@ -52,7 +52,7 @@ class XttsBackend(TTSBackend):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-    def generate(self, text, output_path, language="en", speaker_wav=None, **kwargs):
+    def generate(self, text, output_path: str | Path, language="en", speaker_wav=None, **kwargs):
         """
         Generates audio using XTTS.
         Requires speaker_wav.

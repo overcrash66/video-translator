@@ -3,6 +3,7 @@ import librosa
 import soundfile as sf
 import scipy.signal
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def compute_spectral_envelope(prior, sr=22050):
     
     return S_mean
 
-def apply_eq_matching(source_path: str, target_path: str, output_path: str, strength: float = 0.5) -> str:
+def apply_eq_matching(source_path: str | Path, target_path: str | Path, output_path: str | Path, strength: float = 0.5) -> str:
     """
     Applies the spectral envelope of the source audio to the target audio.
     

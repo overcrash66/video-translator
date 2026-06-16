@@ -21,12 +21,19 @@ def debug_log(msg):
             ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             f.write(f"[{ts}] {msg}\n")
             f.flush()
-    except:
+    except Exception:
         pass
 
 debug_log("--- SESSION START ---")
 debug_log(f"Python: {sys.version}")
 debug_log(f"Platform: {sys.platform}")
+
+
+def redact_secret(value: str | None) -> str:
+    """Returns '***' for non-empty values, 'None' for None. Safe for logging."""
+    if value and value.strip():
+        return "***"
+    return "None"
 
 
 # Directories
@@ -118,15 +125,158 @@ def setup_nvidia_dlls():
             except Exception as e:
                  debug_log(f"Failed to add System CUDA {bin_path}: {e}")
 
+def deactivate_conflicting_ctranslate2_dlls():
+    """
+    Temporarily renames conflicting CUDA/cuDNN DLLs inside ctranslate2 package directory to .bak
+    so that ctranslate2.dll resolves them to the compatible versions in torch/lib instead.
+    """
+    if sys.platform != "win32":
+        return
+        
+    _ctranslate2_dir = BASE_DIR / "venv" / "Lib" / "site-packages" / "ctranslate2"
+    if not _ctranslate2_dir.exists():
+        return
+        
+    conflicting_dlls = [
+        "cublas64_12.dll",
+        "cublasLt64_12.dll",
+        "cudnn64_9.dll"
+    ]
+    
+    for name in conflicting_dlls:
+        dll_path = _ctranslate2_dir / name
+        if dll_path.exists():
+            bak_path = _ctranslate2_dir / f"{name}.bak"
+            try:
+                if bak_path.exists():
+                    try:
+                        os.remove(str(bak_path))
+                    except Exception:
+                        pass
+                os.rename(str(dll_path), str(bak_path))
+                print(f"[Config] Deactivated conflicting ctranslate2 DLL: {name}")
+                debug_log(f"Deactivated conflicting ctranslate2 DLL: {name}")
+            except Exception as e:
+                print(f"[Config] Warning: Failed to deactivate {name}: {e}")
+                debug_log(f"Warning: Failed to deactivate {name}: {e}")
+
+def pre_load_ctranslate2_dlls():
+    """
+    Pre-loads compatible CUDA/cuDNN DLLs from torch/lib and remaining ctranslate2 DLLs
+    using absolute paths in correct dependency order to prevent OS version conflicts.
+    """
+    if sys.platform != "win32":
+        return
+    
+    _site_packages = BASE_DIR / "venv" / "Lib" / "site-packages"
+    _torch_lib = _site_packages / "torch" / "lib"
+    _ctranslate2_dir = _site_packages / "ctranslate2"
+    
+    if not _ctranslate2_dir.exists():
+        return
+        
+    import ctypes
+    
+    # 1. Pre-load crucial CUDA runtimes and cublas from torch/lib first (CUDA 12.8 compatible)
+    if _torch_lib.exists():
+        torch_dependencies = [
+            "nvJitLink_120_0.dll",
+            "cudart64_12.dll",
+            "cublasLt64_12.dll",
+            "cublas64_12.dll",
+            "cudnn64_9.dll"
+        ]
+        print("[Config] Pre-loading CUDA runtime dependencies from torch/lib...")
+        debug_log("Pre-loading CUDA runtime dependencies from torch/lib...")
+        for name in torch_dependencies:
+            dll_path = _torch_lib / name
+            if dll_path.exists():
+                try:
+                    ctypes.CDLL(str(dll_path))
+                    print(f"[Config] Successfully pre-loaded from torch/lib: {name}")
+                    debug_log(f"Successfully pre-loaded from torch/lib: {name}")
+                except Exception as e:
+                    print(f"[Config] Warning: Failed to pre-load torch/lib dependency {name}: {e}")
+                    debug_log(f"Warning: Failed to pre-load torch/lib dependency {name}: {e}")
+                    
+    # 2. Pre-load remaining CTranslate2 DLLs (libiomp5md.dll and ctranslate2.dll)
+    ctranslate2_dlls = [
+        "libiomp5md.dll",
+        "ctranslate2.dll"
+    ]
+    
+    print("[Config] Pre-loading remaining CTranslate2 DLLs...")
+    debug_log("Pre-loading remaining CTranslate2 DLLs...")
+    
+    for name in ctranslate2_dlls:
+        dll_path = _ctranslate2_dir / name
+        if dll_path.exists():
+            try:
+                ctypes.CDLL(str(dll_path))
+                print(f"[Config] Successfully pre-loaded from ctranslate2: {name}")
+                debug_log(f"Successfully pre-loaded from ctranslate2: {name}")
+            except Exception as e:
+                print(f"[Config] Warning: Failed to pre-load ctranslate2 {name}: {e}")
+                debug_log(f"Warning: Failed to pre-load ctranslate2 {name}: {e}")
+
 # PHASE 1: Setup DLLs
+# CRITICAL: Load order matters! ctranslate2's own DLLs must be found FIRST
+# before torch/lib to prevent cuDNN/cuBLAS version conflicts.
 print(f"[Config] Initializing DLL paths... BASE_DIR={BASE_DIR}")
+
+_ctranslate2_dir = str(BASE_DIR / "venv" / "Lib" / "site-packages" / "ctranslate2")
+_torch_lib = str(BASE_DIR / "venv" / "Lib" / "site-packages" / "torch" / "lib")
+
+# PATH order: ctranslate2 FIRST, then torch/lib, then original PATH.
+# ctranslate2's cudnn64_9.dll (260KB stub) needs torch/lib's full cuDNN DLLs
+# for implicit dependency resolution. os.add_dll_directory() only helps direct
+# ctypes.CDLL loads, NOT implicit dependencies. PATH must include torch/lib.
+_path_parts = []
+if os.path.isdir(_ctranslate2_dir):
+    _path_parts.append(_ctranslate2_dir)
+    print(f"[Config] Will prepend CTranslate2 dir to PATH: {_ctranslate2_dir}")
+    debug_log(f"Will prepend CTranslate2 dir to PATH: {_ctranslate2_dir}")
+
+if os.path.isdir(_torch_lib):
+    _path_parts.append(_torch_lib)
+    print(f"[Config] Will prepend torch/lib to PATH: {_torch_lib}")
+    debug_log(f"Will prepend torch/lib to PATH: {_torch_lib}")
+
+if _path_parts:
+    os.environ["PATH"] = os.pathsep.join(_path_parts) + os.pathsep + os.environ.get("PATH", "")
+
+# Also use add_dll_directory for direct ctypes.CDLL loads
+if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
+    for _d in [_ctranslate2_dir, _torch_lib]:
+        if os.path.isdir(_d):
+            try:
+                os.add_dll_directory(_d)
+            except Exception:
+                pass
+
 setup_zlib_dll()
-setup_nvidia_dlls()
+
+# Ensure torch/lib is added before pre-loading, so cuDNN stub dependencies can be resolved.
+if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
+    _site_packages = BASE_DIR / "venv" / "Lib" / "site-packages"
+    _torch_lib_path = _site_packages / "torch" / "lib"
+    if _torch_lib_path.exists():
+        try:
+            os.add_dll_directory(str(_torch_lib_path))
+        except Exception:
+            pass
+
+deactivate_conflicting_ctranslate2_dlls()
+pre_load_ctranslate2_dlls()
 
 # PHASE 2: Load CTranslate2
 print("[Config] Importing ctranslate2...")
 import ctranslate2 
 print(f"[Config] CTranslate2 loaded successfully. Version: {ctranslate2.__version__}")
+
+# Add System CUDA paths after ctranslate2 has successfully loaded
+# to prevent DLL version conflicts during import.
+setup_nvidia_dlls()
 
 # PHASE 3: Shim
 def setup_cuda_dlls():

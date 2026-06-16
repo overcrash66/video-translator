@@ -77,7 +77,7 @@ class AudioSeparator:
 
 
 
-    def separate(self, audio_path, prompt="speech", model_selection="Torchaudio HDemucs (Recommended)"):
+    def separate(self, audio_path: str | Path, prompt="speech", model_selection="Torchaudio HDemucs (Recommended)"):
         """
         Separates audio.
         model_selection: Decides which backend to use.
@@ -100,7 +100,7 @@ class AudioSeparator:
 
         return self._separate_demucs(audio_path, output_vocals, output_bg)
 
-    def _separate_demucs(self, audio_path, output_vocals, output_bg):
+    def _separate_demucs(self, audio_path: str | Path, output_vocals: str | Path, output_bg: str | Path):
         logger.info(f"Separating with HDemucs: {audio_path}")
         try:
             from src.utils import audio_utils
@@ -247,14 +247,14 @@ class AudioSeparator:
 
 
 
-    def _fallback_dummy(self, audio_path, output_vocals, output_bg):
+    def _fallback_dummy(self, audio_path: str | Path, output_vocals: str | Path, output_bg: str | Path):
         logger.warning("Using fallback dummy separation.")
         import shutil
         shutil.copy(audio_path, output_vocals)
         self._create_silent_like(audio_path, output_bg)
         return str(output_vocals), str(output_bg)
 
-    def _create_silent_like(self, ref_audio, output_path):
+    def _create_silent_like(self, ref_audio: str | Path, output_path: str | Path):
         """Creates a silent wav file with same duration/format as reference."""
         try:
             try:

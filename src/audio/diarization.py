@@ -9,8 +9,8 @@ import json
 import shutil
 import warnings
 
-# Suppress warnings
-warnings.filterwarnings("ignore")
+# Suppress only DeprecationWarnings from dependencies (not all warnings)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # [Fix] PyTorch 2.6+ changed torch.load to use weights_only=True by default
 # PyAnnote models contain TorchVersion metadata that's not in the default safe globals
@@ -194,6 +194,7 @@ class Diarizer:
                 use_auth_token=False,
                 revision=None,
                 huggingface_cache_dir=None,
+                **kwargs,
             ):
                 """Patched fetch that uses copy instead of symlink on Windows."""
                 if save_filename is None:
@@ -258,6 +259,7 @@ class Diarizer:
                     use_auth_token=use_auth_token,
                     revision=revision,
                     huggingface_cache_dir=huggingface_cache_dir,
+                    **kwargs,
                 )
                 
                 # Convert symlink to real file
@@ -311,7 +313,7 @@ class Diarizer:
             logger.error(f"Failed to load NeMo: {e}")
             raise
 
-    def _extract_embeddings(self, audio_path, segments):
+    def _extract_embeddings(self, audio_path: str | Path, segments):
         """Extract speaker embeddings for each audio segment (SpeechBrain)."""
         from src.utils import audio_utils
         
@@ -345,7 +347,7 @@ class Diarizer:
         
         return np.array(embeddings) if embeddings else None, valid_segments
 
-    def _run_nemo_diarization(self, audio_path):
+    def _run_nemo_diarization(self, audio_path: str | Path):
         """
         Executes NeMo diarization pipeline via ClusteringDiarizer.
         """
@@ -444,7 +446,7 @@ class Diarizer:
             logger.error(f"NeMo diarization runtime error: {e}")
             return []
 
-    def _run_pyannote(self, audio_path, model_name="pyannote/speaker-diarization-3.1", hf_token=None):
+    def _run_pyannote(self, audio_path: str | Path, model_name="pyannote/speaker-diarization-3.1", hf_token=None):
         """
         Run PyAnnote diarization pipeline.
         Supports mixed precision for speed and memory efficiency.
@@ -573,7 +575,7 @@ class Diarizer:
             
         return valid_segments
 
-    def _create_segments_from_vad(self, audio_path):
+    def _create_segments_from_vad(self, audio_path: str | Path):
         """Create segments using simple energy-based VAD."""
         from src.utils import audio_utils
         
@@ -615,7 +617,7 @@ class Diarizer:
         return merged
 
     def _cluster_embeddings(self, embeddings: np.ndarray, max_speakers: int | None = None) -> np.ndarray:
-        from sklearn.cluster import SpectralClustering, AgglomerativeClustering
+        from sklearn.cluster import AgglomerativeClustering, SpectralClustering, KMeans
         from sklearn.metrics import silhouette_score
         from sklearn.preprocessing import normalize
         
@@ -623,8 +625,28 @@ class Diarizer:
         n_samples = len(embeddings)
         embeddings_norm = normalize(embeddings)
         
-        if n_samples < 2: return np.zeros(n_samples, dtype=int)
+        # Early return for trivial cases
+        if n_samples < 2:
+            return np.zeros(n_samples, dtype=int)
         
+        # Try AgglomerativeClustering with distance threshold (avoids brute-force iteration)
+        try:
+            clustering = AgglomerativeClustering(
+                n_clusters=None,
+                distance_threshold=0.5,
+                linkage='average'
+            )
+            labels = clustering.fit_predict(embeddings_norm)
+            n_clusters = len(set(labels))
+            
+            # Validate: need at least 2 clusters and not more than max_speakers
+            if 2 <= n_clusters <= max_speakers and n_clusters < n_samples:
+                logger.debug(f"AgglomerativeClustering produced {n_clusters} clusters")
+                return labels
+        except Exception as e:
+            logger.debug(f"AgglomerativeClustering failed: {e}")
+        
+        # Fallback: SpectralClustering with silhouette score optimization
         best_score = -1
         best_labels = None
         max_clusters = min(max_speakers, n_samples)
@@ -638,17 +660,18 @@ class Diarizer:
                      if s > best_score:
                          best_score = s
                          best_labels = l
-             except: continue
+             except Exception as e:
+                 logger.debug(f"SpectralClustering failed for n_clusters={n_clusters}: {e}")
+                 continue
              
-        if best_labels is None:
-            from sklearn.cluster import KMeans
-            # Fallback to KMeans if spectral failed, respecting min/max
-            k = max(2, min(max_speakers, n_samples))
-            best_labels = KMeans(n_clusters=k).fit_predict(embeddings_norm)
-            
-        return best_labels
+        if best_labels is not None:
+            return best_labels
+        
+        # Final fallback: KMeans
+        k = max(2, min(max_speakers, n_samples))
+        return KMeans(n_clusters=k, random_state=42).fit_predict(embeddings_norm)
 
-    def detect_genders(self, audio_path, segments):
+    def detect_genders(self, audio_path: str | Path, segments):
         import librosa
         speaker_segments = {}
         for seg in segments:

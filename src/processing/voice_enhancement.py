@@ -41,7 +41,7 @@ class VoiceEnhancer:
                 torch.cuda.empty_cache()
             logger.info("VoiceFixer model unloaded.")
 
-    def enhance_audio(self, input_path, output_path, mode=0, cuda=None):
+    def enhance_audio(self, input_path: str | Path, output_path: str | Path, mode=0, cuda=None):
         """
         Enhances the audio at input_path and saves to output_path.
         

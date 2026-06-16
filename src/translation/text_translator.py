@@ -186,37 +186,7 @@ class LLMTranslator:
                 
             decoded = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
             
-            results = []
-            for i, raw in enumerate(decoded):
-                # Clean up retrieval: remove prompt if chat template echoes it (model dependent)
-                # Llama 3 often only outputs answer, but let's be safe.
-                # ALMA outputs "English: Hello\nGerman: Hallo", we need to extract target.
-                
-                clean = raw
-                if self.is_alma:
-                    from src.utils.languages import get_language_name
-                    target_name = get_language_name(target_lang_code)
-                    # ALMA output structure: ...\n{target_lang}: {translation}
-                    if f"{target_name}:" in raw:
-                        clean = raw.split(f"{target_name}:")[-1].strip()
-                    elif f"{target_lang_code}:" in raw: # Fallback for code
-                         clean = raw.split(f"{target_lang_code}:")[-1].strip()
-                    else:
-                        # Fallback heuristic
-                         clean = raw.replace(prompts[i], "").strip()
-                elif self.is_llama:
-                     # Llama typically just answers.
-                     # If prompt is included, strip it.
-                     pass # Transformers usually handles this with decode if not 'return_full_text=? '
-                     # Actually generate() by default returns input+output.
-                     pass
-                     
-                # Correct slicing for all models (transformers default behavior for causal LM is to return input+output)
-                # We should slice based on input length
-                results.append(clean)
-                
-            # Better slicing logic:
-            final_results = []
+            # Slice input from output (causal LM returns input+output)
             input_len = inputs.input_ids.shape[1]
             gen_tokens = outputs[:, input_len:]
             
@@ -292,6 +262,13 @@ class Translator:
         self.languages = languages
         self.cache_file = config.TEMP_DIR / "translation_cache.json"
         self.cache = self._load_cache()
+
+    def unload_model(self):
+        """Unload any loaded LLM and clear caches."""
+        if self.llm_translator:
+            self.llm_translator.unload_model()
+            self.llm_translator = None
+        self.translator_cache.clear()
 
     def _load_cache(self):
         import json
@@ -376,11 +353,11 @@ class Translator:
             logger.info(f"Translating {len(segments)} items with {model} (Optimize={optimize})...")
             
             if optimize:
-                # Sequential Context-Aware Mode
+                # Sequential Context-Aware Mode (only for uncached segments)
                 prev_text = None
-                for i, seg in enumerate(segments):
+                for i, seg in enumerate(segments_to_trans):
                     if check_cancel_callback: check_cancel_callback()
-                    logger.info(f"Translating segment {i+1}/{len(segments)} (Context-Aware)...")
+                    logger.info(f"Translating segment {i+1}/{len(segments_to_trans)} (Context-Aware)...")
                     trans_text = self.llm_translator.translate_context_aware(
                         seg['text'], source_code, target_code, prev_text=prev_text, token=hf_token
                     )
