@@ -52,7 +52,7 @@ def generate_crossfade_window(length: int, fade_type: str = 'linear') -> np.ndar
 
 
 class AudioSynchronizer:
-    def sync_segment(self, audio_path, target_duration, output_path=None):
+    def sync_segment(self, audio_path: str | Path, target_duration, output_path: str | Path | None = None):
         """
         Stretches or squeezes the audio at audio_path to fit target_duration.
         """
@@ -148,7 +148,7 @@ class AudioSynchronizer:
             logger.error(f"FFmpeg sync failed: {e.stderr.decode() if e.stderr else str(e)}")
             return audio_path
 
-    def merge_segments(self, segments, total_duration, output_path, enable_time_stretch=False):
+    def merge_segments(self, segments, total_duration, output_path: str | Path, enable_time_stretch=False):
         """
         Concatenates segments into a single track, respecting start times.
         segments: list of dict { 'audio_path': str, 'start': float, 'end': float }

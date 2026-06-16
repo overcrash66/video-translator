@@ -1,4 +1,5 @@
 import datetime
+from pathlib import Path
 
 def format_timestamp(seconds: float) -> str:
     """
@@ -27,7 +28,7 @@ def format_timestamp(seconds: float) -> str:
     # Format the string
     return f"{hours:02}:{minutes:02}:{secs:02},{milliseconds:03}"
 
-def generate_srt(segments: list, output_path: str) -> str:
+def generate_srt(segments: list, output_path: str | Path) -> str:
     """
     Creates an SRT file from segments with 'start', 'end', and 'translated_text' keys.
     

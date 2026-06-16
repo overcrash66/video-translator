@@ -12,7 +12,7 @@ class EdgeTTSBackend(TTSBackend):
     def __init__(self, voice_map):
         self.voice_map = voice_map
 
-    def generate(self, text, output_path, language="en", speaker_wav=None, **kwargs):
+    def generate(self, text, output_path: str | Path, language="en", speaker_wav=None, **kwargs):
         """
         Generates audio using Edge-TTS.
         kwargs can contain: gender, speaker_id, voice_selector, preferred_voice

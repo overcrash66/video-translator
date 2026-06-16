@@ -4,6 +4,7 @@ import gc
 import logging
 import os
 from pathlib import Path
+import soundfile as sf
 from src.core.session import SessionContext
 
 # Component imports
@@ -25,8 +26,11 @@ from src.utils.chunker import VideoChunker
 
 logger = logging.getLogger(__name__)
 
-# Apply global patches
-patches.apply_patches()
+
+class CancelledError(Exception):
+    """Raised when the pipeline is cancelled by the user."""
+    pass
+
 
 class VideoTranslator:
     """
@@ -44,7 +48,7 @@ class VideoTranslator:
                  lipsyncer: LipSyncer | None = None,
                  visual_translator: VisualTranslator | None = None,
                  voice_enhancer: VoiceEnhancer | None = None,
-                 live_portrait_acceleration: str = "ort") -> None:
+                 live_portrait_mode: str = "ort") -> None:
         
         self.separator = separator or AudioSeparator()
         self.transcriber = transcriber or Transcriber()
@@ -53,7 +57,7 @@ class VideoTranslator:
         self.synchronizer = synchronizer or AudioSynchronizer()
         self.processor = processor or VideoProcessor()
         self.diarizer = diarizer or Diarizer()
-        self.lipsyncer = lipsyncer or LipSyncer(acceleration=live_portrait_acceleration)
+        self.lipsyncer = lipsyncer or LipSyncer(acceleration=live_portrait_mode)
         self.visual_translator = visual_translator or VisualTranslator()
         self.voice_enhancer = voice_enhancer or VoiceEnhancer()
         
@@ -72,9 +76,9 @@ class VideoTranslator:
         self.cancel_requested = True
         
     def _check_cancel(self):
-        """Raises Exception if cancellation is requested."""
+        """Raises CancelledError if cancellation is requested."""
         if self.cancel_requested:
-            raise Exception("Processing Cancelled by User")
+            raise CancelledError("Processing Cancelled by User")
 
     def _get_assigned_voice(self, speaker_id, available_voices):
         """
@@ -133,7 +137,6 @@ class VideoTranslator:
             # But we have 'self.transcriber.vad' usually if initialized.
             
             # Simple approach: Slice 0-30s
-            import soundfile as sf
             data, sr = sf.read(str(vocals_path))
             
             # Limit to 30s
@@ -163,6 +166,8 @@ class VideoTranslator:
                  logger.warning("Extracted fallback 30s failed validation.")
                  return None
                  
+        except CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to extract fallback reference: {e}")
             return None
@@ -174,38 +179,29 @@ class VideoTranslator:
         logger.info("Unloading all models and clearing CUDA cache...")
         config.debug_log("Unloading all models...")
         
-        # Call unload methods on components if they exist
-        if hasattr(self.separator, 'unload_model'):
-            config.debug_log("Unloading Separator...")
-            self.separator.unload_model()
+        config.debug_log("Unloading Separator...")
+        self.separator.unload_model()
             
-        if hasattr(self.transcriber, 'unload_model'):
-            config.debug_log("Unloading Transcriber...")
-            self.transcriber.unload_model()
+        config.debug_log("Unloading Transcriber...")
+        self.transcriber.unload_model()
 
-        if hasattr(self.translator, 'hymt') and self.translator.hymt:
-             config.debug_log("Unloading Translator (LLM)...")
-             self.translator.hymt.unload_model()
+        config.debug_log("Unloading Translator (LLM)...")
+        self.translator.unload_model()
              
-        if hasattr(self.tts_engine, 'unload_model'):
-            config.debug_log("Unloading TTS...")
-            self.tts_engine.unload_model()
+        config.debug_log("Unloading TTS...")
+        self.tts_engine.unload_model()
             
-        if hasattr(self.diarizer, 'unload_model'):
-            config.debug_log("Unloading Diarizer...")
-            self.diarizer.unload_model()
+        config.debug_log("Unloading Diarizer...")
+        self.diarizer.unload_model()
             
-        if hasattr(self.lipsyncer, 'unload_model'):
-            config.debug_log("Unloading Lipsyncer...")
-            self.lipsyncer.unload_model()
+        config.debug_log("Unloading Lipsyncer...")
+        self.lipsyncer.unload_model()
             
-        if hasattr(self.visual_translator, 'unload_model'):
-            config.debug_log("Unloading Visual Translator...")
-            self.visual_translator.unload_model()
+        config.debug_log("Unloading Visual Translator...")
+        self.visual_translator.unload_model()
             
-        if hasattr(self.voice_enhancer, 'unload_model'):
-            config.debug_log("Unloading Voice Enhancer...")
-            self.voice_enhancer.unload_model()
+        config.debug_log("Unloading Voice Enhancer...")
+        self.voice_enhancer.unload_model()
         
         self.current_model = None
         
@@ -244,43 +240,105 @@ class VideoTranslator:
         """Wrapper to get available voices from TTSEngine."""
         return self.tts_engine.get_available_voices(model_name, language_code)
 
-    def process_video(self, *args, **kwargs) -> Generator[tuple[Literal["log", "progress", "result"], Any] | list, None, None]:
+    def process_video(self,
+                      video_path: str | Path,
+                      source_lang: str = "auto",
+                      target_lang: str = "en",
+                      audio_model_name: str = "Torchaudio HDemucs (Recommended)",
+                      tts_model_name: str = "edge",
+                      translation_model_name: str = "Google Translate (Online, Fast)",
+                      context_model_name: str = "Tencent HY-MT1.5 (Local, Better Context)",
+                      transcription_model_name: str = "Large v3 Turbo (Fast)",
+                      optimize_translation: bool = False,
+                      enable_diarization: bool = False,
+                      diarization_model: str = "pyannote/SpeechBrain (Default)",
+                      min_speakers: int = 1,
+                      max_speakers: int = 10,
+                      enable_time_stretch: bool = False,
+                      enable_vad: bool = False,
+                      vad_min_silence_duration_ms: int = 1000,
+                      enable_lipsync: bool = False,
+                      lipsync_model_name: str = "Wav2Lip-GAN (Low Quality - Fast)",
+                      live_portrait_mode: str = "ort",
+                      enable_visual_translation: bool = False,
+                      ocr_model_name: str = "PaddleOCR",
+                      tts_voice: str | None = None,
+                      transcription_beam_size: int = 7,
+                      tts_enable_cfg: bool = False,
+                      enable_audio_enhancement: bool = False,
+                      chunk_duration: int = 300,
+                      hf_token: str | None = None) -> Generator[tuple[Literal["log", "progress", "result"], Any] | list, None, None]:
         """
         Orchestrates the full pipeline, handling chunking if necessary.
         """
-        video_path_arg = kwargs.get('video_path') or (args[0] if args else None)
-        if not video_path_arg:
-            raise ValueError("video_path is required")
-            
-        video_path = config.validate_path(video_path_arg, must_exist=False)
-        
-        # [FIX] Pop chunk_duration so it isn't passed to _process_pipeline
-        chunk_val = kwargs.pop('chunk_duration', config.CHUNK_DURATION)
+        video_path = config.validate_path(video_path, must_exist=False)
         
         # Only attempt chunking if the file actually exists (prevents failures in tests with mocked paths)
         if hasattr(video_path, 'exists') and video_path.exists() and video_path.stat().st_size > 0:
-            chunker = VideoChunker(max_duration_sec=int(chunk_val))
+            chunker = VideoChunker(max_duration_sec=int(chunk_duration))
             if chunker.should_chunk(video_path):
                 yield ("log", f"Video is long (> {chunker.max_duration}s). Switching to Chunked Processing...")
-                chunk_kwargs = kwargs.copy()
-                chunk_kwargs.pop('video_path', None)
-                yield from self._process_chunked(video_path, chunker, *args, **chunk_kwargs)
+                yield from self._process_chunked(video_path, chunker,
+                    source_lang=source_lang, target_lang=target_lang,
+                    audio_model_name=audio_model_name, tts_model_name=tts_model_name,
+                    translation_model_name=translation_model_name, context_model_name=context_model_name,
+                    transcription_model_name=transcription_model_name, optimize_translation=optimize_translation,
+                    enable_diarization=enable_diarization, diarization_model=diarization_model,
+                    min_speakers=min_speakers, max_speakers=max_speakers,
+                    enable_time_stretch=enable_time_stretch, enable_vad=enable_vad,
+                    vad_min_silence_duration_ms=vad_min_silence_duration_ms,
+                    enable_lipsync=enable_lipsync, lipsync_model_name=lipsync_model_name,
+                    live_portrait_mode=live_portrait_mode,
+                    enable_visual_translation=enable_visual_translation, ocr_model_name=ocr_model_name,
+                    tts_voice=tts_voice, transcription_beam_size=transcription_beam_size,
+                    tts_enable_cfg=tts_enable_cfg, enable_audio_enhancement=enable_audio_enhancement,
+                    hf_token=hf_token)
                 return
 
         # Reset cancel flag
         self.cancel_requested = False
         
         # Normal pipeline
-        yield from self._process_pipeline(*args, **kwargs)
+        yield from self._process_pipeline(
+            video_path=video_path, source_lang=source_lang, target_lang=target_lang,
+            audio_model_name=audio_model_name, tts_model_name=tts_model_name,
+            translation_model_name=translation_model_name, context_model_name=context_model_name,
+            transcription_model_name=transcription_model_name, optimize_translation=optimize_translation,
+            enable_diarization=enable_diarization, diarization_model=diarization_model,
+            min_speakers=min_speakers, max_speakers=max_speakers,
+            enable_time_stretch=enable_time_stretch, enable_vad=enable_vad,
+            vad_min_silence_duration_ms=vad_min_silence_duration_ms,
+            enable_lipsync=enable_lipsync, lipsync_model_name=lipsync_model_name,
+            live_portrait_mode=live_portrait_mode,
+            enable_visual_translation=enable_visual_translation, ocr_model_name=ocr_model_name,
+            tts_voice=tts_voice, transcription_beam_size=transcription_beam_size,
+            tts_enable_cfg=tts_enable_cfg, enable_audio_enhancement=enable_audio_enhancement,
+            hf_token=hf_token
+        )
 
-    def _process_chunked(self, video_path: Path, chunker: VideoChunker, *args, **kwargs):
+    def _process_chunked(self, video_path: Path, chunker: VideoChunker,
+                         source_lang: str, target_lang: str,
+                         audio_model_name: str, tts_model_name: str,
+                         translation_model_name: str, context_model_name: str,
+                         transcription_model_name: str, optimize_translation: bool,
+                         enable_diarization: bool, diarization_model: str,
+                         min_speakers: int, max_speakers: int,
+                         enable_time_stretch: bool, enable_vad: bool,
+                         vad_min_silence_duration_ms: int,
+                         enable_lipsync: bool, lipsync_model_name: str,
+                         live_portrait_mode: str,
+                         enable_visual_translation: bool, ocr_model_name: str,
+                         tts_voice: str | None, transcription_beam_size: int,
+                         tts_enable_cfg: bool, enable_audio_enhancement: bool,
+                         hf_token: str | None):
         """
         Handles splitting, processing, and merging for long videos.
         """
         # 1. Global Diarization (if enabled)
         # We run this on the Full Audio to ensure speaker IDs are consistent across chunks.
         precomputed_diarization = None
-        if kwargs.get('enable_diarization', False):
+        full_audio = None
+        if enable_diarization:
              yield ("progress", 0.05, "Global Diarization (Full Audio)...")
              yield ("log", "Running global diarization on full audio for consistency...")
              
@@ -292,9 +350,8 @@ class VideoTranslator:
              # Use same params as pipeline
              precomputed_diarization = self._step_diarization(
                  full_audio, video_path, 
-                 kwargs.get('diarization_model', "pyannote/SpeechBrain (Default)"),
-                 kwargs.get('min_speakers', 1),
-                 kwargs.get('max_speakers', 10)
+                 diarization_model, min_speakers, max_speakers,
+                 hf_token=hf_token
              )
              self.unload_all_models()
              yield ("log", "Global diarization complete.")
@@ -303,33 +360,32 @@ class VideoTranslator:
         yield ("log", "Splitting video into chunks...")
         video_chunks = chunker.split_video(video_path)
         
-        # We need audio chunks too? 
-        # Actually _process_pipeline extracts audio from the video chunk passed to it.
-        # So we just need video chunks.
-        
         processed_chunks = []
         
         for i, chunk in enumerate(video_chunks):
             yield ("log", f"Refining Chunk {i+1}/{len(video_chunks)}...")
             yield ("progress", (i / len(video_chunks)), f"Processing Chunk {i+1}/{len(video_chunks)}")
             
-            # Prepare kwargs for chunk
-            chunk_kwargs = kwargs.copy()
-            chunk_kwargs['video_path'] = chunk
-            # Inject precomputed diarization
-            chunk_kwargs['precomputed_diarization'] = precomputed_diarization
-            # Share extracted audio if we already have it (avoid duplicate extraction)
-            if 'full_audio' in dir() and full_audio:
-                chunk_kwargs['precomputed_audio'] = None  # Each chunk extracts its own audio from the chunk video
-            
             # Run pipeline for chunk
             chunk_result = None
             
-            # We strictly yield from _process_pipeline but we filter 'result'
-            # We also might want to silence some logs or progress to avoid spam?
-            # For now let's pass everything but capture the result.
-            
-            iterator = self._process_pipeline(**chunk_kwargs)
+            iterator = self._process_pipeline(
+                video_path=chunk, source_lang=source_lang, target_lang=target_lang,
+                audio_model_name=audio_model_name, tts_model_name=tts_model_name,
+                translation_model_name=translation_model_name, context_model_name=context_model_name,
+                transcription_model_name=transcription_model_name, optimize_translation=optimize_translation,
+                enable_diarization=enable_diarization, diarization_model=diarization_model,
+                min_speakers=min_speakers, max_speakers=max_speakers,
+                enable_time_stretch=enable_time_stretch, enable_vad=enable_vad,
+                vad_min_silence_duration_ms=vad_min_silence_duration_ms,
+                enable_lipsync=enable_lipsync, lipsync_model_name=lipsync_model_name,
+                live_portrait_mode=live_portrait_mode,
+                enable_visual_translation=enable_visual_translation, ocr_model_name=ocr_model_name,
+                tts_voice=tts_voice, transcription_beam_size=transcription_beam_size,
+                tts_enable_cfg=tts_enable_cfg, enable_audio_enhancement=enable_audio_enhancement,
+                precomputed_diarization=precomputed_diarization,
+                hf_token=hf_token
+            )
             for item in iterator:
                 if isinstance(item, tuple):
                     if item[0] == "result":
@@ -387,7 +443,7 @@ class VideoTranslator:
                       ocr_model_name: str = "PaddleOCR",
                       tts_voice: str | None = None,
                       lipsync_model_name: str | None = "wav2lip",
-                      live_portrait_acceleration: str = "ort",
+                      live_portrait_mode: str = "ort",
                       precomputed_diarization: tuple | None = None,
                       precomputed_audio: str | None = None,
                       hf_token: str | None = None) -> Generator[tuple[Literal["log", "progress", "result"], Any] | list, None, None]:
@@ -397,7 +453,7 @@ class VideoTranslator:
         """
         
         # 0. Setup and Validation
-        logger.info(f"DEBUG: VideoTranslator received live_portrait_acceleration='{live_portrait_acceleration}'")
+        logger.info(f"DEBUG: VideoTranslator received live_portrait_mode='{live_portrait_mode}'")
         video_path = config.validate_path(video_path, must_exist=True)
         
         # ---------------------------------------------------------------------
@@ -536,7 +592,6 @@ class VideoTranslator:
         yield ("progress", 0.7, "Synchronizing...")
         
         # Calculate duration
-        import soundfile as sf
         try:
              duration_sec = sf.info(str(extracted_path)).duration
         except:
@@ -562,6 +617,8 @@ class VideoTranslator:
                  if visual_out.exists():
                      video_path = visual_out
                      yield ("log", "Visual translation complete.")
+             except CancelledError:
+                 raise
              except Exception as e:
                 logger.error(f"Visual translation failed: {e}")
                 config.debug_log(f"Visual translation failed: {e}")
@@ -571,10 +628,10 @@ class VideoTranslator:
             self.load_model("lipsync")
             
             # [Update] Propagate configuration to existing lipsyncer
-            if hasattr(self.lipsyncer, 'acceleration') and live_portrait_acceleration:
-                 if self.lipsyncer.acceleration != live_portrait_acceleration:
-                     logger.info(f"Switching LivePortrait acceleration from {self.lipsyncer.acceleration} to {live_portrait_acceleration}")
-                     self.lipsyncer.acceleration = live_portrait_acceleration
+            if hasattr(self.lipsyncer, 'acceleration') and live_portrait_mode:
+                 if self.lipsyncer.acceleration != live_portrait_mode:
+                     logger.info(f"Switching LivePortrait acceleration from {self.lipsyncer.acceleration} to {live_portrait_mode}")
+                     self.lipsyncer.acceleration = live_portrait_mode
                      # Might typically need to reload if model was already loaded, but load_models handles it
             
             yield ("progress", 0.9, f"Lip-Syncing ({lipsync_model_name})...")
@@ -708,6 +765,8 @@ class VideoTranslator:
             srt_path = config.OUTPUT_DIR / f"{video_path.stem}.srt"
             config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
             generate_srt(translated, str(srt_path))
+        except CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to export subtitles: {e}")
             
@@ -1013,6 +1072,8 @@ class VideoTranslator:
              try:
                  self.voice_enhancer.enhance_audio(merged_speech, enhanced)
                  if enhanced.exists(): merged_speech = enhanced
+             except CancelledError:
+                 raise
              except Exception as e:
                  logger.error(f"VoiceFixer failed: {e}")
                  
@@ -1048,6 +1109,8 @@ class VideoTranslator:
                  enhance_face=enhance
              )
              return str(lipsync_out) if lipsync_out.exists() else None
+         except CancelledError:
+             raise
          except Exception as e:
              logger.error(f"Lip-Sync failed: {e}")
              return None

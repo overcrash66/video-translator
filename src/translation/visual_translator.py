@@ -421,7 +421,7 @@ class VisualTranslator:
         return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
         
 
-    def translate_video_text(self, video_path: str, output_path: str, 
+    def translate_video_text(self, video_path: str | Path, output_path: str | Path, 
                               target_lang: str = 'fr', source_lang: str = 'en',
                               ocr_engine: str = "EasyOCR",  # [OPTION B] Default to EasyOCR for GPU support
                               ocr_interval_sec: float = 1.0) -> str: # DEFAULT interval 1.0s or user defined

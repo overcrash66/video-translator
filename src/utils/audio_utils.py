@@ -7,7 +7,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-def load_audio(file_path: str, target_sr: int = None, mono: bool = False):
+def load_audio(file_path: str | Path, target_sr: int = None, mono: bool = False):
     """
     Safely loads audio using soundfile backend to avoid Windows TorchCodec issues.
     Matches torchaudio.load return signature: (waveform, sample_rate)
@@ -55,7 +55,7 @@ def load_audio(file_path: str, target_sr: int = None, mono: bool = False):
         logger.error(f"Failed to load audio {file_path}: {e}")
         raise e
 
-def save_audio(file_path: str, waveform: torch.Tensor, sample_rate: int):
+def save_audio(file_path: str | Path, waveform: torch.Tensor, sample_rate: int):
     """
     Safely saves audio using soundfile.
     waveform: [Channels, Time] tensor

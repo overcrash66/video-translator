@@ -3,10 +3,13 @@ set CURRENT_DIR=%CD%
 echo ***** Current directory: %CURRENT_DIR% *****
 set PYTHONPATH=%CURRENT_DIR%
 
-rem Activate Python virtual environment if exists
-if exist "venv\Scripts\activate.bat" (
-    call venv\Scripts\activate.bat
+rem Use venv Python directly (avoids PATH resolution issues)
+set VENV_PYTHON=%CURRENT_DIR%\venv\Scripts\python.exe
+if not exist "%VENV_PYTHON%" (
+    echo ERROR: venv Python not found at %VENV_PYTHON%
+    pause
+    exit /b 1
 )
 
-python app.py
+"%VENV_PYTHON%" app.py
 pause

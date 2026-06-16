@@ -44,3 +44,11 @@ def test_validate_path_outside_allowed_raises(tmp_path):
     
     with pytest.raises(ValueError):
         validate_path(p, allowed_dirs=[allowed_dir])
+
+def test_pre_load_ctranslate2_dlls():
+    # Import inside the test to verify config module function
+    from src.utils.config import pre_load_ctranslate2_dlls, deactivate_conflicting_ctranslate2_dlls
+    # Call the deactivation and pre-loading functions to ensure they run without crashing/raising errors
+    deactivate_conflicting_ctranslate2_dlls()
+    pre_load_ctranslate2_dlls()
+

@@ -10,6 +10,7 @@ import sys # Added for subprocess executable path
 import os
 import subprocess
 import json
+import re
 from pathlib import Path
 
 # logging.basicConfig(level=logging.INFO) # Centralized in app.py
@@ -63,7 +64,7 @@ class SileroVAD:
             logger.warning(f"Failed to load Silero VAD: {e}. Proceeding without VAD.")
             self._loaded = False
     
-    def detect_speech(self, audio_path: str, min_speech_duration_ms: int = 250, min_silence_duration_ms: int = 1000) -> list:
+    def detect_speech(self, audio_path: str | Path, min_speech_duration_ms: int = 250, min_silence_duration_ms: int = 1000) -> list:
         """
         Detect speech segments in audio file.
         
@@ -129,12 +130,10 @@ class Transcriber:
     def __init__(self):
         self.model_size = config.WHISPER_MODEL_SIZE
         self.device = config.DEVICE
-        self._original_device = config.DEVICE  # Track original for reset after fallback
         self.model = None
         self.vad = SileroVAD()
         self.use_vad = False  # VAD disabled by default (user can enable via UI)
         self.min_word_confidence = 0.0  # Disabled - keep all transcribed words
-        self._retry_count = 0  # Track retries to prevent infinite loops
         self.max_retries = 1  # Max retries (1 = try once more on CPU)
 
     def load_model(self, size=None):
@@ -148,9 +147,10 @@ class Transcriber:
         # Nothing to unload in main process
         pass
 
-    def transcribe(self, audio_path, language=None, model_size=None, use_vad=None, beam_size=5, min_silence_duration_ms=1000):
+    def transcribe(self, audio_path: str | Path, language=None, model_size=None, use_vad=None, beam_size=5, min_silence_duration_ms=1000):
         """
         Transcribes audio using a subprocess to isolate CTranslate2/Whisper.
+        Uses an iterative loop for CUDA→CPU fallback instead of recursion.
         """
         
         self.load_model(model_size) # Updates self.model_size
@@ -170,136 +170,98 @@ class Transcriber:
         worker_script = Path(__file__).parent / "transcription_worker.py"
         python_exe = sys.executable
         
-        compute_type = "float16" if self.device == "cuda" else "int8"
+        # Iterative retry loop: try GPU first, then CPU on failure
+        raw_segments = None
+        detected_language = "en"
+        device_override = None  # Track device for current attempt without mutating self.device
         
-        cmd = [
-            python_exe, str(worker_script),
-            "--audio_path", str(audio_path),
-            "--model_size", str(self.model_size),
-            "--language", str(language if language else "auto"),
-            "--compute_type", compute_type,
-            "--device", self.device
-        ]
-        
-        config.debug_log(f"Transcriber: Launching subprocess: {' '.join(cmd)}")
-        
-        try:
-            # Run worker
-            # Pass environment to ensure DLLs are found (though worker sets them up too)
-            env = os.environ.copy()
+        for attempt in range(self.max_retries + 1):
+            active_device = device_override or self.device
+            compute_type = "float16" if active_device == "cuda" else "int8"
             
-            # [Fix] Sanitize PYTHONHASHSEED which causes fatal startup errors if invalid
-            if "PYTHONHASHSEED" in env:
-                seed_val = env["PYTHONHASHSEED"]
-                logger.info(f"Subprocess Env: Found PYTHONHASHSEED='{seed_val}'")
+            cmd = [
+                python_exe, str(worker_script),
+                "--audio_path", str(audio_path),
+                "--model_size", str(self.model_size),
+                "--language", str(language if language else "auto"),
+                "--compute_type", compute_type,
+                "--device", active_device
+            ]
+            
+            config.debug_log(f"Transcriber: Launching subprocess (attempt {attempt+1}): device={active_device}")
+            
+            try:
+                # Run worker
+                env = os.environ.copy()
                 
-                # Check validity: must be "random" or integer [0; 4294967295]
-                is_valid = seed_val == "random" or (seed_val.isdigit() and 0 <= int(seed_val) <= 4294967295)
-                
-                if not is_valid:
-                    logger.warning(f"⚠️ Removing invalid PYTHONHASHSEED='{seed_val}' from subprocess environment to prevent crash.")
-                    del env["PYTHONHASHSEED"]
+                # [Fix] Sanitize PYTHONHASHSEED which causes fatal startup errors if invalid
+                if "PYTHONHASHSEED" in env:
+                    seed_val = env["PYTHONHASHSEED"]
+                    is_valid = seed_val == "random" or (seed_val.isdigit() and 0 <= int(seed_val) <= 4294967295)
+                    if not is_valid:
+                        del env["PYTHONHASHSEED"]
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                env=env,
-                check=True
-            )
-            
-            # Parse JSON
-            raw_output = result.stdout
-            
-            # Extract JSON block
-            import re
-            match = re.search(r"<<<<JSON>>>>\s*(.*?)\s*<<<<ENDJSON>>>>", raw_output, re.DOTALL)
-            if not match:
-                logger.error(f"Worker Output: {raw_output}")
-                raise RuntimeError("Could not find JSON block in worker output.")
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    env=env,
+                    check=True
+                )
                 
-            json_str = match.group(1)
-            data = json.loads(json_str)
-            
-            # Reconstruct objects (dict -> slightly compatible structure)
-            # Actually we just need list of dicts for the rest of pipeline
-            raw_segments = data["segments"]
-            detected_language = data.get("language", "en")
-            
-            logger.info(f"Subprocess returned {len(raw_segments)} segments. (Lang: {detected_language})")
-            
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Transcription Subprocess Failed! Exit code: {e.returncode}")
-            logger.error(f"Stderr: {e.stderr}")
-            
-            # [Fix] Check if stdout actually contains valid output despite non-zero exit
-            # This can happen when CUDA cleanup crashes after successful transcription
-            if e.stdout:
-                import re
-                match = re.search(r"<<<<JSON>>>>\s*(.*?)\s*<<<<ENDJSON>>>>", e.stdout, re.DOTALL)
-                if match:
-                    logger.warning("Worker crashed after successful transcription. Attempting to recover output...")
-                    try:
-                        json_str = match.group(1)
-                        data = json.loads(json_str)
-                        raw_segments = data["segments"]
-                        detected_language = data.get("language", "en")
-                        logger.info(f"Recovered {len(raw_segments)} segments from crashed worker")
-                        # Fall through to post-processing below (need to restructure)
-                        # For now, skip to post-processing by setting variables
-                    except (json.JSONDecodeError, KeyError) as parse_err:
-                        logger.error(f"Failed to parse recovered output: {parse_err}")
-                        raw_segments = None
+                # Parse JSON from stdout
+                raw_output = result.stdout
+                match = re.search(r"<<<<JSON>>>>\s*(.*?)\s*<<<<ENDJSON>>>>", raw_output, re.DOTALL)
+                if not match:
+                    logger.error(f"Worker Output: {raw_output}")
+                    raise RuntimeError("Could not find JSON block in worker output.")
                     
-                    if raw_segments:
-                        # Jump to post-processing (below the except blocks)
-                        pass  # Will be handled by the variable being set
-                    else:
-                        pass  # Fall through to normal error handling
-            else:
-                raw_segments = None
-            
-            config.debug_log(f"Transcriber Crash: {e.stderr}")
-            
-            # If we recovered valid output, skip the retry logic and continue to post-processing
-            if raw_segments is not None:
-                logger.info("Continuing with recovered segments despite worker crash...")
-                # detected_language should already be set from recovery
-            else:
-                # [Fix] Fallback to CPU if CUDA crashes (Access Violation / DLL issue)
-                # But limit retries to prevent infinite loops
-                if self.device == "cuda" and self._retry_count < self.max_retries:
-                    self._retry_count += 1
-                    logger.warning(f"Worker crashed on CUDA. Retrying with CPU fallback... (Attempt {self._retry_count}/{self.max_retries})")
+                json_str = match.group(1)
+                data = json.loads(json_str)
+                raw_segments = data["segments"]
+                detected_language = data.get("language", "en")
+                
+                logger.info(f"Subprocess returned {len(raw_segments)} segments. (Lang: {detected_language})")
+                break  # Success, exit retry loop
+                
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Transcription Subprocess Failed! Exit code: {e.returncode}")
+                logger.error(f"Stderr: {e.stderr}")
+                config.debug_log(f"Transcriber Crash: {e.stderr}")
+                
+                # Try to recover output from stdout even on non-zero exit
+                if e.stdout:
+                    match = re.search(r"<<<<JSON>>>>\s*(.*?)\s*<<<<ENDJSON>>>>", e.stdout, re.DOTALL)
+                    if match:
+                        try:
+                            json_str = match.group(1)
+                            data = json.loads(json_str)
+                            raw_segments = data["segments"]
+                            detected_language = data.get("language", "en")
+                            logger.info(f"Recovered {len(raw_segments)} segments from crashed worker")
+                            break  # Recovered, exit retry loop
+                        except (json.JSONDecodeError, KeyError) as parse_err:
+                            logger.error(f"Failed to parse recovered output: {parse_err}")
+                
+                # If CUDA failed and we have retries left, switch to CPU for next attempt
+                if active_device == "cuda" and attempt < self.max_retries:
+                    logger.warning(f"Worker crashed on CUDA. Will retry with CPU... (Attempt {attempt+1}/{self.max_retries})")
                     config.debug_log("Switching to CPU fallback for Transcription worker...")
-                    
-                    # Update settings for CPU
-                    self.device = "cpu"
-                    
-                    try:
-                        # Recursive retry
-                        result = self.transcribe(audio_path, language, model_size, use_vad, beam_size, min_silence_duration_ms)
-                        # Reset for next transcription call (so we try GPU again next time)
-                        self.device = self._original_device
-                        self._retry_count = 0
-                        return result
-                    except Exception as retry_error:
-                        # Reset state even on failure
-                        self.device = self._original_device
-                        self._retry_count = 0
-                        raise
+                    device_override = "cpu"
+                    continue  # Retry with CPU
                 
-                # Reset retry count for next call
-                self._retry_count = 0
-                raise RuntimeError(f"Transcription failed after {self.max_retries} retries: {e.stderr}")
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse worker output: {result.stdout}")
-            config.debug_log(f"Transcriber JSON Error: {result.stdout}")
-            raise RuntimeError("Transcription worker returned invalid JSON")
-            
+                # No more retries
+                raise RuntimeError(f"Transcription failed after {attempt+1} attempts: {e.stderr}")
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse worker output: {result.stdout}")
+                config.debug_log(f"Transcriber JSON Error: {result.stdout}")
+                raise RuntimeError("Transcription worker returned invalid JSON")
         
+        if raw_segments is None:
+            raise RuntimeError("Transcription failed: no segments produced")
+            
         # Post-Processing (VAD Filtering & Cleanup)
         # Re-use existing logic
         segments = []
@@ -354,7 +316,7 @@ class Transcriber:
         logger.info(f"Cleanup complete. Found {len(segments)} unique segments.")
         return segments, detected_language
     
-    def _get_audio_duration(self, audio_path) -> float:
+    def _get_audio_duration(self, audio_path: str | Path) -> float:
         """Get audio file duration in seconds."""
         try:
             info = sf.info(str(audio_path))

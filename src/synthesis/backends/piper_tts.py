@@ -13,7 +13,7 @@ class PiperTTSBackend(TTSBackend):
     def __init__(self, piper_map):
         self.piper_map = piper_map
 
-    def generate(self, text, output_path, language="en", speaker_wav=None, **kwargs):
+    def generate(self, text, output_path: str | Path, language="en", speaker_wav=None, **kwargs):
         try:
             # 1. Resolve Voice Model
             model_name = self.piper_map.get(language, "en_US-lessac-high")

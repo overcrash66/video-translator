@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class VideoProcessor:
-    def extract_audio(self, video_path, output_path=None):
+    def extract_audio(self, video_path: str | Path, output_path: str | Path | None = None):
         if not output_path:
             output_path = str(Path(video_path).with_suffix(".wav"))
         
@@ -26,7 +26,7 @@ class VideoProcessor:
             logger.error(f"Extract audio failed: {e.stderr.decode() if e.stderr else str(e)}")
             return None
 
-    def mix_tracks(self, vocal_track, background_track, output_path, vocal_volume=1.0, bg_volume=0.8):
+    def mix_tracks(self, vocal_track: str | Path, background_track: str | Path, output_path: str | Path, vocal_volume=1.0, bg_volume=0.8):
         """
         Mixes vocal and background tracks using torchaudio to ensure alignment and quality.
         """
@@ -89,7 +89,7 @@ class VideoProcessor:
             logger.error(f"Mixing failed: {e}")
             return None
 
-    def replace_audio(self, video_path, new_audio_path, output_video_path):
+    def replace_audio(self, video_path: str | Path, new_audio_path: str | Path, output_video_path: str | Path):
         try:
             video = ffmpeg.input(video_path)
             audio = ffmpeg.input(new_audio_path)

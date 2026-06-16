@@ -320,7 +320,7 @@ class Wav2LipSyncer:
                 logger.warning(f"Face detection error: {e}")
                 return None
 
-    def _load_frame_range(self, video_path, start, end, pad_before=0, pad_after=0):
+    def _load_frame_range(self, video_path: str | Path, start, end, pad_before=0, pad_after=0):
         """
         Load specific frame range from video file.
         Loads [start-pad_before, end+pad_after) frames.
@@ -590,7 +590,7 @@ class Wav2LipSyncer:
                 
         return frame
 
-    def sync_lips(self, video_path: str, audio_path: str, output_path: str, enhance_face: bool = False) -> str:
+    def sync_lips(self, video_path: str | Path, audio_path: str | Path, output_path: str | Path, enhance_face: bool = False) -> str:
         """Streaming lip sync that processes video in chunks."""
         if enhance_face and self.restorer is None:
             self.load_gfpgan()

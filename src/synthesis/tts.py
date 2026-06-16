@@ -7,7 +7,6 @@ import torchaudio
 import re
 
 from src.utils import config
-from src.utils import config
 from src.utils import languages
 # Lazy imports for backends
 from typing import TypedDict, Literal
@@ -429,7 +428,7 @@ class TTSEngine:
         # Deprecated: Logic moved to PiperBackend
         pass
 
-    def _generate_dummy_audio(self, text, output_path):
+    def _generate_dummy_audio(self, text, output_path: str | Path):
         """
         Generates a short silence/tone as fallback when TTS fails.
         """
