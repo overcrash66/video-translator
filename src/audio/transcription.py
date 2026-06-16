@@ -1,8 +1,8 @@
+from src.utils import config
 from faster_whisper import WhisperModel
 import torch
 import torchaudio
 import numpy as np
-from src.utils import config
 from src.utils import audio_utils
 import soundfile as sf
 import logging
