@@ -10,6 +10,7 @@ class SessionContext:
         self.speaker_voice_map: Dict[str, str] = {}
         self.used_voices: Set[str] = set()
         self.last_valid_reference_wav: Optional[str] = None
+        self.speaker_last_valid_reference: Dict[str, str] = {}
         self.profiles_dir: Optional[Path] = None
 
     def get_voice(self, speaker_id: str) -> Optional[str]:
@@ -26,4 +27,5 @@ class SessionContext:
         self.speaker_voice_map.clear()
         self.used_voices.clear()
         self.last_valid_reference_wav = None
+        self.speaker_last_valid_reference.clear()
         self.profiles_dir = None

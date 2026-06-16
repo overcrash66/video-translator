@@ -194,6 +194,7 @@ class Diarizer:
                 use_auth_token=False,
                 revision=None,
                 huggingface_cache_dir=None,
+                **kwargs,
             ):
                 """Patched fetch that uses copy instead of symlink on Windows."""
                 if save_filename is None:
@@ -258,6 +259,7 @@ class Diarizer:
                     use_auth_token=use_auth_token,
                     revision=revision,
                     huggingface_cache_dir=huggingface_cache_dir,
+                    **kwargs,
                 )
                 
                 # Convert symlink to real file

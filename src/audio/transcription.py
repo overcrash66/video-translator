@@ -453,11 +453,12 @@ class Transcriber:
             # Check merge conditions:
             # 1. Current segment is short
             # 2. Gap is small (part of same flow)
-            # 3. (Optional) Check punctuation? For now, we assume short segments usually need merging.
-            #    Ideally we wouldn't merge if current ends in specific punctuation like '?' or '!', 
-            #    but often Whisper breaks sentences mid-phrase.
-            
+            # 3. Speaker ID matches if present (prevent cross-speaker merging)
             should_merge = (current_duration < min_duration) and (gap < max_gap)
+            
+            if 'speaker_id' in current_seg or 'speaker_id' in next_seg:
+                if current_seg.get('speaker_id') != next_seg.get('speaker_id'):
+                    should_merge = False
             
             if should_merge:
                 # Merge into current_seg

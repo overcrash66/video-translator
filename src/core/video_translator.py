@@ -472,6 +472,14 @@ class VideoTranslator:
             source_code = detected_lang
             if target_code == "auto": target_code = "en"
             
+        # Split transcription segments by speaker if diarization is enabled
+        if enable_diarization and diarization_segments:
+             logger.info("Splitting transcription segments by speaker changes...")
+             split_segments = []
+             for seg in segments:
+                 split_segments.extend(self._split_segment_by_speaker(seg, diarization_segments))
+             segments = split_segments
+             
         # Merge short segments
         logger.info(f"Merging short segments (min_dur={config.MERGE_MIN_DURATION}s, max_gap={config.MERGE_MAX_GAP}s)...")
         before_count = len(segments)
@@ -750,7 +758,9 @@ class VideoTranslator:
              
              # Resolve Speaker
              if enable_diarization:
-                 best_speaker = self._find_overlapping_speaker(seg, diarization_segments) if diarization_segments else None
+                 best_speaker = seg.get('speaker_id')
+                 if not best_speaker and diarization_segments:
+                     best_speaker = self._find_overlapping_speaker(seg, diarization_segments)
                  if best_speaker:
                      gender = speaker_map.get(best_speaker, "Female")
                      speaker_wav, use_force_cloning = self._resolve_speaker_reference(
@@ -765,7 +775,8 @@ class VideoTranslator:
                   
              # Fallback Logic
              speaker_wav, use_force_cloning = self._apply_reference_fallback(
-                 speaker_wav, vocals_path, model_name, i
+                 speaker_wav, vocals_path, model_name, i,
+                 speaker_id=best_speaker, enable_diarization=enable_diarization
              )
 
              # Create Task
@@ -828,7 +839,80 @@ class VideoTranslator:
                   best = d_seg['speaker']
          return best
 
-    def _apply_reference_fallback(self, speaker_wav, vocals_path, model_name, index):
+    def _split_segment_by_speaker(self, seg: dict, diar_segments: list) -> list[dict]:
+        """
+        Splits a single transcription segment into multiple sub-segments 
+        whenever the speaker shifts, using word-level timestamps.
+        """
+        if not seg.get('words') or not diar_segments:
+             # Fallback if no word-level timestamps: assign speaker to whole segment
+             best_spk = self._find_overlapping_speaker(seg, diar_segments)
+             new_seg = seg.copy()
+             new_seg['speaker_id'] = best_spk
+             return [new_seg]
+
+        # Assign speaker to each word
+        for w in seg['words']:
+             w_start, w_end = w['start'], w['end']
+             best_spk = None
+             max_overlap = 0.0
+             for d_seg in diar_segments:
+                  ov_start = max(w_start, d_seg['start'])
+                  ov_end = min(w_end, d_seg['end'])
+                  overlap = max(0.0, ov_end - ov_start)
+                  if overlap > max_overlap:
+                       max_overlap = overlap
+                       best_spk = d_seg['speaker']
+             
+             if not best_spk:
+                  # Fallback: assign speaker of nearest diarization segment
+                  min_dist = float('inf')
+                  for d_seg in diar_segments:
+                       dist = max(0.0, d_seg['start'] - w_end) if d_seg['start'] >= w_end else max(0.0, w_start - d_seg['end'])
+                       if dist < min_dist:
+                            min_dist = dist
+                            best_spk = d_seg['speaker']
+                            
+             w['speaker_id'] = best_spk or 'SPEAKER_00'
+
+        # Group words into continuous speaker sub-segments
+        sub_segments = []
+        current_words = []
+        current_speaker = None
+        
+        for w in seg['words']:
+             spk = w['speaker_id']
+             if current_speaker is None:
+                  current_speaker = spk
+                  current_words.append(w)
+             elif spk == current_speaker:
+                  current_words.append(w)
+             else:
+                  # Create a sub-segment
+                  sub_text = "".join(x['word'] for x in current_words).strip()
+                  sub_segments.append({
+                      'start': current_words[0]['start'],
+                      'end': current_words[-1]['end'],
+                      'text': sub_text,
+                      'words': current_words,
+                      'speaker_id': current_speaker
+                  })
+                  current_speaker = spk
+                  current_words = [w]
+                  
+        if current_words:
+             sub_text = "".join(x['word'] for x in current_words).strip()
+             sub_segments.append({
+                 'start': current_words[0]['start'],
+                 'end': current_words[-1]['end'],
+                 'text': sub_text,
+                 'words': current_words,
+                 'speaker_id': current_speaker
+             })
+             
+        return sub_segments
+
+    def _apply_reference_fallback(self, speaker_wav, vocals_path, model_name, index, speaker_id=None, enable_diarization=False):
          """
          Applies cascading fallback logic for speaker reference audio.
          1. Validates current reference.
@@ -839,29 +923,48 @@ class VideoTranslator:
          :param vocals_path: Path to full vocals (source for 30s clip).
          :param model_name: TTS model name (for validation rules).
          :param index: Segment index for logging.
+         :param speaker_id: The speaker ID for tracking speaker-specific voice clones.
+         :param enable_diarization: Whether multi-speaker diarization is enabled.
          :return: Tuple (resolved_wav_path, force_cloning_flag).
          """
-         # Logic from original code
          # 1. Update tracking
          if speaker_wav:
              if self.tts_engine.validate_reference(speaker_wav, model_name=model_name):
                  self.session.last_valid_reference_wav = speaker_wav
+                 if enable_diarization and speaker_id:
+                     if not hasattr(self.session, 'speaker_last_valid_reference'):
+                         self.session.speaker_last_valid_reference = {}
+                     self.session.speaker_last_valid_reference[speaker_id] = speaker_wav
              else:
                  speaker_wav = None
          
-         # 2. Last Valid
          use_force = False
-         if not speaker_wav and self.session.last_valid_reference_wav:
-             logger.info(f"Segment {index}: Using LAST VALID reference.")
-             speaker_wav = self.session.last_valid_reference_wav
          
-         # 3. 0-30s
+         # 2. Last Valid Fallback
+         if not speaker_wav:
+             if enable_diarization and speaker_id:
+                 # Check speaker-specific last valid reference first
+                 if hasattr(self.session, 'speaker_last_valid_reference'):
+                     speaker_wav = self.session.speaker_last_valid_reference.get(speaker_id)
+                     if speaker_wav:
+                         logger.info(f"Segment {index}: Using last valid reference for speaker {speaker_id}.")
+             else:
+                 # Fallback to global last valid reference (for single speaker or unidentified speaker)
+                 if self.session.last_valid_reference_wav:
+                     logger.info(f"Segment {index}: Using LAST VALID reference.")
+                     speaker_wav = self.session.last_valid_reference_wav
+         
+         # 3. 0-30s Fallback
          if not speaker_wav:
              fallback = self._extract_fallback_reference(vocals_path)
              if fallback:
                   logger.info(f"Segment {index}: Using 0-30s FALLBACK.")
                   speaker_wav = fallback
                   self.session.last_valid_reference_wav = fallback
+                  if enable_diarization and speaker_id:
+                      if not hasattr(self.session, 'speaker_last_valid_reference'):
+                          self.session.speaker_last_valid_reference = {}
+                      self.session.speaker_last_valid_reference[speaker_id] = fallback
          
          return speaker_wav, use_force
 
