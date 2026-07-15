@@ -403,6 +403,23 @@ Contributions are welcome! Areas where help is appreciated:
 
 ---
 
+## 🏷️ Citation
+
+If you find this project useful, please cite it as follows:
+
+```bibtex
+@software{video_translator,
+  author = {Wael Sahli},
+  email = {leawwael6@gmail.com},
+  title = {AI Video Translator},
+  url = {https://github.com/overcrash66/video-translator},
+  version = {1.0.0},
+  date = {2026-06-15}
+}
+```
+
+---
+
 ## 📄 License
 
 This project is for educational and personal use. Please respect the licenses of underlying models and technologies.

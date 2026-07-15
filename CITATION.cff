@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "Wael Sahli"
+    email: "leawwael6@gmail.com"
+title: "AI Video Translator"
+version: "1.0.0"
+date-released: "2026-06-15"
+repository-code: "https://github.com/overcrash66/video-translator"
+url: "https://github.com/overcrash66/video-translator"
+abstract: "Break language barriers with cinema-quality video translation — privately, on your own hardware. Transform any video into a professional multilingual production with natural voice cloning, lip-sync, and on-screen text translation."
+keywords:
+  - video-translation
+  - voice-cloning
+  - lip-sync
+  - offline-translation
+  - local-ai
