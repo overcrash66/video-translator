@@ -1,0 +1,229 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "video-translator"
+version = "1.0.0"
+description = "AI Video Translator — cinema-quality video translation on your own hardware"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10,<3.13"
+authors = [
+    {name = "Wael Sahli", email = "leawwael6@gmail.com"},
+]
+
+# =============================================================================
+# CORE DEPENDENCIES — Minimum required to run the application
+# =============================================================================
+dependencies = [
+    # UI
+    "gradio>=4.36.1",
+
+    # Data / Numerics
+    "numpy<2.0.0",
+    "scipy",
+    "pandas<2.0.0",
+    "pyarrow>=20.0.0",
+
+    # Audio I/O
+    "librosa",
+    "soundfile>=0.12.1",
+    "pydub==0.25.1",
+
+    # Video I/O
+    "ffmpeg-python==0.2.0",
+    "opencv-python==4.10.0.84; sys_platform != 'linux'",
+    "opencv-python-headless==4.10.0.84; sys_platform == 'linux'",
+
+    # Environment & Config
+    "python-dotenv==1.0.1",
+    "psutil>=5.9.8",
+    "aiohttp>=3.9.5",
+    "rich>=13.7.1",
+    "colorama==0.4.6",
+    "tqdm>=4.66.4",
+    "protobuf",
+    "cachetools>=5.3.0",
+    "pysbd",
+]
+
+[project.optional-dependencies]
+
+# =============================================================================
+# GPU — PyTorch with CUDA 12.4 (default, broad compatibility)
+# Install: pip install -e ".[gpu-cu124]"
+# =============================================================================
+gpu-cu124 = [
+    "torch>=2.5.1",
+    "torchvision>=0.20.0",
+    "torchaudio>=2.5.1",
+    "torchmetrics>=1.4.0",
+]
+
+# =============================================================================
+# GPU — PyTorch with CUDA 12.8 (RTX 50 series / Blackwell)
+# Install: pip install -e ".[gpu-cu128]"
+# NOTE: Requires --extra-index-url https://download.pytorch.org/whl/cu128
+# =============================================================================
+gpu-cu128 = [
+    "torch>=2.7.0",
+    "torchvision>=0.20.0",
+    "torchaudio>=2.7.0",
+    "torchmetrics>=1.4.0",
+]
+
+# =============================================================================
+# GPU — CPU-only PyTorch (macOS, CI, no NVIDIA GPU)
+# Install: pip install -e ".[gpu-cpu]"
+# =============================================================================
+gpu-cpu = [
+    "torch>=2.5.1",
+    "torchvision>=0.20.0",
+    "torchaudio>=2.5.1",
+    "torchmetrics>=1.4.0",
+]
+
+# =============================================================================
+# TTS — Text-to-Speech engines
+# =============================================================================
+tts = [
+    "edge-tts>=6.1.10",
+    "f5-tts",
+    # piper-tts has platform-specific build issues; install manually if needed
+    # "piper-tts==1.2.0; sys_platform == 'linux'",
+]
+
+# =============================================================================
+# OCR — Visual text detection
+# =============================================================================
+ocr = [
+    # PaddlePaddle: GPU on Linux, CPU on Windows/macOS
+    "paddlepaddle-gpu==2.6.1; sys_platform == 'linux'",
+    "paddlepaddle==2.6.2; sys_platform != 'linux'",
+    "paddleocr==2.8.1",
+    "easyocr",
+    "langdetect",
+]
+
+# =============================================================================
+# LIPSYNC — Lip synchronization dependencies
+# =============================================================================
+lipsync = [
+    "face-alignment==1.4.1",
+    "basicsr==1.4.2",
+    "kornia==0.7.3",
+    "gfpgan==1.3.8",
+    "insightface>=0.7.3",
+    # ONNX Runtime: GPU on Linux, CPU on macOS
+    "onnxruntime-gpu; sys_platform == 'linux'",
+    "onnxruntime; sys_platform == 'darwin'",
+    # Windows: user must choose onnxruntime or onnxruntime-gpu based on their setup
+    "onnxruntime-gpu; sys_platform == 'win32'",
+]
+
+# =============================================================================
+# DIARIZATION — Speaker identification
+# =============================================================================
+diarization = [
+    "pyannote.audio>=3.3.1",
+    "speechbrain>=1.0.0",
+    "diart==0.9.0",
+]
+
+# =============================================================================
+# TRANSLATION-LLM — Local LLM translation models
+# =============================================================================
+translation-llm = [
+    "transformers>=4.41.2",
+    "accelerate>=0.33.0",
+    "diffusers==0.29.0",
+    "safetensors>=0.4.3",
+    "einops>=0.8.0",
+    "huggingface_hub>=0.23.4",
+    "sentencepiece>=0.2.0",
+    # bitsandbytes: Linux-only (no official Windows build)
+    "bitsandbytes>=0.43.1; sys_platform == 'linux'",
+    "deep-translator",
+    "faster-whisper>=1.1.1",
+]
+
+# =============================================================================
+# AUDIO-PROCESSING — Advanced audio features
+# =============================================================================
+audio-processing = [
+    "demucs==4.0.1",
+    "pyworld==0.3.4",
+    # voicefixer: optional, has broken metadata with pip >= 24.1
+    # Install manually if needed: pip install voicefixer>=0.1.2
+]
+
+# =============================================================================
+# DOCKER — Additional packages for Docker deployment
+# =============================================================================
+docker = [
+    "pydantic>=2.10.6",
+    "fastapi>=0.112.0",
+    "uvicorn>=0.30.0",
+    "python-multipart",
+    "numba>=0.57.0",
+    "llvmlite>=0.40.0",
+    "tokenizers>=0.21.0",
+    "piper-tts==1.2.0",
+    "TTS==0.22.0",
+]
+
+# =============================================================================
+# DEV — Development and testing dependencies
+# =============================================================================
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "pytest-mock",
+    "mock",
+    "requests",
+    "packaging",
+    "Pillow",
+]
+
+# =============================================================================
+# ALL — Everything for a full local install (excludes docker-specific)
+# =============================================================================
+all = [
+    "video-translator[gpu-cu124,tts,ocr,lipsync,diarization,translation-llm,audio-processing]",
+]
+
+# =============================================================================
+# ALL-CU128 — Full install with CUDA 12.8
+# =============================================================================
+all-cu128 = [
+    "video-translator[gpu-cu128,tts,ocr,lipsync,diarization,translation-llm,audio-processing]",
+]
+
+# =============================================================================
+# ALL-CPU — Full install without GPU acceleration
+# =============================================================================
+all-cpu = [
+    "video-translator[gpu-cpu,tts,ocr,lipsync,diarization,translation-llm,audio-processing]",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "smoke: core smoke tests (always run)",
+    "gpu: requires GPU (auto-skipped on CPU)",
+    "platform_windows: Windows-specific tests",
+    "platform_linux: Linux-specific tests",
+    "platform_darwin: macOS-specific tests",
+    "requires_real_audio: requires real audio files (skip in CI)",
+    "requires_ffmpeg: requires ffmpeg binary (skip in CI)",
+    "requires_models: requires ML models (skip in CI)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]

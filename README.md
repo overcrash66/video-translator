@@ -204,45 +204,92 @@ Download from [Rubberband Releases](https://breakfastquay.com/rubberband/). Extr
 
 ## 📦 Installation
 
+### 🚀 Quick Install (Recommended)
+
+The smart installer auto-detects your platform, GPU, and CUDA version:
+
 ```bash
 # Clone the repository
 git clone https://github.com/overcrash66/video-translator.git
 cd video-translator
 
-# Create virtual environment (Python 3.10 recommended)
-py -3.10 -m venv venv
-.\venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/macOS
+# Windows:
+scripts\install.bat
 
-# Install dependencies
+# Linux / macOS:
+chmod +x scripts/install.sh
+./scripts/install.sh
+```
+
+### 🔧 Manual Install
+
+<details>
+<summary><strong>Windows (CUDA 12.8 — RTX 30/40/50 series)</strong></summary>
+
+```powershell
+py -3.10 -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
+```
+</details>
+
+<details>
+<summary><strong>Linux (CUDA 12.4)</strong></summary>
+
+```bash
+python3.10 -m venv venv
+source venv/bin/activate
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install -r deploy/docker/requirements.docker.txt
+```
+</details>
+
+<details>
+<summary><strong>macOS (Apple Silicon — CPU only)</strong></summary>
+
+```bash
+python3.10 -m venv venv
+source venv/bin/activate
+pip install torch torchvision torchaudio
 pip install -r requirements.txt
 ```
 
-### 🐧🍎 Linux / macOS Installation (Alternative)
+> [!NOTE]
+> Some GPU-accelerated features have reduced performance on Apple Silicon. Platform-specific
+> package substitutions (`paddlepaddle` for `paddlepaddle-gpu`, `onnxruntime` for `onnxruntime-gpu`)
+> are handled automatically by platform markers in the requirements files.
+</details>
 
-For consistency with the Docker deployment, Linux and macOS users can use the Docker requirements file which contains tested, stable dependency versions:
+<details>
+<summary><strong>Advanced: Using pyproject.toml extras</strong></summary>
 
 ```bash
-# Create virtual environment
-python3.10 -m venv venv
-source venv/bin/activate
+# Full install with CUDA 12.4 (default):
+pip install -e ".[all]"
 
-# Install PyTorch with CUDA (Linux) or Metal (macOS)
-# Linux with CUDA:
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+# Full install with CUDA 12.8 (RTX 50 series):
+pip install -e ".[all-cu128]" --extra-index-url https://download.pytorch.org/whl/cu128
 
-# macOS (Apple Silicon):
-pip install torch torchvision torchaudio
+# CPU only:
+pip install -e ".[all-cpu]"
 
-# Install project dependencies
-pip install -r deploy/docker/requirements.docker.txt
+# Minimal (core + dev tools only):
+pip install -e ".[dev]"
+
+# Selective install (pick what you need):
+pip install -e ".[tts,ocr,lipsync]"
 ```
+</details>
 
-> [!NOTE]
-> **macOS Users:**
-> - `paddlepaddle-gpu` is Linux-only. Install `paddlepaddle` instead: `pip install paddlepaddle`
-> - Replace `onnxruntime-gpu` with `onnxruntime`: `pip install onnxruntime`
-> - Some GPU-accelerated features may have reduced performance on Apple Silicon
+### ✅ Verify Installation
+
+```bash
+# Run smoke tests to validate your install
+pytest tests/test_smoke_install.py -m smoke -v
+
+# Or use the installer's verify mode
+python scripts/install.py --verify
+```
 
 ### Optional Components
 
@@ -254,6 +301,7 @@ pip install -r deploy/docker/requirements.docker.txt
 | **Enhanced Lip-Sync** | `gfpgan` and `basicsr` (included in requirements) |
 | **LivePortrait** | ~2GB VRAM, auto-downloads to `models/live_portrait` |
 | **Llama 3.1 / NeMo** | HuggingFace token (`HF_TOKEN` env variable) |
+| **VoiceFixer** | `pip install voicefixer>=0.1.2` (may need pip < 24.1) |
 
 ### 🐳 Docker Deployment (GPU)
 

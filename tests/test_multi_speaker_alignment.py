@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 import pytest
+from unittest.mock import MagicMock
 from src.core.video_translator import VideoTranslator
 from src.audio.transcription import Transcriber
 from src.processing.synchronization import AudioSynchronizer
@@ -74,6 +75,9 @@ def test_merge_short_segments_respects_speakers():
     assert res_diff[1]['text'] == "world"
 
 def test_synchronizer_merge_segments_smart_mixing():
+    import torch
+    if isinstance(torch, MagicMock):
+        pytest.skip("torch is mocked, not installed")
     sync = AudioSynchronizer()
     
     # Create temp files for test audio segments

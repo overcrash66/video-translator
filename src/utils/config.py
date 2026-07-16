@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import sysconfig
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -48,6 +49,103 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 
+# =============================================================================
+# CROSS-PLATFORM PATH DISCOVERY
+# =============================================================================
+
+def _find_site_packages() -> Path | None:
+    """Find the site-packages directory cross-platform.
+    
+    Works for:
+    - Windows venv: venv/Lib/site-packages
+    - Linux/macOS venv: venv/lib/python3.x/site-packages
+    - System Python: /usr/lib/python3.x/site-packages
+    - Docker: /usr/local/lib/python3.x/dist-packages
+    """
+    import site
+    
+    # 1. Try site.getsitepackages() first (works in most environments)
+    try:
+        for sp in site.getsitepackages():
+            p = Path(sp)
+            if p.exists():
+                return p
+    except AttributeError:
+        pass  # Some virtualenvs don't have getsitepackages()
+    
+    # 2. Try sysconfig as fallback
+    try:
+        sp = sysconfig.get_path('purelib')
+        if sp:
+            p = Path(sp)
+            if p.exists():
+                return p
+    except Exception:
+        pass
+    
+    # 3. Legacy fallback: check common venv paths relative to BASE_DIR
+    if sys.platform == 'win32':
+        candidates = [BASE_DIR / "venv" / "Lib" / "site-packages"]
+    else:
+        # Linux/macOS: lib/python3.x/site-packages
+        py_ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        candidates = [
+            BASE_DIR / "venv" / "lib" / py_ver / "site-packages",
+            BASE_DIR / "venv" / "lib64" / py_ver / "site-packages",
+        ]
+    
+    for c in candidates:
+        if c.exists():
+            return c
+    
+    return None
+
+
+def _get_cuda_roots() -> list[Path]:
+    """Discover CUDA installations cross-platform.
+    
+    Priority:
+    1. CUDA_HOME / CUDA_PATH environment variables
+    2. Standard OS-specific locations
+    """
+    roots = []
+    
+    # Check environment variables first
+    for env_var in ["CUDA_HOME", "CUDA_PATH"]:
+        cuda_env = os.environ.get(env_var)
+        if cuda_env:
+            p = Path(cuda_env)
+            if p.exists():
+                debug_log(f"Found {env_var}: {p}")
+                # Avoid CUDA 11.x when we need 12.x
+                if "v11.8" not in str(p) and "v11" not in str(p):
+                    roots.append(p)
+                else:
+                    debug_log(f"Skipping conflicting CUDA path: {p}")
+    
+    # Platform-specific standard locations
+    if sys.platform == "win32":
+        toolkit_base = Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA")
+        if toolkit_base.exists():
+            # Prefer highest 12.x version
+            cuda_dirs = sorted(
+                [d for d in toolkit_base.iterdir() if d.is_dir() and d.name.startswith("v12")],
+                reverse=True
+            )
+            for d in cuda_dirs:
+                if d not in roots:
+                    roots.append(d)
+    elif sys.platform == "linux":
+        for candidate in [
+            Path("/usr/local/cuda"),
+            *sorted(Path("/usr/local").glob("cuda-12.*"), reverse=True),
+        ]:
+            if candidate.exists() and candidate not in roots:
+                roots.append(candidate)
+    
+    return roots
+
+
 # Windows DLL loading fix for CUDA conflicts between torch and ctranslate2
 def setup_zlib_dll():
     """Adds src/lib (zlibwapi) to DLL path for CTranslate2."""
@@ -75,7 +173,10 @@ def setup_nvidia_dlls():
     """
     if sys.platform != "win32": return
     
-    _site_packages = BASE_DIR / "venv" / "Lib" / "site-packages"
+    _site_packages = _find_site_packages()
+    if not _site_packages:
+        debug_log("Could not find site-packages for NVIDIA DLL setup")
+        return
     
     # Add torch/lib (Critical: contains matching cuDNN/cuBLAS/zlibwapi)
     _torch_lib = _site_packages / "torch" / "lib"
@@ -96,26 +197,9 @@ def setup_nvidia_dlls():
 
     # Fallback to system CUDA only if needed.
     # CRITICAL: Do NOT add multiple conflicting CUDA versions.
-    # We prioritize v12.x because the user has Torch cu128 installed.
-    # Adding v11.8 causes conflicts/crashes when mixed with v12.8.
+    # Uses _get_cuda_roots() for cross-platform CUDA discovery.
     
-    preferred_cuda_roots = [
-        Path(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8"),
-    ]
-    
-    # Check env var but verify version
-    env_cuda = os.environ.get("CUDA_PATH")
-    if env_cuda:
-        p = Path(env_cuda)
-        debug_log(f"Found CUDA_PATH: {p}")
-        # Avoid adding v11.8 if we want v12.8
-        if "v11.8" not in str(p) and "v11" not in str(p):
-             if p not in preferred_cuda_roots:
-                 preferred_cuda_roots.append(p)
-        else:
-             debug_log(f"Skipping conflicting CUDA path: {p}")
-    
-    for cuda_root in preferred_cuda_roots:
+    for cuda_root in _get_cuda_roots():
         bin_path = cuda_root / "bin"
         if bin_path.exists():
             try:
@@ -132,8 +216,12 @@ def deactivate_conflicting_ctranslate2_dlls():
     """
     if sys.platform != "win32":
         return
+    
+    _site_packages = _find_site_packages()
+    if not _site_packages:
+        return
         
-    _ctranslate2_dir = BASE_DIR / "venv" / "Lib" / "site-packages" / "ctranslate2"
+    _ctranslate2_dir = _site_packages / "ctranslate2"
     if not _ctranslate2_dir.exists():
         return
         
@@ -168,7 +256,10 @@ def pre_load_ctranslate2_dlls():
     if sys.platform != "win32":
         return
     
-    _site_packages = BASE_DIR / "venv" / "Lib" / "site-packages"
+    _site_packages = _find_site_packages()
+    if not _site_packages:
+        return
+    
     _torch_lib = _site_packages / "torch" / "lib"
     _ctranslate2_dir = _site_packages / "ctranslate2"
     
@@ -177,7 +268,7 @@ def pre_load_ctranslate2_dlls():
         
     import ctypes
     
-    # 1. Pre-load crucial CUDA runtimes and cublas from torch/lib first (CUDA 12.8 compatible)
+    # 1. Pre-load crucial CUDA runtimes and cublas from torch/lib first
     if _torch_lib.exists():
         torch_dependencies = [
             "nvJitLink_120_0.dll",
@@ -224,8 +315,16 @@ def pre_load_ctranslate2_dlls():
 # before torch/lib to prevent cuDNN/cuBLAS version conflicts.
 print(f"[Config] Initializing DLL paths... BASE_DIR={BASE_DIR}")
 
-_ctranslate2_dir = str(BASE_DIR / "venv" / "Lib" / "site-packages" / "ctranslate2")
-_torch_lib = str(BASE_DIR / "venv" / "Lib" / "site-packages" / "torch" / "lib")
+# Cross-platform site-packages discovery
+_discovered_site_packages = _find_site_packages()
+if _discovered_site_packages:
+    _ctranslate2_dir = str(_discovered_site_packages / "ctranslate2")
+    _torch_lib = str(_discovered_site_packages / "torch" / "lib")
+else:
+    # Fallback to legacy Windows path
+    _ctranslate2_dir = str(BASE_DIR / "venv" / "Lib" / "site-packages" / "ctranslate2")
+    _torch_lib = str(BASE_DIR / "venv" / "Lib" / "site-packages" / "torch" / "lib")
+    debug_log("Warning: Could not discover site-packages, using legacy Windows fallback")
 
 # PATH order: ctranslate2 FIRST, then torch/lib, then original PATH.
 # ctranslate2's cudnn64_9.dll (260KB stub) needs torch/lib's full cuDNN DLLs
@@ -258,8 +357,7 @@ setup_zlib_dll()
 
 # Ensure torch/lib is added before pre-loading, so cuDNN stub dependencies can be resolved.
 if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
-    _site_packages = BASE_DIR / "venv" / "Lib" / "site-packages"
-    _torch_lib_path = _site_packages / "torch" / "lib"
+    _torch_lib_path = Path(_torch_lib)
     if _torch_lib_path.exists():
         try:
             os.add_dll_directory(str(_torch_lib_path))

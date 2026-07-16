@@ -1,4 +1,10 @@
-pytest
+# =============================================================================
+# Video Translator — Test Dependencies
+# =============================================================================
+# Install: pip install -r tests/requirements-test.txt
+# Or via pyproject.toml: pip install -e ".[dev]"
+# =============================================================================
+pytest>=7.0
 pytest-cov
 pytest-mock
 mock

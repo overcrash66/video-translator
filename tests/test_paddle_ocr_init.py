@@ -133,6 +133,10 @@ class TestMemoryOptimizations:
     @pytest.mark.requires_real_audio  # Needs real cachetools.TTLCache
     def test_lru_cache_sizes_are_bounded(self):
         """Translation caches should have bounded sizes to prevent RAM growth."""
+        import cachetools
+        from unittest.mock import MagicMock
+        if isinstance(cachetools, MagicMock):
+            pytest.skip("cachetools is mocked, not installed")
         from src.translation.visual_translator import TRANSLATION_CACHE_MAXSIZE, TRANSLATION_CACHE_TTL
         
         translator = VisualTranslator()

@@ -1,27 +1,35 @@
-# Resolution Fixes
+# =============================================================================
+# Video Translator — Docker/Linux Dependencies
+# =============================================================================
+# This file is used by the Dockerfile for layer caching.
+# It mirrors pyproject.toml [core,tts,ocr,lipsync,diarization,translation-llm,docker].
+#
+# Platform: Linux with NVIDIA CUDA 12.4+
+# PyTorch is installed separately in the Dockerfile for optimal layer caching.
+# =============================================================================
+
+# --- Resolution Fixes ---
 numpy<2.0.0
 scipy<1.13.0
 librosa>=0.10.0
 numba>=0.57.0
 llvmlite>=0.40.0
 
-# Core
+# --- Core ---
 gradio>=5.7.1
-pydantic==2.10.6
+pydantic>=2.10.6
 fastapi>=0.112.0
 uvicorn>=0.30.0
 python-multipart
 deep-translator
 python-dotenv==1.0.1
 pandas<2.0.0
-pyarrow==20.0.0
+pyarrow>=20.0.0
 soundfile>=0.13.1
 ffmpeg-python==0.2.0
-# Use headless OpenCV for Docker
 opencv-python-headless==4.10.0.84
 
-
-
+# --- ML / Transformers ---
 torchmetrics>=1.6.1
 transformers>=4.48.0
 tokenizers>=0.21.0
@@ -29,43 +37,49 @@ accelerate>=0.33.0
 diffusers==0.29.0
 safetensors>=0.5.2
 einops>=0.8.0
-tqdm==4.66.4
+tqdm>=4.66.4
 huggingface_hub>=0.25.1
 pydub==0.25.1
-pyannote.audio==4.0.1
-speechbrain==1.0.3
-diart==0.9.0
-demucs==4.0.1
 
+# --- Speaker Diarization ---
+pyannote.audio>=4.0.1
+speechbrain>=1.0.3
+diart==0.9.0
+
+# --- Audio Separation & Processing ---
+demucs==4.0.1
 pyworld==0.3.4
-edge-tts==6.1.10
+
+# --- TTS ---
+edge-tts>=6.1.10
 piper-tts==1.2.0
 f5-tts
 pysbd
 TTS==0.22.0
 
-faster-whisper==1.1.1
-bitsandbytes==0.43.1
-sentencepiece==0.2.0
-protobuf==5.27.1
-# voicefixer>=0.1.2  # REMOVED: Has broken metadata incompatible with pip >= 24.1
+# --- Transcription ---
+faster-whisper>=1.1.1
+bitsandbytes>=0.43.1
+sentencepiece>=0.2.0
+protobuf>=5.27.1
+
+# --- Face / Lip-sync ---
 face-alignment==1.4.1
 basicsr==1.4.2
 kornia==0.7.3
 gfpgan==1.3.8
 
-# PaddleOCR dependencies - GPU version for Docker
-# Using same version valid for CUDA 11/12 compatibility layers or specific wheel if needed.
-# For now, sticking to common stable version suitable for CUDA 11.8+
-paddlepaddle-gpu==2.6.1; sys_platform == "linux"
+# --- OCR (GPU for Docker/Linux) ---
+paddlepaddle-gpu==2.6.1
 paddleocr==2.8.1
-psutil==5.9.8
-aiohttp==3.9.5
+easyocr>=1.7.2
+langdetect>=1.0.9
+
+# --- Utilities ---
+psutil>=5.9.8
+aiohttp>=3.9.5
 rich>=13.9.4
 colorama==0.4.6
 insightface>=0.7.3
 onnxruntime-gpu
 cachetools>=5.3.0
-
-easyocr==1.7.2
-langdetect==1.0.9

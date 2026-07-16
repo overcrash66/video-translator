@@ -1,64 +1,87 @@
-gradio==4.36.1
-deep-translator
-python-dotenv==1.0.1
-numpy<2.0.0
-scipy
-pandas<2.0.0
-pyarrow==20.0.0
-librosa
-soundfile==0.12.1
-ffmpeg-python==0.2.0
-opencv-python==4.10.0.84
+# =============================================================================
+# Video Translator — Python Dependencies (Windows)
+# =============================================================================
+# This file installs all dependencies for a full local install with CUDA 12.8.
+#
+# For other configurations, use pyproject.toml extras directly:
+#   pip install -e ".[all]"          # CUDA 12.4 (default)
+#   pip install -e ".[all-cu128]"    # CUDA 12.8 (RTX 50 series)
+#   pip install -e ".[all-cpu]"      # CPU only
+#
+# See pyproject.toml for the full dependency specification.
+# =============================================================================
 
 # PyTorch with CUDA 12.8 (required for RTX 50 series / Blackwell architecture)
-# Install with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 --extra-index-url https://download.pytorch.org/whl/cu128
 torch>=2.7.0
 torchvision>=0.20.0
 torchaudio>=2.7.0
 
-torchmetrics==1.4.0.post0
-transformers==4.41.2
+# Core application
+gradio>=4.36.1
+deep-translator
+python-dotenv==1.0.1
+numpy<2.0.0
+scipy
+pandas<2.0.0
+pyarrow>=20.0.0
+librosa
+soundfile>=0.12.1
+ffmpeg-python==0.2.0
+opencv-python==4.10.0.84
+
+# ML / Transformers
+torchmetrics>=1.4.0
+transformers>=4.41.2
 accelerate>=0.33.0
 diffusers==0.29.0
-safetensors==0.4.3
-einops==0.8.0
-tqdm==4.66.4
-huggingface_hub==0.23.4
+safetensors>=0.4.3
+einops>=0.8.0
+tqdm>=4.66.4
+huggingface_hub>=0.23.4
 pydub==0.25.1
-pyannote.audio==3.3.1
-speechbrain==1.0.0
-diart==0.9.0
-demucs==4.0.1
 
+# Speaker diarization
+pyannote.audio>=3.3.1
+speechbrain>=1.0.0
+diart==0.9.0
+
+# Audio separation & processing
+demucs==4.0.1
 pyworld==0.3.4
-edge-tts==6.1.10
-# piper-tts==1.2.0 (Install failed)
+
+# TTS
+edge-tts>=6.1.10
 f5-tts
 pysbd
-# TTS (Incompatible with Python 3.12)
 
-faster-whisper==1.1.1
-bitsandbytes==0.43.1
-sentencepiece==0.2.0
+# Transcription
+faster-whisper>=1.1.1
+bitsandbytes>=0.43.1; sys_platform == "linux"
+sentencepiece>=0.2.0
 protobuf
-voicefixer>=0.1.2
+
+# Voice enhancement (install manually if pip >= 24.1 fails)
+# voicefixer>=0.1.2
+
+# Face / Lip-sync
 face-alignment==1.4.1
 basicsr==1.4.2
 kornia==0.7.3
 gfpgan==1.3.8
-# PaddleOCR dependencies
-# NOTE: Using stable PaddleOCR 2.8.x with PaddlePaddle 2.6.x (CPU)
-# PaddleOCR 3.x with PaddlePaddle 3.x has Windows hang issues in the HPI pipeline
-paddlepaddle==2.6.2
+
+# OCR — PaddlePaddle CPU on Windows, GPU on Linux
+paddlepaddle==2.6.2; sys_platform != "linux"
+paddlepaddle-gpu==2.6.1; sys_platform == "linux"
 paddleocr==2.8.1
-psutil==5.9.8
-aiohttp==3.9.5
-rich==13.7.1
+
+# Utilities
+psutil>=5.9.8
+aiohttp>=3.9.5
+rich>=13.7.1
 colorama==0.4.6
 insightface>=0.7.3
 onnxruntime-gpu
 cachetools>=5.3.0
-
 easyocr
 langdetect
