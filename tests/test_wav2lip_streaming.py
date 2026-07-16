@@ -44,8 +44,12 @@ def mock_audio(tmp_path):
     t = np.linspace(0, seconds, seconds * fs, False)
     audio = np.sin(440 * 2 * np.pi * t) * 32767
     
-    import scipy.io.wavfile
-    scipy.io.wavfile.write(str(audio_path), fs, audio.astype(np.int16))
+    try:
+        import scipy.io.wavfile
+        scipy.io.wavfile.write(str(audio_path), fs, audio.astype(np.int16))
+    except ImportError:
+        import soundfile as sf
+        sf.write(str(audio_path), audio.astype(np.float32) / 32767.0, fs)
     return audio_path
 
 @pytest.mark.requires_ffmpeg

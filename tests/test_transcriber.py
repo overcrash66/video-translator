@@ -42,12 +42,15 @@ class TestSileroVAD:
     
     def test_vad_detect_speech_no_model(self):
         """Test that VAD returns None when model not available."""
+        from unittest.mock import patch
         from src.audio.transcription import SileroVAD
         
         vad = SileroVAD()
-        vad._loaded = False  # Force model unavailable
+        vad._loaded = False
         
-        result = vad.detect_speech("nonexistent.wav")
+        # Patch load to be a no-op so _loaded stays False
+        with patch.object(vad, 'load', return_value=None):
+            result = vad.detect_speech("nonexistent.wav")
         assert result is None
 
 

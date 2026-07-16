@@ -40,6 +40,12 @@ class SmartMock(MagicMock):
     __version__ = "0.0.0-mock"
     __path__ = []
     __file__ = "mock"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        import importlib.machinery
+        mod_name = getattr(self, '_mock_name', None) or "mock"
+        self.__spec__ = importlib.machinery.ModuleSpec(mod_name, loader=None)
     
     @property
     def ndim(self):
@@ -165,21 +171,27 @@ torch_mock = sys.modules.get('torch')
 if torch_mock and isinstance(torch_mock, MagicMock):
     import numpy as np
     
-    # Link submodules to parent mock
+    # Link submodules to parent mock - always ensure cuda mock exists
     torch_cuda_mock = sys.modules.get('torch.cuda')
-    if torch_cuda_mock:
-        torch_mock.cuda = torch_cuda_mock
-        # Mock CUDA detection to return False (CPU-only mode for tests)
-        torch_cuda_mock.is_available = MagicMock(return_value=False)
-        torch_cuda_mock.device_count = MagicMock(return_value=0)
+    if not torch_cuda_mock or not isinstance(torch_cuda_mock, MagicMock):
+        torch_cuda_mock = MagicMock()
+        sys.modules['torch.cuda'] = torch_cuda_mock
+    torch_mock.cuda = torch_cuda_mock
+    # Mock CUDA detection to return False (CPU-only mode for tests)
+    torch_cuda_mock.is_available = MagicMock(return_value=False)
+    torch_cuda_mock.device_count = MagicMock(return_value=0)
     
-    # torch.nn linkage
+    # torch.nn linkage - always ensure nn mock exists
     torch_nn_mock = sys.modules.get('torch.nn')
-    if torch_nn_mock:
-        torch_mock.nn = torch_nn_mock
-        torch_nn_functional = sys.modules.get('torch.nn.functional')
-        if torch_nn_functional:
-            torch_nn_mock.functional = torch_nn_functional
+    if not torch_nn_mock or not isinstance(torch_nn_mock, MagicMock):
+        torch_nn_mock = MagicMock()
+        sys.modules['torch.nn'] = torch_nn_mock
+    torch_mock.nn = torch_nn_mock
+    torch_nn_functional = sys.modules.get('torch.nn.functional')
+    if not torch_nn_functional or not isinstance(torch_nn_functional, MagicMock):
+        torch_nn_functional = MagicMock()
+        sys.modules['torch.nn.functional'] = torch_nn_functional
+    torch_nn_mock.functional = torch_nn_functional
     
     # Common torch functions/types
     torch_mock.tensor = lambda x, *args, **kwargs: SmartMock()
@@ -203,11 +215,80 @@ import numpy as np
 
 sf_mock = sys.modules.get('soundfile')
 if sf_mock and isinstance(sf_mock, MagicMock):
-    # soundfile.read returns (data, sample_rate)
+    # soundfile.read reads actual WAV files written by our mock sf.write
     def mock_sf_read(path, *args, **kwargs):
-        return np.zeros((16000,), dtype=np.float32), 16000
+        import struct as _struct
+        try:
+            with open(str(path), 'rb') as f:
+                # Parse WAV header
+                riff = f.read(4)
+                if riff != b'RIFF':
+                    return np.ones((24000, 2), dtype=np.float32) * 0.5, 24000
+                f.read(4)  # file size
+                wave = f.read(4)
+                if wave != b'WAVE':
+                    return np.ones((24000, 2), dtype=np.float32) * 0.5, 24000
+                # Find fmt chunk
+                while True:
+                    chunk_id = f.read(4)
+                    chunk_size = _struct.unpack('<I', f.read(4))[0]
+                    if chunk_id == b'fmt ':
+                        fmt_data = f.read(chunk_size)
+                        audio_fmt, channels, samplerate = _struct.unpack('<HHI', fmt_data[:8])[:3]
+                        break
+                    f.read(chunk_size)
+                # Find data chunk
+                while True:
+                    chunk_id = f.read(4)
+                    chunk_size = _struct.unpack('<I', f.read(4))[0]
+                    if chunk_id == b'data':
+                        raw = f.read(chunk_size)
+                        break
+                    f.read(chunk_size)
+                data = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32767.0
+                if channels > 1:
+                    data = data.reshape(-1, channels)
+                return data, samplerate
+        except Exception:
+            return np.ones((24000, 2), dtype=np.float32) * 0.5, 24000
     sf_mock.read = mock_sf_read
-    sf_mock.write = MagicMock()
+
+    # soundfile.write actually writes a WAV file so downstream tools (ffmpeg) work
+    def mock_sf_write(path, data, samplerate, **kwargs):
+        import struct as _struct
+        data = np.asarray(data, dtype=np.float32)
+        # soundfile expects (frames, channels) format
+        if data.ndim == 1:
+            data = data.reshape(-1, 1)
+        frames = int(data.shape[0])
+        channels = int(data.shape[1])
+        try:
+            samplerate = min(int(samplerate), 65535)
+        except (TypeError, ValueError):
+            samplerate = 24000
+        with open(str(path), 'wb') as f:
+            f.write(b'RIFF')
+            data_size = frames * channels * 2
+            f.write(_struct.pack('<I', 36 + data_size))
+            f.write(b'WAVE')
+            f.write(b'fmt ')
+            f.write(_struct.pack('<IHHIIHH', 16, 1, channels, samplerate,
+                                samplerate * channels * 2, channels * 2, 16))
+            f.write(b'data')
+            f.write(_struct.pack('<I', data_size))
+            int_data = np.clip(data * 32767, -32768, 32767).astype(np.int16)
+            f.write(int_data.tobytes())
+    sf_mock.write = mock_sf_write
+
+    # soundfile.info returns an object with numeric attributes
+    class _MockSoundFileInfo:
+        samplerate = 24000
+        channels = 2
+        duration = 5.0
+        frames = 120000
+        format = "WAV"
+        subtype = "PCM_16"
+    sf_mock.info = MagicMock(return_value=_MockSoundFileInfo())
 
 librosa_mock = sys.modules.get('librosa')
 if librosa_mock and isinstance(librosa_mock, MagicMock):
@@ -215,6 +296,13 @@ if librosa_mock and isinstance(librosa_mock, MagicMock):
     def mock_librosa_load(path, sr=None, *args, **kwargs):
         return np.zeros((16000,), dtype=np.float32), sr or 16000
     librosa_mock.load = mock_librosa_load
+
+    # librosa.effects.time_stretch returns input unchanged when mocked
+    librosa_effects_mock = sys.modules.get('librosa.effects')
+    if librosa_effects_mock and isinstance(librosa_effects_mock, MagicMock):
+        librosa_effects_mock.time_stretch = lambda y, rate=1.0: y
+    elif isinstance(librosa_mock.effects, MagicMock):
+        librosa_mock.effects.time_stretch = lambda y, rate=1.0: y
 
 
 # =============================================================================
@@ -245,7 +333,7 @@ try:
     from src.utils import config
     import ctranslate2
     print("DEBUG: ctranslate2 pre-imported in tests/conftest.py")
-except ImportError:
+except (ImportError, ValueError, AttributeError):
     pass
 
 

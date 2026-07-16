@@ -4,6 +4,7 @@ import soundfile as sf
 import os
 import tempfile
 import pytest
+pytest.importorskip("scipy", reason="scipy not installed")
 from src.audio import eq_matching
 
 @pytest.mark.requires_real_audio
