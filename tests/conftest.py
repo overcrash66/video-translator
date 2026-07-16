@@ -181,13 +181,17 @@ if torch_mock and isinstance(torch_mock, MagicMock):
     torch_cuda_mock.is_available = MagicMock(return_value=False)
     torch_cuda_mock.device_count = MagicMock(return_value=0)
     
-    # torch.nn linkage
+    # torch.nn linkage - always ensure nn mock exists
     torch_nn_mock = sys.modules.get('torch.nn')
-    if torch_nn_mock:
-        torch_mock.nn = torch_nn_mock
-        torch_nn_functional = sys.modules.get('torch.nn.functional')
-        if torch_nn_functional:
-            torch_nn_mock.functional = torch_nn_functional
+    if not torch_nn_mock or not isinstance(torch_nn_mock, MagicMock):
+        torch_nn_mock = MagicMock()
+        sys.modules['torch.nn'] = torch_nn_mock
+    torch_mock.nn = torch_nn_mock
+    torch_nn_functional = sys.modules.get('torch.nn.functional')
+    if not torch_nn_functional or not isinstance(torch_nn_functional, MagicMock):
+        torch_nn_functional = MagicMock()
+        sys.modules['torch.nn.functional'] = torch_nn_functional
+    torch_nn_mock.functional = torch_nn_functional
     
     # Common torch functions/types
     torch_mock.tensor = lambda x, *args, **kwargs: SmartMock()
