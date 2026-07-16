@@ -171,13 +171,15 @@ torch_mock = sys.modules.get('torch')
 if torch_mock and isinstance(torch_mock, MagicMock):
     import numpy as np
     
-    # Link submodules to parent mock
+    # Link submodules to parent mock - always ensure cuda mock exists
     torch_cuda_mock = sys.modules.get('torch.cuda')
-    if torch_cuda_mock:
-        torch_mock.cuda = torch_cuda_mock
-        # Mock CUDA detection to return False (CPU-only mode for tests)
-        torch_cuda_mock.is_available = MagicMock(return_value=False)
-        torch_cuda_mock.device_count = MagicMock(return_value=0)
+    if not torch_cuda_mock or not isinstance(torch_cuda_mock, MagicMock):
+        torch_cuda_mock = MagicMock()
+        sys.modules['torch.cuda'] = torch_cuda_mock
+    torch_mock.cuda = torch_cuda_mock
+    # Mock CUDA detection to return False (CPU-only mode for tests)
+    torch_cuda_mock.is_available = MagicMock(return_value=False)
+    torch_cuda_mock.device_count = MagicMock(return_value=0)
     
     # torch.nn linkage
     torch_nn_mock = sys.modules.get('torch.nn')
@@ -327,7 +329,7 @@ try:
     from src.utils import config
     import ctranslate2
     print("DEBUG: ctranslate2 pre-imported in tests/conftest.py")
-except (ImportError, ValueError):
+except (ImportError, ValueError, AttributeError):
     pass
 
 
